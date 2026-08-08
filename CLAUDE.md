@@ -24,6 +24,12 @@ packages such as `cryptography` that pip cannot upgrade), installs
 bare `python`, `pytest`, and `black` resolve to that venv. The hook is a no-op
 in local sessions, which manage their own environment.
 
+It runs asynchronously, so the session is usable immediately while packages
+install in the background — roughly a minute on a cold container, ~2s once it
+is warm. If `pytest` or an import of a third-party package fails in the first
+moments of a session, the install is most likely still running; re-run the
+command rather than treating it as a real failure.
+
 To set the same thing up by hand:
 
 ```bash
