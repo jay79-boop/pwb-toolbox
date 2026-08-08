@@ -48,7 +48,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (120 tests, ~20s cold / ~3s warm)
+pytest tests/ -v                  # full suite (153 tests, ~20s cold / ~3s warm)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/                # format; the repo is black-formatted
 black --check --diff pwb_toolbox/ # check without writing
