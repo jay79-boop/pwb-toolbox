@@ -6,12 +6,20 @@ Everything here runs offline: the HTTP layer is exercised against a fake
 
 import json
 import zipfile
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from tools.grok_export import auth, client as client_module, official, render, schema
+from tools.grok_export import (
+    auth,
+    client as client_module,
+    merge,
+    official,
+    render,
+    schema,
+)
 from tools.grok_export.cli import main
 from tools.grok_export.client import GrokClient, SessionExpired
 
@@ -841,3 +849,243 @@ def test_official_export_converts_end_to_end(tmp_path):
     # Every message survives verbatim; that is the property that matters.
     assert "How do I combine EMA with RSI?" in text
     assert "Use the EMA for trend and RSI for timing." in text
+
+
+# --------------------------------------------------------------------------
+# merging near-duplicate conversations
+# --------------------------------------------------------------------------
+
+
+def _conversation(cid, title, texts, created=None):
+    return schema.Conversation(
+        id=cid,
+        title=title,
+        created=created or datetime(2026, 1, 1, tzinfo=timezone.utc),
+        messages=[schema.Message(role="user", text=t) for t in texts],
+    )
+
+
+def test_tokenize_drops_stopwords_and_prompt_filler():
+    tokens = merge.tokenize(
+        "You are a professional expert; create me an irrigation plan"
+    )
+    assert "irrigation" in tokens
+    for noise in ("you", "are", "professional", "expert", "create", "the"):
+        assert noise not in tokens
+
+
+def test_content_hash_ignores_message_order():
+    left = _conversation("a", "T", ["one", "two"])
+    right = _conversation("b", "T", ["two", "one"])
+    assert merge.content_hash(left) == merge.content_hash(right)
+    assert merge.content_hash(left) != merge.content_hash(
+        _conversation("c", "T", ["x"])
+    )
+
+
+def test_cosine_of_identical_documents_is_one():
+    (vector,) = merge.tfidf([Counter({"alpha": 1})])
+    assert merge.cosine(vector, vector) == pytest.approx(1.0)
+
+
+def test_exact_duplicates_collapse_keeping_the_earliest():
+    early = _conversation(
+        "early", "Passport", ["same body"], datetime(2026, 5, 27, tzinfo=timezone.utc)
+    )
+    late = _conversation(
+        "late", "Passport", ["same body"], datetime(2026, 7, 28, tzinfo=timezone.utc)
+    )
+    (group,) = merge.group_conversations([late, early])
+
+    assert [c.id for c in group.conversations] == ["early"]
+    assert [c.id for c in group.duplicates] == ["late"]
+
+
+def test_similar_conversations_merge_and_unrelated_ones_do_not():
+    anime_a = _conversation(
+        "a", "Free anime streaming sites", ["free anime streaming website list"]
+    )
+    anime_b = _conversation(
+        "b", "Best free anime streaming websites", ["best free anime streaming website"]
+    )
+    mazda = _conversation(
+        "c", "Mazda door lock fault", ["car door lock fuse box clicking"]
+    )
+
+    groups = merge.group_conversations([anime_a, anime_b, mazda])
+    sizes = sorted(len(group.conversations) for group in groups)
+    assert sizes == [1, 2]
+    merged = next(g for g in groups if len(g.conversations) == 2)
+    assert {c.id for c in merged.conversations} == {"a", "b"}
+
+
+def test_grouping_is_transitive():
+    """Single-link: A~B and B~C puts all three together even if A and C differ."""
+    a = _conversation("a", "irrigation drip system", ["drip irrigation tubing layout"])
+    b = _conversation(
+        "b", "irrigation and mushroom farm", ["drip irrigation mushroom substrate"]
+    )
+    c = _conversation(
+        "c", "mushroom substrate", ["mushroom substrate inoculation spawn"]
+    )
+
+    groups = merge.group_conversations([a, b, c], threshold=0.15)
+    assert len(groups) == 1
+    assert len(groups[0].conversations) == 3
+
+
+def test_every_conversation_survives_grouping():
+    conversations = [
+        _conversation(str(i), f"Topic {i}", [f"body {i}"]) for i in range(7)
+    ]
+    groups = merge.group_conversations(conversations)
+    recovered = {c.id for g in groups for c in g.conversations}
+    assert recovered == {str(i) for i in range(7)}
+
+
+def test_group_conversations_on_empty_input():
+    assert merge.group_conversations([]) == []
+
+
+def test_group_is_labelled_by_its_richest_conversation():
+    small = _conversation("s", "Short", ["a"])
+    big = _conversation("b", "The detailed one", ["a", "b", "c"])
+    group = merge.Group(conversations=[small, big])
+    assert group.title == "The detailed one"
+    assert group.message_count == 4
+
+
+def test_render_group_nests_roles_under_conversations():
+    group = merge.Group(
+        conversations=[
+            _conversation(
+                "a", "First", ["hello"], datetime(2026, 1, 2, tzinfo=timezone.utc)
+            ),
+            _conversation(
+                "b", "Second", ["world"], datetime(2026, 3, 4, tzinfo=timezone.utc)
+            ),
+        ]
+    )
+    text = merge.render_group(group)
+
+    assert "merged_from: 2" in text
+    assert "## 2026-01-02 — First" in text
+    assert "## 2026-03-04 — Second" in text
+    # Roles sit a level below the conversation headings, so a message that
+    # contains its own "## " cannot be mistaken for a conversation boundary.
+    assert "### You" in text
+    assert "\n## You" not in text
+    assert "hello" in text and "world" in text
+
+
+def test_render_group_notes_collapsed_duplicates():
+    group = merge.Group(
+        conversations=[_conversation("a", "Passport", ["body"])],
+        duplicates=[_conversation("b", "Passport", ["body"])],
+    )
+    text = merge.render_group(group)
+    assert "exact_duplicates_collapsed: 1" in text
+    assert "1 exact duplicate(s) collapsed" in text
+
+
+def test_group_stem_leads_with_the_month():
+    group = merge.Group(
+        conversations=[
+            _conversation(
+                "a", "Child Support", ["x"], datetime(2026, 3, 9, tzinfo=timezone.utc)
+            )
+        ]
+    )
+    assert merge.group_stem(group) == "2026-03-child-support"
+
+
+def test_summarize_reports_duplicates_and_merges():
+    group = merge.Group(
+        conversations=[
+            _conversation("a", "Passport", ["b"]),
+            _conversation("c", "Passport 2", ["b2"]),
+        ],
+        duplicates=[_conversation("d", "Passport", ["b"])],
+    )
+    report = merge.summarize([group])
+    assert "1 exact duplicate(s) collapsed." in report
+    assert "Passport" in report
+
+
+# --------------------------------------------------------------------------
+# cli: merge, and the archive round-trip
+# --------------------------------------------------------------------------
+
+
+def _export_fixture(tmp_path):
+    source = tmp_path / "dump.json"
+    source.write_text(json.dumps(XAI_EXPORT), encoding="utf-8")
+    return source
+
+
+def test_convert_then_render_round_trips_without_losing_messages(tmp_path):
+    """Regression: `convert` archived a bare entry that `render` read as empty."""
+    out = tmp_path / "out"
+    assert main(["convert", str(_export_fixture(tmp_path)), "--out", str(out)]) == 0
+
+    for path in (out / "markdown").glob("*.md"):
+        path.unlink()
+    assert main(["render", "--out", str(out)]) == 0
+
+    (rendered,) = list((out / "markdown").glob("*.md"))
+    text = rendered.read_text()
+    assert "_No messages were returned" not in text
+    assert "How do I combine EMA with RSI?" in text
+
+
+def test_load_raw_accepts_a_bare_entry(tmp_path):
+    """Archives written before the envelope was consistent still load."""
+    out = tmp_path / "out"
+    render.write_raw(out / "raw", "conv-1", XAI_EXPORT["conversations"][0])
+
+    assert main(["render", "--out", str(out)]) == 0
+    (rendered,) = list((out / "markdown").glob("*.md"))
+    assert "How do I combine EMA with RSI?" in rendered.read_text()
+
+
+def test_merge_writes_one_document_per_group(tmp_path):
+    out = tmp_path / "out"
+    assert main(["convert", str(_export_fixture(tmp_path)), "--out", str(out)]) == 0
+    assert main(["merge", "--out", str(out)]) == 0
+
+    (merged,) = list((out / "merged").glob("*.md"))
+    assert "merged_from: 1" in merged.read_text()
+
+
+def test_merge_dry_run_writes_nothing(tmp_path, capsys):
+    out = tmp_path / "out"
+    main(["convert", str(_export_fixture(tmp_path)), "--out", str(out)])
+
+    assert main(["merge", "--out", str(out), "--dry-run"]) == 0
+    assert not (out / "merged").exists()
+    assert "dry run" in capsys.readouterr().err
+
+
+def test_merge_collapses_a_duplicated_conversation(tmp_path, capsys):
+    """The real export had one conversation saved twice, byte for byte."""
+    twice = json.loads(json.dumps(XAI_EXPORT))
+    clone = json.loads(json.dumps(twice["conversations"][0]))
+    clone["conversation"]["id"] = "second-copy"
+    clone["conversation"]["create_time"] = "2026-08-01T00:00:00Z"
+    twice["conversations"].append(clone)
+
+    source = tmp_path / "dump.json"
+    source.write_text(json.dumps(twice), encoding="utf-8")
+    out = tmp_path / "out"
+
+    assert main(["convert", str(source), "--out", str(out)]) == 0
+    assert main(["merge", "--out", str(out)]) == 0
+
+    assert "1 exact duplicate(s) collapsed." in capsys.readouterr().err
+    (merged,) = list((out / "merged").glob("*.md"))
+    assert "exact_duplicates_collapsed: 1" in merged.read_text()
+
+
+def test_merge_without_an_archive_fails_cleanly(tmp_path, capsys):
+    assert main(["merge", "--out", str(tmp_path / "nothing")]) == 1
+    assert "Run `pull` or `convert` first" in capsys.readouterr().err

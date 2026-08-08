@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import client as client_module
-from . import official, render, schema
+from . import merge, official, render, schema
 from .auth import AuthError, load_cookie, missing_cookies
 from .client import GrokClient, GrokError
 from .schema import Conversation
@@ -66,6 +66,10 @@ def _load_raw(path: Path) -> Conversation | None:
         return None
     if not isinstance(payload, dict):
         return None
+    if "listing" not in payload and "detail" not in payload:
+        # An archive written before the envelope was consistent, or by hand:
+        # the file is the conversation entry itself.
+        return schema.parse_conversation(payload)
     return schema.parse_conversation(payload.get("listing"), payload.get("detail"))
 
 
@@ -168,7 +172,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
     raw_dir = out / "raw"
     for conversation in conversations:
         if conversation.id:
-            render.write_raw(raw_dir, conversation.id, conversation.raw.get("listing"))
+            # Same envelope `pull` writes, so `render` and `merge` can read
+            # either source without caring which produced the archive.
+            render.write_raw(raw_dir, conversation.id, conversation.raw)
     _write_outputs(out, conversations, not args.no_markdown)
     _log(f"{len(conversations)} conversation(s) written to {out}/")
     return 0
@@ -192,6 +198,39 @@ def cmd_render(args: argparse.Namespace) -> int:
 
     _write_outputs(out, conversations, markdown=True)
     _log(f"Re-rendered {len(conversations)} conversation(s) into {out}/markdown/")
+    return 0
+
+
+def _load_archive(out: Path) -> list[Conversation] | None:
+    """Every conversation archived under ``out/raw``, or None if there are none."""
+    raw_dir = out / "raw"
+    if not raw_dir.is_dir():
+        _log(f"error: {raw_dir} does not exist. Run `pull` or `convert` first.")
+        return None
+    conversations = [
+        conversation
+        for path in sorted(raw_dir.glob("*.json"))
+        if (conversation := _load_raw(path)) is not None
+    ]
+    if not conversations:
+        _log(f"error: no readable payloads in {raw_dir}.")
+        return None
+    return conversations
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    conversations = _load_archive(args.out)
+    if conversations is None:
+        return 1
+
+    groups = merge.group_conversations(conversations, threshold=args.threshold)
+    _log(merge.summarize(groups))
+    if args.dry_run:
+        _log("\n(dry run: nothing written)")
+        return 0
+
+    written = merge.write_groups(args.out / "merged", groups)
+    _log(f"\n{len(written)} merged document(s) in {args.out}/merged/")
     return 0
 
 
@@ -265,6 +304,24 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("source", type=Path, help="the downloaded archive or file")
     add_common(convert)
     convert.set_defaults(func=cmd_convert)
+
+    merge_cmd = subparsers.add_parser(
+        "merge", help="group similar conversations and merge each group into one file"
+    )
+    add_common(merge_cmd)
+    merge_cmd.add_argument(
+        "--threshold",
+        type=float,
+        default=merge.DEFAULT_THRESHOLD,
+        help=(
+            "similarity needed to merge, 0-1 "
+            f"(default: {merge.DEFAULT_THRESHOLD}; lower merges more)"
+        ),
+    )
+    merge_cmd.add_argument(
+        "--dry-run", action="store_true", help="report the grouping without writing"
+    )
+    merge_cmd.set_defaults(func=cmd_merge)
 
     render_cmd = subparsers.add_parser(
         "render", help="rebuild Markdown from an earlier export's raw/ directory"
