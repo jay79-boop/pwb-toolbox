@@ -5,7 +5,7 @@ execution, and performance analytics. Requires Python 3.10+.
 
 ## Layout
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `options`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `options`, `journal`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -47,9 +47,10 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (79 tests, ~15s)
+pytest tests/ -v                  # full suite (105 tests, ~17s)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help   # pre-trade card + hold-time checker
+python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 black pwb_toolbox/                # format; the repo is black-formatted
 black --check --diff pwb_toolbox/ # check without writing
 ```
