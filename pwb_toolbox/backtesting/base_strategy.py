@@ -16,7 +16,7 @@ class BaseStrategy(bt.Strategy):
         """Return True if the instrument's price is not constant."""
         if len(data.close) < 3:
             return False
-        return data.close[0] != data.close[-2]
+        return data.close[0] != data.close[-1]
 
     def next(self):
         """Update progress bar and log current value."""
