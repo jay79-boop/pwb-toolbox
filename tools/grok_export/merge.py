@@ -282,13 +282,33 @@ def group_stem(group: Group) -> str:
 
 
 def write_groups(directory: Path, groups: Iterable[Group]) -> list[Path]:
-    """Write one Markdown file per group; returns the paths written."""
+    """Write one Markdown file per group; returns the paths written.
+
+    Idempotent: the directory ends up holding exactly the current grouping.
+    Re-running overwrites rather than accumulating, and documents from an
+    earlier run whose group no longer exists are removed — this runs daily, so
+    appending would pile up a fresh copy of everything every day.
+    """
     directory.mkdir(parents=True, exist_ok=True)
+
     written = []
+    used: set[str] = set()
     for group in groups:
-        path = render._unique_path(directory, group_stem(group), ".md")
+        stem = group_stem(group)
+        candidate, counter = stem, 2
+        # Disambiguate only within this run; across runs the name is stable.
+        while candidate in used:
+            candidate = f"{stem}-{counter}"
+            counter += 1
+        used.add(candidate)
+        path = directory / f"{candidate}.md"
         path.write_text(render_group(group), encoding="utf-8")
         written.append(path)
+
+    keep = {path.name for path in written}
+    for stale in directory.glob("*.md"):
+        if stale.name not in keep:
+            stale.unlink()
     return written
 
 

@@ -82,6 +82,41 @@ The reader still walks the whole tree looking for conversation-shaped objects
 rather than hard-coding that path, so a re-organised dump generally keeps
 working.
 
+## Merging duplicates and repeated topics
+
+Chat histories accumulate the same thread several times — the identical question
+re-asked months later, or one topic picked up across four sittings.
+
+```bash
+python -m tools.grok_export merge --out grok-export --dry-run   # report only
+python -m tools.grok_export merge --out grok-export             # write them
+```
+
+Writes `merged/`, one chronological document per topic, next to `markdown/`.
+Byte-identical conversations collapse to the earliest copy. Originals are never
+touched, and re-running is idempotent — the directory always holds exactly the
+current grouping.
+
+Similarity is TF-IDF cosine over title and message tokens, clustered
+single-link. `--threshold` tunes it: **0.26** by default, lower merges more.
+That default is tuned against a real 29-conversation export, where below ~0.22
+unrelated matters chained together through shared vocabulary and above ~0.30
+genuine continuations stopped matching. Run `--dry-run` first and read the
+grouping before trusting it on a different history.
+
+### Daily
+
+`run_daily.sh` re-merges the local export and stays quiet unless the grouping
+changed, so it is safe to leave in cron:
+
+```
+7 8 * * *  /path/to/pwb-toolbox/tools/grok_export/run_daily.sh
+```
+
+It also folds in any new xAI download sitting beside the export or in
+`~/Downloads` before merging. Set `GROK_EXPORT_DIR` to point somewhere other
+than `grok-export/`.
+
 ## When it breaks
 
 It will, eventually — `pull` rides on endpoints xAI can change without notice.

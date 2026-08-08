@@ -1089,3 +1089,39 @@ def test_merge_collapses_a_duplicated_conversation(tmp_path, capsys):
 def test_merge_without_an_archive_fails_cleanly(tmp_path, capsys):
     assert main(["merge", "--out", str(tmp_path / "nothing")]) == 1
     assert "Run `pull` or `convert` first" in capsys.readouterr().err
+
+
+def test_merge_is_idempotent(tmp_path):
+    """Regression: re-running appended a fresh copy of every merged document."""
+    out = tmp_path / "out"
+    main(["convert", str(_export_fixture(tmp_path)), "--out", str(out)])
+
+    main(["merge", "--out", str(out)])
+    first = sorted(p.name for p in (out / "merged").glob("*.md"))
+    main(["merge", "--out", str(out)])
+    second = sorted(p.name for p in (out / "merged").glob("*.md"))
+
+    assert first == second
+
+
+def test_merge_removes_documents_for_groups_that_are_gone(tmp_path):
+    out = tmp_path / "out"
+    merged = out / "merged"
+    merged.mkdir(parents=True)
+    (merged / "2020-01-stale-topic.md").write_text("old", encoding="utf-8")
+
+    main(["convert", str(_export_fixture(tmp_path)), "--out", str(out)])
+    main(["merge", "--out", str(out)])
+
+    assert not (merged / "2020-01-stale-topic.md").exists()
+    assert list(merged.glob("*.md"))
+
+
+def test_write_groups_disambiguates_same_named_groups_within_a_run(tmp_path):
+    same = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    groups = [
+        merge.Group(conversations=[_conversation("a", "Same Title", ["one"], same)]),
+        merge.Group(conversations=[_conversation("b", "Same Title", ["two"], same)]),
+    ]
+    written = merge.write_groups(tmp_path, groups)
+    assert len({p.name for p in written}) == 2
