@@ -38,8 +38,11 @@ pip install -r requirements-dev.txt black
 export PYTHONPATH="$PWD"
 ```
 
-`PYTHONPATH` matters because the tests import `pwb_toolbox` from the repo root
-rather than from an installed distribution.
+The tests import `pwb_toolbox` from the repo root rather than from an installed
+distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
+`pyproject.toml` covers that for `pytest` itself (including in CI, which sets no
+`PYTHONPATH`); the exported `PYTHONPATH` above covers ad-hoc invocations such as
+`python -c "import pwb_toolbox"`.
 
 ## Commands
 
