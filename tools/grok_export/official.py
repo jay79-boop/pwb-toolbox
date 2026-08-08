@@ -26,8 +26,10 @@ def _looks_like_message(value: Any) -> bool:
     """True when a dict plausibly represents a single conversation turn."""
     if not isinstance(value, dict):
         return False
-    has_role = any(key in value for key in schema.ROLE_KEYS + schema.BOOL_ROLE_KEYS)
-    has_text = bool(schema.extract_text(value))
+    # Turns in the official export are wrapped, putting the role a level down.
+    inner = schema.unwrap_turn(value)
+    has_role = any(key in inner for key in schema.ROLE_KEYS + schema.BOOL_ROLE_KEYS)
+    has_text = bool(schema.extract_text(inner))
     return has_role and has_text
 
 
@@ -51,8 +53,10 @@ def _looks_like_conversation(value: Any) -> bool:
         return False
     if _message_list(value) is None:
         return False
-    identified = schema.pick(value, schema.ID_KEYS) is not None
-    titled = schema.pick(value, schema.TITLE_KEYS) is not None
+    # The id and title may sit under a wrapper key alongside the turns.
+    meta = schema.conversation_meta(value)
+    identified = schema.pick(meta, schema.ID_KEYS) is not None
+    titled = schema.pick(meta, schema.TITLE_KEYS) is not None
     return identified or titled
 
 

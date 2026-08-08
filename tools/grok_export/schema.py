@@ -35,6 +35,9 @@ UPDATED_KEYS = (
 
 # Keys whose value is the list of conversations in a listing response.
 CONVERSATION_LIST_KEYS = ("conversations", "items", "data", "results", "records")
+# Keys that hold a conversation's metadata one level down, as the official
+# export does with ``{"conversation": {...}, "responses": [...]}``.
+CONVERSATION_WRAPPER_KEYS = ("conversation", "conv", "chat", "thread")
 # Keys whose value is the list of turns inside a single conversation.
 MESSAGE_LIST_KEYS = (
     "responses",
@@ -77,6 +80,21 @@ ROLE_KEYS = (
     "type",
 )
 BOOL_ROLE_KEYS = ("isUser", "is_user", "fromUser", "from_user", "isHuman", "is_human")
+# Keys that wrap the real turn one level down, as the official export does with
+# ``{"response": {...}, "share_link": ...}``.
+TURN_WRAPPER_KEYS = ("response", "node", "turn", "message", "data", "item")
+# Timestamps arrive as MongoDB extended JSON ({"$date": {"$numberLong": ...}})
+# or as a protobuf Timestamp ({"seconds": ...}) as well as plain scalars.
+NESTED_TIME_KEYS = (
+    "$date",
+    "$numberLong",
+    "$numberDouble",
+    "$numberInt",
+    "seconds",
+    "epochMillis",
+    "epoch_millis",
+    "value",
+)
 
 # Checked as substrings: real values look like "RESPONSE_TYPE_HUMAN", not "human".
 _USER_TOKENS = ("human", "user", "you", "self", "query")
@@ -108,11 +126,22 @@ def pick_list(payload: Any, keys: Sequence[str]) -> list | None:
     return None
 
 
-def to_datetime(value: Any) -> datetime | None:
-    """Best-effort UTC datetime from ISO-8601, epoch seconds, or epoch millis."""
+def to_datetime(value: Any, _depth: int = 0) -> datetime | None:
+    """Best-effort UTC datetime from ISO-8601, epoch seconds, or epoch millis.
+
+    Also unwraps the nested forms these payloads use, notably MongoDB extended
+    JSON: ``{"$date": {"$numberLong": "1785198572458"}}``.
+    """
     if value is None or value == "":
         return None
     if isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        if _depth >= 4:
+            return None
+        for key in NESTED_TIME_KEYS:
+            if key in value:
+                return to_datetime(value[key], _depth + 1)
         return None
     if isinstance(value, (int, float)):
         seconds = float(value)
@@ -139,6 +168,43 @@ def to_datetime(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     return None
+
+
+def conversation_meta(payload: Any) -> dict:
+    """Flatten a wrapped conversation so its metadata sits at the top level.
+
+    ``{"conversation": {"id": ..., "title": ...}, "responses": [...]}`` becomes
+    a single dict carrying the id, the title and the turn list together. Outer
+    keys win, so a wrapper that also sets a field is not overwritten.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    for key in CONVERSATION_WRAPPER_KEYS:
+        inner = payload.get(key)
+        if isinstance(inner, dict):
+            outer = {k: v for k, v in payload.items() if k != key}
+            return {**inner, **outer}
+    return payload
+
+
+def unwrap_turn(payload: Any) -> Any:
+    """Return the inner turn when a payload only wraps one.
+
+    The official export nests each turn as ``{"response": {...}, "share_link":
+    ...}``, so role and timestamp live a level below where they are looked for.
+    A payload that already carries role information is returned untouched.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if any(key in payload for key in ROLE_KEYS + BOOL_ROLE_KEYS):
+        return payload
+    for key in TURN_WRAPPER_KEYS:
+        inner = payload.get(key)
+        if isinstance(inner, dict) and any(
+            candidate in inner for candidate in ROLE_KEYS + BOOL_ROLE_KEYS
+        ):
+            return inner
+    return payload
 
 
 def normalize_role(payload: Any) -> str:
@@ -217,10 +283,12 @@ def parse_message(payload: Any) -> Message:
     """Build a :class:`Message` from one turn payload."""
     if not isinstance(payload, dict):
         return Message(role="unknown", text=str(payload or ""), raw={})
+    inner = unwrap_turn(payload)
     return Message(
-        role=normalize_role(payload),
-        text=extract_text(payload),
-        created=to_datetime(pick(payload, CREATED_KEYS)),
+        role=normalize_role(inner),
+        text=extract_text(inner),
+        created=to_datetime(pick(inner, CREATED_KEYS)),
+        # Keep the payload as it arrived, wrapper and all.
         raw=payload,
     )
 
@@ -247,12 +315,7 @@ def parse_conversation(payload: Any, detail: Any = None) -> Conversation:
     is omitted the turns are looked for on ``payload`` itself.
     """
     payload = payload if isinstance(payload, dict) else {}
-    meta = payload
-    # A listing entry is sometimes wrapped: {"conversation": {...}}.
-    inner = payload.get("conversation")
-    if isinstance(inner, dict):
-        meta = {**inner, **{k: v for k, v in payload.items() if k != "conversation"}}
-
+    meta = conversation_meta(payload)
     turn_source = detail if detail is not None else meta
     messages = [parse_message(item) for item in _message_payloads(turn_source)]
     # Newest-first listings are common; render oldest-first when times allow.

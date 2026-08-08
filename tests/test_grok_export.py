@@ -712,3 +712,132 @@ def _patched_init(handler):
         original(self, cookie, **kwargs)
 
     return patched
+
+
+# --------------------------------------------------------------------------
+# the real xAI export layout
+#
+# Shapes below mirror an actual accounts.x.ai download (content is synthetic):
+# conversations wrap their metadata under "conversation", each turn wraps under
+# "response", and turn timestamps are MongoDB extended JSON.
+# --------------------------------------------------------------------------
+
+
+XAI_EXPORT = {
+    "conversations": [
+        {
+            "conversation": {
+                "id": "90804d85-4de3-477f-8598-77e008cd89c3",
+                "title": "EMA and RSI indicators",
+                "create_time": "2026-07-28T00:29:26.009215Z",
+                "modify_time": "2026-07-28T00:35:07.824Z",
+                "starred": False,
+            },
+            "responses": [
+                {
+                    "response": {
+                        "_id": "r1",
+                        "message": "How do I combine EMA with RSI?",
+                        "sender": "human",
+                        "create_time": {"$date": {"$numberLong": "1785198572458"}},
+                    },
+                    "share_link": "",
+                },
+                {
+                    "response": {
+                        "_id": "r2",
+                        "message": "Use the EMA for trend and RSI for timing.",
+                        "sender": "ASSISTANT",
+                        "create_time": {"$date": {"$numberLong": "1785198600000"}},
+                    },
+                    "share_link": "",
+                },
+            ],
+        }
+    ],
+    "projects": [],
+    "tasks": [],
+    "media_posts": [],
+}
+
+
+def test_mongo_extended_json_timestamps_are_parsed():
+    parsed = schema.to_datetime({"$date": {"$numberLong": "1785198572458"}})
+    assert parsed == datetime(2026, 7, 28, 0, 29, 32, 458000, tzinfo=timezone.utc)
+
+
+def test_protobuf_style_timestamps_are_parsed():
+    assert schema.to_datetime({"seconds": 1754656200}) == datetime(
+        2025, 8, 8, 12, 30, tzinfo=timezone.utc
+    )
+
+
+def test_unrecognised_timestamp_dict_is_none():
+    assert schema.to_datetime({"unrelated": 1}) is None
+
+
+def test_unwrap_turn_reaches_the_nested_response():
+    turn = {"response": {"sender": "human", "message": "hi"}, "share_link": ""}
+    assert schema.unwrap_turn(turn) == {"sender": "human", "message": "hi"}
+
+
+def test_unwrap_turn_leaves_a_flat_turn_alone():
+    turn = {"sender": "human", "message": "hi"}
+    assert schema.unwrap_turn(turn) is turn
+
+
+def test_parse_message_keeps_the_wrapper_in_raw():
+    turn = {"response": {"sender": "human", "message": "hi"}, "share_link": ""}
+    message = schema.parse_message(turn)
+    assert (message.role, message.text) == ("user", "hi")
+    assert message.raw is turn
+
+
+def test_conversation_meta_merges_the_wrapper():
+    entry = {"conversation": {"id": "a", "title": "T"}, "responses": []}
+    meta = schema.conversation_meta(entry)
+    assert meta["id"] == "a" and meta["title"] == "T" and meta["responses"] == []
+
+
+def test_conversation_meta_lets_outer_keys_win():
+    entry = {"conversation": {"title": "inner"}, "title": "outer"}
+    assert schema.conversation_meta(entry)["title"] == "outer"
+
+
+def test_official_export_layout_is_recognised():
+    found = list(official.walk_conversations(XAI_EXPORT))
+    assert len(found) == 1
+
+
+def test_official_export_parses_roles_and_nested_timestamps(tmp_path):
+    path = tmp_path / "prod-grok-backend.json"
+    path.write_text(json.dumps(XAI_EXPORT), encoding="utf-8")
+
+    (conversation,) = official.load_conversations(path)
+    assert conversation.id == "90804d85-4de3-477f-8598-77e008cd89c3"
+    assert conversation.title == "EMA and RSI indicators"
+    assert conversation.created == datetime(
+        2026, 7, 28, 0, 29, 26, 9215, tzinfo=timezone.utc
+    )
+    assert [m.role for m in conversation.messages] == ["user", "assistant"]
+    assert conversation.messages[0].created is not None
+
+
+def test_official_export_converts_end_to_end(tmp_path):
+    archive = tmp_path / "export.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr(
+            "ttl/30d/export_data/abc/prod-grok-backend.json", json.dumps(XAI_EXPORT)
+        )
+        handle.writestr("ttl/30d/export_data/abc/prod-mc-billing.json", "{}")
+
+    out = tmp_path / "out"
+    assert main(["convert", str(archive), "--out", str(out)]) == 0
+
+    (written,) = list((out / "markdown").glob("*.md"))
+    text = written.read_text()
+    assert written.name.startswith("2026-07-28-ema-and-rsi-indicators")
+    assert "## You" in text and "## Grok" in text
+    # Every message survives verbatim; that is the property that matters.
+    assert "How do I combine EMA with RSI?" in text
+    assert "Use the EMA for trend and RSI for timing." in text

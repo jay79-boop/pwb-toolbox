@@ -57,10 +57,30 @@ the mail, then:
 python -m tools.grok_export convert ~/Downloads/xai-export.zip
 ```
 
-Slower to arrive, but sanctioned and stable. Takes a `.zip`, a directory, or a
-single `.json`/`.jsonl` file. The reader walks the whole tree looking for
-conversation-shaped objects rather than assuming a layout, so a re-organised
-dump generally still works.
+Slower to arrive, but sanctioned and stable — and this route is verified against
+a real download. Takes the `.zip`, a directory, or a single `.json`/`.jsonl`
+file.
+
+The chats live in `prod-grok-backend.json`, shaped like this:
+
+```jsonc
+{"conversations": [{
+  "conversation": {"id": …, "title": …, "create_time": "2026-07-28T00:29:26Z"},
+  "responses": [{"response": {"message": …, "sender": "human",
+                              "create_time": {"$date": {"$numberLong": "…"}}},
+                 "share_link": …}]}]}
+```
+
+Two things that layout does are worth knowing, because both are handled and
+both would otherwise silently drop data: the metadata sits under a
+`conversation` wrapper while the turns sit beside it, and each turn is wrapped
+again under `response`, so `sender` and `create_time` are two levels down.
+Turn timestamps are MongoDB extended JSON rather than the ISO strings used at
+the conversation level.
+
+The reader still walks the whole tree looking for conversation-shaped objects
+rather than hard-coding that path, so a re-organised dump generally keeps
+working.
 
 ## When it breaks
 
