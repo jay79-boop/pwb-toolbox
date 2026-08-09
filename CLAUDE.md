@@ -3,6 +3,26 @@
 A toolbox library for quant traders: datasets, backtesting (Backtrader), live
 execution, and performance analytics. Requires Python 3.10+.
 
+## Flagging action items
+
+Anything the user has to do themselves — export a key, restart something, click
+through an OAuth flow, make a decision — goes in a dedicated block at the very end
+of the reply, never buried in a paragraph:
+
+```
+## 🔴 NEEDS YOU
+
+1. **Export the key** — `export API_KEY_21ST=...` in your shell profile
+2. **Restart Claude Code** so it picks up the new env
+```
+
+Rules: one block per reply, always last, always that exact `## 🔴 NEEDS YOU`
+heading so it is skimmable. Numbered steps in the order they must happen, each
+leading with a bolded imperative. If a step is also explained in the prose above,
+it still gets repeated here — the block is the checklist of record. No block at all
+when nothing is needed; do not pad it with optional suggestions, or it stops
+meaning anything.
+
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`)
