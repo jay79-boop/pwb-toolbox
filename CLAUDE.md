@@ -64,7 +64,42 @@ black --check --diff pwb_toolbox/ # check without writing
   behavior must be preserved (see `_LEGACY_DEFAULT_QUOTE` in
   `tests/test_optimal_limit_order.py`).
 
+## Design tooling (UI/UX)
+
+`.claude/skills/` vendors the MIT-licensed
+[ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) suite,
+installed with `npx ui-ux-pro-max-cli init --ai claude`. It is unrelated to the
+trading library — the package itself is headless — and exists only so sessions in
+this repo can build dashboards, docs pages, and report UIs to a consistent
+standard. Nothing under `pwb_toolbox/` imports it, and `pytest` never touches it.
+
+The core skill is a local CSV database (84 UI styles, 192 color palettes, 74 font
+pairings, 98 UX guidelines, 25 chart types, 22 stacks) queried with stdlib Python
+— no network, no API key:
+
+```bash
+python3 .claude/skills/ui-ux-pro-max/scripts/search.py "saas landing page" --domain style
+python3 .claude/skills/ui-ux-pro-max/scripts/search.py "fintech dashboard" --domain color --json
+```
+
+The SKILL.md frontmatter says "67 styles, 161 palettes" — that string is hardcoded
+in the upstream template and lags the shipped CSVs. Trust the data files.
+
+The suite ships six companion skills (`design`, `design-system`, `ui-styling`,
+`brand`, `slides`, `banner-design`) that the installer adds alongside the main one.
+Some of their generators call out to `npx shadcn` or image APIs and are untested
+here.
+
+`.mcp.json` registers 21st.dev's [21st MCP](https://21st.dev/mcp) (the successor to
+Magic MCP) for generating React/Tailwind components. It is an HTTP server
+authenticated with `${API_KEY_21ST}`, read from the environment — set it in your
+shell or `.env`, never in `.mcp.json`. Without that variable the server fails to
+authenticate and the rest of the repo is unaffected.
+
 ## Credentials
 
 `load_dataset` reads `PWB_API_KEY`, falling back to the Hugging Face Hub and
 then to yfinance. Never commit keys; `.env` is gitignored.
+
+`API_KEY_21ST` (21st.dev, from https://21st.dev/settings/api-keys) is read from the
+environment by `.mcp.json`. Never commit keys; `.env` is gitignored.
