@@ -113,3 +113,7 @@ then to yfinance. Never commit keys; `.env` is gitignored.
 
 `API_KEY_21ST` (21st.dev, from https://21st.dev/settings/api-keys) is read from the
 environment by `.mcp.json`. Never commit keys; `.env` is gitignored.
+
+`.env.example` lists both variables. Copy it to `.env` and fill it in — but note
+that `.env` alone does not reach `.mcp.json`, which reads the process environment;
+see the export note above.
