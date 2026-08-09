@@ -29,6 +29,9 @@ ELEVATED_IV_RANK = 30.0
 MAX_SPREAD_PCT = 5.0
 GOOD_SPREAD_PCT = 2.0
 EXIT_DTE = 21.0
+# How far past the market's own expected move a price target may sit. At 1.0 the
+# gate admits roughly a one-in-six move; at 1.5, closer to one in fifteen.
+MAX_TARGET_SIGMA = 1.5
 
 
 @dataclass(frozen=True)
@@ -167,12 +170,14 @@ def check_target(
     vol: float,
     dte: float,
     kind: str = "call",
+    limit: float = MAX_TARGET_SIGMA,
 ) -> Check:
     """Is the move you need one the options market thinks is likely?
 
-    The expected move is the market's own one-sigma forecast for the horizon.
-    A target beyond it is a bet the market prices as unlikely — which can still
-    be the right bet, but should be a decision rather than an accident.
+    The expected move is the market's own one-sigma forecast for the horizon,
+    and ``limit`` sets how far past it a target may sit. A target beyond the
+    limit is a bet the market prices as unlikely — which can still be the right
+    bet, but should be a decision rather than an accident.
     """
     if target is None:
         return Check("target within expected move", UNKNOWN, "no price target supplied")
@@ -193,17 +198,19 @@ def check_target(
         )
 
     sigma = abs(move) / band
-    if sigma > 1.0:
+    if sigma > limit:
         return Check(
             "target within expected move",
             FAIL,
-            f"needs {sigma:.2f} sigma ({move:+.2f}) by your exit; expected move is "
-            f"+/-{band:.2f}",
+            f"needs {sigma:.2f} sigma ({move:+.2f}) by your exit, over the "
+            f"{limit:g} limit; expected move is +/-{band:.2f}",
         )
+    stretch = " — stretching" if sigma > 1.0 else ""
     return Check(
         "target within expected move",
         PASS,
-        f"needs {sigma:.2f} sigma ({move:+.2f}); expected move is +/-{band:.2f}",
+        f"needs {sigma:.2f} sigma ({move:+.2f}); expected move is "
+        f"+/-{band:.2f}{stretch}",
     )
 
 

@@ -169,6 +169,27 @@ def test_target_inside_the_expected_move_passes():
 def test_target_beyond_the_expected_move_fails():
     c = check_target(280.0, spot=232.0, vol=0.28, dte=38, kind="call")
     assert c.status == FAIL
+    assert "1.5 limit" in c.detail
+
+
+def test_target_between_one_and_the_limit_passes_but_is_flagged():
+    """The band the 1.5 sigma gate opened up: admitted, and labelled stretching."""
+    c = check_target(249.0, spot=232.0, vol=0.28, dte=38, kind="call")
+    assert 1.0 < float(c.detail.split()[1]) <= 1.5
+    assert c.status == PASS
+    assert "stretching" in c.detail
+
+
+def test_target_just_past_the_limit_fails():
+    c = check_target(255.0, spot=232.0, vol=0.28, dte=38, kind="call")
+    assert float(c.detail.split()[1]) > 1.5
+    assert c.status == FAIL
+
+
+def test_target_limit_is_configurable():
+    stretch = dict(target=249.0, spot=232.0, vol=0.28, dte=38, kind="call")
+    assert check_target(**stretch, limit=1.5).status == PASS
+    assert check_target(**stretch, limit=1.0).status == FAIL
 
 
 def test_target_on_the_wrong_side_of_spot_fails():
