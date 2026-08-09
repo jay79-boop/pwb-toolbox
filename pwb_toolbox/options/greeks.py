@@ -110,6 +110,43 @@ def black_scholes(
     )
 
 
+def implied_vol(
+    price: float,
+    spot: float,
+    strike: float,
+    days_to_expiry: float,
+    rate: float = 0.045,
+    kind: str = "call",
+    bracket: tuple[float, float] = (1e-4, 5.0),
+) -> float | None:
+    """Back out the volatility that reprices ``price``.
+
+    The premium you actually paid is the observable fact; a volatility typed in
+    from elsewhere is not. Solving backwards keeps every greek consistent with
+    the contract in front of you. Returns ``None`` when the price sits outside
+    what the model can produce at any volatility — usually a stale or crossed
+    quote, or an American put trading under its intrinsic value.
+    """
+    lo, hi = bracket
+
+    def price_at(v: float) -> float:
+        return black_scholes(spot, strike, days_to_expiry, v, rate, kind).price
+
+    if not (price_at(lo) <= price <= price_at(hi)):
+        return None
+
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        p = price_at(mid)
+        if abs(p - price) < 1e-10:
+            return mid
+        if p < price:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 def expected_move(spot: float, vol: float, days: float) -> float:
     """One standard deviation of underlying movement over ``days`` sessions.
 

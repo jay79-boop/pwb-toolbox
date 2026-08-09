@@ -47,7 +47,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (105 tests, ~17s)
+pytest tests/ -v                  # full suite (147 tests, ~15s)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help   # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export

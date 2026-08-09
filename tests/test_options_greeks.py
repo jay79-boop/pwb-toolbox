@@ -112,3 +112,28 @@ def test_invalid_inputs_raise(kwargs):
 def test_unknown_kind_raises():
     with pytest.raises(ValueError, match="call.*put"):
         black_scholes(100.0, 100.0, 30.0, 0.3, kind="straddle")
+
+
+def test_implied_vol_round_trips():
+    from pwb_toolbox.options import implied_vol
+
+    for vol in (0.12, 0.28, 0.55, 1.20):
+        price = black_scholes(232.0, 230.0, 38.0, vol).price
+        assert implied_vol(price, 232.0, 230.0, 38.0) == pytest.approx(vol, abs=1e-6)
+
+
+def test_implied_vol_round_trips_for_puts():
+    from pwb_toolbox.options import implied_vol
+
+    price = black_scholes(232.0, 240.0, 38.0, 0.31, kind="put").price
+    solved = implied_vol(price, 232.0, 240.0, 38.0, kind="put")
+    assert solved == pytest.approx(0.31, abs=1e-6)
+
+
+def test_implied_vol_returns_none_for_an_unpriceable_premium():
+    from pwb_toolbox.options import implied_vol
+
+    # Below intrinsic for a call: no volatility produces it.
+    assert implied_vol(0.50, 232.0, 200.0, 38.0) is None
+    # Above the underlying: likewise impossible.
+    assert implied_vol(500.0, 232.0, 230.0, 38.0) is None

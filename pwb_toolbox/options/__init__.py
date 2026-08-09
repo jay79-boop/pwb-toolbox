@@ -1,6 +1,6 @@
 """Option pricing and hold-time analytics for long single-leg positions."""
 
-from .greeks import Greeks, black_scholes, expected_move
+from .greeks import Greeks, black_scholes, expected_move, implied_vol
 from .decay import (
     DropDead,
     Recovery,
@@ -10,11 +10,28 @@ from .decay import (
     hurdle_ratio,
     recovery,
 )
+from .checks import (
+    FAIL,
+    PASS,
+    UNKNOWN,
+    Check,
+    check_delta,
+    check_dte,
+    check_earnings,
+    check_hurdle,
+    check_iv_rank,
+    check_size,
+    check_spread,
+    check_target,
+    run_all,
+    verdict,
+)
 
 __all__ = [
     "Greeks",
     "black_scholes",
     "expected_move",
+    "implied_vol",
     "Recovery",
     "DropDead",
     "hurdle_ratio",
@@ -22,4 +39,18 @@ __all__ = [
     "recovery",
     "drop_dead",
     "decay_schedule",
+    "Check",
+    "PASS",
+    "FAIL",
+    "UNKNOWN",
+    "check_size",
+    "check_dte",
+    "check_delta",
+    "check_hurdle",
+    "check_iv_rank",
+    "check_spread",
+    "check_earnings",
+    "check_target",
+    "run_all",
+    "verdict",
 ]
