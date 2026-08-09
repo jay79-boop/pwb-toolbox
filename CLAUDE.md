@@ -85,16 +85,26 @@ python3 .claude/skills/ui-ux-pro-max/scripts/search.py "fintech dashboard" --dom
 The SKILL.md frontmatter says "67 styles, 161 palettes" — that string is hardcoded
 in the upstream template and lags the shipped CSVs. Trust the data files.
 
-The suite ships six companion skills (`design`, `design-system`, `ui-styling`,
-`brand`, `slides`, `banner-design`) that the installer adds alongside the main one.
-Some of their generators call out to `npx shadcn` or image APIs and are untested
-here.
+The installer also drops six companion skills (`design`, `design-system`,
+`ui-styling`, `brand`, `slides`, `banner-design`) alongside the main one. They were
+removed deliberately — several of their generators shell out to `npx shadcn` or
+image APIs and none were needed here. Re-running `uipro init` restores them, so
+prune again after any upgrade.
 
 `.mcp.json` registers 21st.dev's [21st MCP](https://21st.dev/mcp) (the successor to
 Magic MCP) for generating React/Tailwind components. It is an HTTP server
-authenticated with `${API_KEY_21ST}`, read from the environment — set it in your
-shell or `.env`, never in `.mcp.json`. Without that variable the server fails to
-authenticate and the rest of the repo is unaffected.
+authenticated with `${API_KEY_21ST}` — never hardcode the key in `.mcp.json`.
+
+Claude Code expands `${...}` from its own process environment and does not read
+`.env`, so exporting the key in your shell profile (or `set -a; . .env; set +a`
+before launching) is what actually works:
+
+```bash
+export API_KEY_21ST=...   # https://21st.dev/settings/api-keys
+```
+
+Without that variable the server fails to authenticate; nothing else in the repo
+is affected.
 
 ## Credentials
 
