@@ -23,6 +23,19 @@ it still gets repeated here — the block is the checklist of record. No block a
 when nothing is needed; do not pad it with optional suggestions, or it stops
 meaning anything.
 
+Commands in that block get pasted into **Windows PowerShell**, so write them for
+PowerShell rather than bash. No `curl … | sed` pipelines — `curl` is an alias for
+`Invoke-WebRequest` there and takes different arguments, and `sed` does not exist.
+No `~` for the home directory (use `$HOME`), and no `&&` chaining, which Windows
+PowerShell 5.1 rejects. When the text being written contains em dashes or emoji,
+append with `[IO.File]::AppendAllText(..., (New-Object Text.UTF8Encoding $false))` —
+`Add-Content` defaults to ANSI on 5.1 and mangles them. Pin any
+`raw.githubusercontent.com` URL to a commit SHA rather than to `main`: a branch that
+has not merged yet still serves the old file, so the command silently does nothing.
+
+Each step is one self-contained paste. Do not split a single command across two
+numbered items or wrap it in prose the user has to reassemble.
+
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`)
