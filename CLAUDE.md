@@ -47,6 +47,13 @@ specificity: name the window, the menu path, and the button text. Claude cannot 
 anything on the user's machine — it runs in a remote container — so the directions
 have to stand on their own.
 
+Never ask the user to hand-edit a command to insert a value. Told to "swap in your
+key," they reasonably paste the key on its own line, and PowerShell tries to run it
+as a command. Prompt for it instead — `$k = Read-Host 'Paste your key'` — and use
+`$k` in the next line. That also keeps the secret out of PSReadLine's history file,
+which records every line entered at the prompt in plaintext, failed ones included.
+Same rule for any placeholder, secret or not: the paste must work verbatim.
+
 A full block looks like this:
 
 ````
