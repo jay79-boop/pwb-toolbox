@@ -116,15 +116,49 @@ Magic MCP) for generating React/Tailwind components. It is an HTTP server
 authenticated with `${API_KEY_21ST}` — never hardcode the key in `.mcp.json`.
 
 Claude Code expands `${...}` from its own process environment and does not read
-`.env`, so exporting the key in your shell profile (or `set -a; . .env; set +a`
-before launching) is what actually works:
+`.env`, so how you supply the key depends on where the session runs.
+
+**Local sessions** — export it before launching, from your shell profile or with
+`set -a; . .env; set +a`:
 
 ```bash
 export API_KEY_21ST=...   # https://21st.dev/settings/api-keys
 ```
 
-Without that variable the server fails to authenticate; nothing else in the repo
-is affected.
+**Claude Code on the web** — there is no shell profile to export from, so the key
+goes in the cloud environment's **Environment variables** field, in the environment
+dialog at claude.ai/code (opened with the cloud icon; personal environments have no
+separate page in account settings). The field takes `.env` format, one `KEY=value`
+per line:
+
+```text
+API_KEY_21ST=...
+```
+
+Sessions copy those values into their process environment once at startup, which is
+what `${API_KEY_21ST}` then expands from. Editing the field only affects sessions
+started afterward — a running session keeps the values it booted with, so start a
+new one rather than expecting a live pickup.
+
+Two things bite on the web beyond the variable itself:
+
+- **Network access.** The server dials `https://21st.dev/api/mcp` from the session's
+  own network. The default **Trusted** level allows package registries, GitHub, and
+  cloud SDKs — not 21st.dev — so the environment needs **Custom** access with
+  `21st.dev` in **Allowed domains**, and "Also include default list of common package
+  managers" ticked to keep the Trusted set. The exemption that lets MCP *connectors*
+  skip the allowlist does not apply here: it covers claude.ai connectors routed
+  through Anthropic's servers, not a project `.mcp.json` server.
+- **Visibility.** Cloud environments have no secrets store, and Anthropic's docs
+  advise against putting API keys in environment variables at all — anyone who uses
+  the environment can read them, and an org-shared environment exposes them to every
+  member. A scoped 21st.dev key is a low-stakes thing to accept that for, but treat
+  it as a deliberate trade: keep it in a personal environment, not a shared one, and
+  rotate it at https://21st.dev/settings/api-keys if it leaks.
+
+Without the variable the server fails to authenticate; nothing else in the repo
+is affected. Note that `21st` authenticates by header, not OAuth — picking it from
+the `/mcp` menu and signing in through a browser will not fix a missing key.
 
 ## Credentials
 
@@ -135,5 +169,7 @@ then to yfinance. Never commit keys; `.env` is gitignored.
 environment by `.mcp.json`. Never commit keys; `.env` is gitignored.
 
 `.env.example` lists both variables. Copy it to `.env` and fill it in — but note
-that `.env` alone does not reach `.mcp.json`, which reads the process environment;
-see the export note above.
+that `.env` alone does not reach `.mcp.json`, which reads the process environment.
+Locally that means exporting the key; on the web it means setting it in the cloud
+environment's variables. Both routes, and the network and visibility caveats that
+come with the web one, are under "Design tooling (UI/UX)" above.
