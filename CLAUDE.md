@@ -126,6 +126,11 @@ black --check --diff pwb_toolbox/ # check without writing
 
 - Formatting is `black` with default settings — see `.vscode/settings.json`,
   which also enables pylint with `--disable=relative-beyond-top-level`.
+  `black pwb_toolbox/ tools/ tests/` is the formatted surface and is clean.
+  Do **not** run bare `black .`: it would also rewrite `pwb_toolbox_legacy/`
+  (superseded, kept as-is for reference) and the vendored skill under
+  `.claude/skills/`, which tracks upstream and is restored by `uipro init`.
+  CI does not check formatting, so it can drift between runs.
 - Tests must not require network access or a live broker. `ib_insync` calls are
   exercised against a mocked `IB` client (see `tests/test_ib_connector_calibration.py`),
   and dataset tests should not depend on `PWB_API_KEY` or a Hugging Face login.
