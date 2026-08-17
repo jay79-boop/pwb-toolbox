@@ -638,6 +638,45 @@ def test_generic_types_reach_a_real_reason(declaration, expected):
     assert not any("could not parse" in item for item in result.unsupported)
 
 
+@pytest.mark.parametrize(
+    "declaration, expected",
+    [
+        ("var box[] zones = array.new_box(0)", "array.new_box()"),
+        ("var label[] pend = array.new_label()", "array.new_label()"),
+        ("float[] arr = array.new_float()", "array.new_float()"),
+        ("int[] xs = array.new_int(5)", "array.new_int()"),
+        ("string[] names = array.new_string()", "array.new_string()"),
+    ],
+)
+def test_bracket_shorthand_types_reach_a_real_reason(declaration, expected):
+    """`float[]` is the older spelling of `array<float>` and reads the same."""
+    result = convert('//@version=6\nstrategy("S")\n' + declaration + "\n")
+    assert not result.ok
+    assert any(expected in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "if close > close[1]\n    strategy.close()\n",
+        "x = high[2] - low[3]\nif x > 0\n    strategy.close()\n",
+        'v = input.string("a", "T", options=["a","b"])\n',
+    ],
+)
+def test_bracket_shorthand_does_not_eat_indexing_or_lists(snippet):
+    """Emptiness is the discriminator: `[]` is a type, `[1]` is a bar offset."""
+    result = convert('//@version=6\nstrategy("S")\n' + snippet)
+    assert result.ok, result.unsupported
+
+
+def test_bracket_shorthand_does_not_eat_tuple_destructuring():
+    result = convert(
+        '//@version=6\nstrategy("S")\n[m, s, h] = ta.macd(close, 12, 26, 9)\n'
+    )
+    assert any("tuple destructuring" in item for item in result.unsupported)
+
+
 def test_a_declared_user_type_is_recognised_after_its_block():
     """`bar b = bar.new()` only reads as a declaration once `bar` is known."""
     source = (
