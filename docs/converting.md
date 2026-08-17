@@ -94,6 +94,7 @@ duplicate is pure waste.
 | `var x = <literal>` | an attribute set once in `__init__` |
 | `x := value` | assignment, writing through to the attribute for a `var` |
 | `na(x)` | the NaN test `x != x` |
+| `request.security(syminfo.tickerid, tf, expr)` | a read from a resampled `self.datas[n]` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 
 Pine inputs become real Backtrader params, so they stay tunable:
@@ -123,7 +124,8 @@ every later reference — that is what the Pine source means by the name.
 
 Reported in `result.unsupported`, never approximated:
 
-- `request.security` — multi-timeframe needs a second data feed and a resampling decision
+- `request.security` on a symbol other than `syminfo.tickerid` — a second instrument is a data-loading decision
+- `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps, user-defined functions and types
@@ -140,6 +142,66 @@ cannot change a trade, so refusing one would fail a conversion over nothing.
 
 Both lists are also written into the generated class's docstring, so a
 converted file explains its own gaps without needing the original result object.
+
+## A second timeframe
+
+Pine reaches another timeframe inline. Backtrader reaches it through a second
+data feed, resampled onto the cerebro *before* the strategy exists. So
+`request.security` becomes a read from `self.datas[n]`, and the generated class
+records what it needs:
+
+```pinescript
+htfTF = input.timeframe("W", "Higher timeframe")
+htfMa = request.security(syminfo.tickerid, htfTF, ta.ema(close, 4))
+```
+
+```python
+resample_spec = (
+    (bt.TimeFrame.Weeks, 1),
+)
+
+def __init__(self):
+    if len(self.datas) < 2:
+        raise ValueError("HTFTrend needs 2 data feeds; see resample_spec")
+    self._ema_1 = bt.indicators.EMA(self.datas[1].close, period=4)
+```
+
+Wiring it up is then mechanical:
+
+```python
+cerebro.adddata(data)
+for timeframe, compression in HTFTrend.resample_spec:
+    cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+cerebro.addstrategy(HTFTrend)
+```
+
+Run it with the feeds missing and it raises in `__init__` naming what is
+absent, rather than an `IndexError` from somewhere inside `next()`.
+
+Calls sharing a timeframe share a feed. `timeframe.period` is the chart's own
+timeframe, so it adds no feed at all.
+
+**The timeframe stops being tunable.** `resampledata` runs before
+`addstrategy`, so a param changed at that point cannot move the feed underneath
+the strategy. A timeframe read from an input is therefore resolved to that
+input's default and baked in — and reported in `result.ignored`, because a knob
+that looks live and is not would be a silently wrong backtest. Change
+`resample_spec`, not the param.
+
+### On lookahead
+
+Pine's default is `barmerge.lookahead_off`: the higher timeframe must not leak
+data the current bar could not have seen. Backtrader's resampled feed behaves
+the same way, and the test suite asserts it directly — a probe walks weekly and
+monthly resamples and fails if the higher-timeframe bar is ever dated after the
+chart bar being processed.
+
+That check is the reason this feature can be trusted. A lookahead bug does not
+fail loudly; it produces a beautiful, entirely fake backtest.
+
+`lookahead=barmerge.lookahead_on` is refused for the same reason. It genuinely
+reads a bar before it closes, and there is no way to offer that without feeding
+the strategy data it could not have had.
 
 ## State that survives the bar
 

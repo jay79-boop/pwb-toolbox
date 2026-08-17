@@ -267,7 +267,7 @@ def _unsupported(source):
 @pytest.mark.parametrize(
     "snippet, marker",
     [
-        ("s = request.security(syminfo.tickerid, '1D', close)\n", "request.security"),
+        ("s = request.security('AAPL', '1D', close)\n", "syminfo.tickerid"),
         ("varip count = 0\n", "varip count"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
@@ -514,6 +514,199 @@ def test_parsing_resumes_after_a_user_defined_function():
 def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
     result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
     assert result.ok, result.unsupported
+
+
+# --- request.security: a second timeframe ------------------------------------
+
+HTF_STRATEGY = """//@version=6
+strategy("HTF Trend")
+htfTF = input.timeframe("W", "Higher timeframe")
+htfMa = request.security(syminfo.tickerid, htfTF, ta.ema(close, 4))
+htfClose = request.security(syminfo.tickerid, htfTF, close)
+ma = ta.sma(close, 10)
+if close > ma and htfClose > htfMa
+    strategy.entry("long", strategy.long)
+if close < ma
+    strategy.close("long")
+"""
+
+
+def _run_htf(source, feeds=None):
+    """Compile, wire up the feeds the class asks for, and run."""
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+
+    cerebro = bt.Cerebro()
+    data = bt.feeds.PandasData(dataname=_price_frame())
+    cerebro.adddata(data)
+    for timeframe, compression in (
+        feeds if feeds is not None else strategy_cls.resample_spec
+    ):
+        cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+    cerebro.addstrategy(strategy_cls)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+    closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
+    return cerebro.broker.getvalue(), closed
+
+
+@pytest.mark.parametrize(
+    "timeframe, expected",
+    [
+        ("D", "(bt.TimeFrame.Days, 1)"),
+        ("1D", "(bt.TimeFrame.Days, 1)"),
+        ("W", "(bt.TimeFrame.Weeks, 1)"),
+        ("240", "(bt.TimeFrame.Minutes, 240)"),
+        ("30S", "(bt.TimeFrame.Seconds, 30)"),
+    ],
+)
+def test_security_records_the_feed_it_needs(timeframe, expected):
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"h = request.security(syminfo.tickerid, '{timeframe}', close)\n"
+        "if h > close\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert expected in result.code
+
+
+def test_security_reads_from_the_resampled_feed():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "h = request.security(syminfo.tickerid, 'D', ta.ema(close, 20))\n"
+        "if h > close\n    strategy.close()\n"
+    )
+    code = convert(source).code
+    assert "bt.indicators.EMA(self.datas[1].close, period=20)" in code
+    # The chart's own close must not have moved onto the resampled feed.
+    assert "self.data.close[0]" in code
+
+
+def test_two_calls_on_one_timeframe_share_a_feed():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "a = request.security(syminfo.tickerid, 'D', close)\n"
+        "b = request.security(syminfo.tickerid, 'D', high)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    code = convert(source).code
+    assert code.count("bt.TimeFrame.Days") == 1
+    assert "self.datas[2]" not in code
+
+
+def test_chart_timeframe_needs_no_second_feed():
+    """`timeframe.period` is the chart itself; Pine just routes it oddly."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "h = request.security(syminfo.tickerid, timeframe.period, close)\n"
+        "if h > open\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "resample_spec" not in result.code
+    assert "h = self.data.close[0]" in result.code
+
+
+def test_security_on_another_symbol_is_reported():
+    result = convert(
+        "//@version=6\nstrategy(\"S\")\nh = request.security('AAPL', 'D', close)\n"
+    )
+    assert not result.ok
+    assert any("syminfo.tickerid" in item for item in result.unsupported)
+
+
+def test_lookahead_on_is_reported():
+    """lookahead_on reads a bar before it closes -- there is no equivalent."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "h = request.security(syminfo.tickerid, 'D', close, "
+        "lookahead=barmerge.lookahead_on)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("before it closes" in item for item in result.unsupported)
+
+
+def test_lookahead_off_is_the_supported_default():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "h = request.security(syminfo.tickerid, 'D', close, "
+        "lookahead=barmerge.lookahead_off)\n"
+        "if h > close\n    strategy.close()\n"
+    )
+    assert convert(source).ok
+
+
+def test_timeframe_from_a_param_says_the_param_cannot_move_the_feed():
+    """A knob that looks live and is not would be a silently wrong backtest."""
+    result = convert(HTF_STRATEGY)
+    assert result.ok, result.unsupported
+    assert any("htfTF" in item and "resample_spec" in item for item in result.ignored)
+
+
+def test_security_with_a_non_literal_timeframe_is_reported():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "tf = close > open ? 'D' : 'W'\n"
+        "h = request.security(syminfo.tickerid, tf, close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("literal string" in item for item in result.unsupported)
+
+
+def test_generated_htf_strategy_refuses_to_run_miswired():
+    """One feed short, the reads would silently be IndexErrors deep in next()."""
+    result = convert(HTF_STRATEGY)
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(namespace[result.class_name])
+    with pytest.raises(ValueError, match="data feeds"):
+        cerebro.run()
+
+
+def test_generated_htf_strategy_runs_and_trades():
+    _, closed = _run_htf(HTF_STRATEGY)
+    assert closed > 0
+
+
+def test_resampled_feed_never_shows_a_bar_from_the_future():
+    """The property the whole feature rests on.
+
+    Pine's default is `barmerge.lookahead_off`: the higher timeframe must not
+    leak data the chart bar could not have seen. A violation here would not
+    fail loudly -- it would produce a beautiful, entirely fake backtest.
+    """
+
+    class Probe(bt.Strategy):
+        def __init__(self):
+            self.violations = 0
+            self.checked = 0
+
+        def next(self):
+            if len(self.datas[1]) == 0:
+                return
+            self.checked += 1
+            if self.datas[1].datetime.datetime(0) > self.data.datetime.datetime(0):
+                self.violations += 1
+
+    for timeframe in (bt.TimeFrame.Weeks, bt.TimeFrame.Months):
+        cerebro = bt.Cerebro()
+        data = bt.feeds.PandasData(dataname=_price_frame())
+        cerebro.adddata(data)
+        cerebro.resampledata(data, timeframe=timeframe, compression=1)
+        cerebro.addstrategy(Probe)
+        probe = cerebro.run()[0]
+        assert probe.checked > 100, "the probe has to actually see bars"
+        assert probe.violations == 0
 
 
 # --- var: state that survives the bar ----------------------------------------
