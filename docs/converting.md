@@ -88,6 +88,7 @@ duplicate is pure waste.
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
 | `cond ? a : b` | `a if cond else b` |
 | `if` / `else if` / `else` | the same, inside `next()` |
+| an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
 | `strategy.exit(..., stop=, limit=)` | an OCO stop/limit pair, maintained |
@@ -285,6 +286,35 @@ The test suite runs a converted `var` strategy through a real `cerebro` and
 checks the Pine counter matches the broker's own trade count. Compiling proves
 nothing here — a local assigned in `next()` compiles too, and would silently
 count to one and stay there.
+
+## Expressions split across lines
+
+A long condition is routinely written over several lines, and both shapes turn
+up in published scripts:
+
+```pinescript
+entryOk = (not useGateA or sweepLong) and
+          (not useGateB or upperThird) and
+          (not useGateC or bodyOk)
+
+trailLevel = enableTrail and armed
+             ? maxClose - trailDistance
+             : na
+```
+
+Pine's own rule is that a continuation is indented by something that is *not* a
+multiple of four, which collides with the indentation that opens a block. The
+operator is read instead, which is unambiguous in both directions: **no
+statement ends with a binary operator, and none begins with one.** So a line
+ending in `and`, `+`, `?`, `:` or `=` continues onto the next, and a line
+starting with one continues the line above.
+
+`[` is deliberately not a continuation opener — a line starting with it is
+tuple destructuring, `[macd, signal, hist] = ta.macd(...)`, which is a statement
+of its own.
+
+Where the breaks fall never reaches the output: the tests assert that a split
+condition and the same condition on one line generate character-identical code.
 
 ## Source it cannot even parse
 
