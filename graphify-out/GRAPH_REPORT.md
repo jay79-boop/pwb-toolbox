@@ -1,5 +1,21 @@
 # Graph Report - .  (2026-08-08)
 
+> **Built from `09614f3` (2026-08-02) and not regenerated since.** Everything
+> committed after that point is invisible to this graph — including
+> `pwb_toolbox/converting/`, `pwb_toolbox/scraping/`, `tools/market_close/`,
+> `tools/karaoke_server/` and `tools/pine_sweep.py`, none of which existed when it
+> was generated. Every count below (826 nodes, 1330 edges, 64 communities, 83 files)
+> describes the repository as of that commit, not as of today.
+>
+> Measure the drift before trusting any of it:
+> `git log --oneline 09614f3..HEAD -- pwb_toolbox/ tools/`
+>
+> Regenerate with `/graphify .`, or `graphify update` for an incremental rebuild.
+>
+> Of the outputs, only this report and `graph.json` are tracked — the latter because
+> `tools/graph_audit.py` reads it as its input fixture. `graph.html` and
+> `manifest.json` are gitignored and reappear locally on the next rebuild.
+
 ## Corpus Check
 - Corpus is ~46,183 words - fits in a single context window. You may not need a graph.
 
