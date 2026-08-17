@@ -280,14 +280,15 @@ def test_convert_reports_untranslatable_constructs(snippet, marker):
     assert any(marker in item for item in result.unsupported)
 
 
-def test_convert_reports_strategy_exit_with_a_stop():
+def test_convert_reports_strategy_exit_with_a_tick_offset():
+    """`loss`/`profit` are distances in ticks, which the script never states."""
     source = (
         '//@version=5\nstrategy("S")\nif close > open\n'
-        '    strategy.exit("x", stop=100)\n'
+        '    strategy.exit("x", loss=100)\n'
     )
     result = convert(source)
     assert not result.ok
-    assert any("bracket orders" in item for item in result.unsupported)
+    assert any("ticks" in item for item in result.unsupported)
 
 
 def test_convert_allows_plain_strategy_exit():
@@ -514,6 +515,177 @@ def test_parsing_resumes_after_a_user_defined_function():
 def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
     result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
     assert result.ok, result.unsupported
+
+
+# --- strategy.exit: stop and limit brackets ----------------------------------
+
+BRACKET_STRATEGY = """//@version=6
+strategy("Bracket")
+rr = input.float(2.0, "Reward multiple")
+var float sl = na
+var float tp = na
+a = ta.atr(14)
+ma = ta.sma(close, 20)
+if strategy.position_size == 0 and close > ma
+    strategy.entry("Long", strategy.long)
+    sl := close - a
+    tp := close + a * rr
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+"""
+
+SHORT_BRACKET = """//@version=6
+strategy("Short Bracket")
+a = ta.atr(14)
+ma = ta.sma(close, 20)
+var float sl = na
+if strategy.position_size == 0 and close < ma
+    strategy.entry("S", strategy.short)
+    sl := close + a
+if strategy.position_size < 0
+    strategy.exit("SX", "S", stop=sl)
+"""
+
+
+def _run_counting_orders(source):
+    """Run a converted strategy, counting orders so stacking would show up."""
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    class Counted(namespace[result.class_name]):
+        def __init__(self):
+            super().__init__()
+            self.submitted = 0
+            self.bracket_fills = {"buy": 0, "sell": 0}
+            self.exit_calls = 0
+
+        def notify_order(self, order):
+            if order.status == order.Submitted:
+                self.submitted += 1
+            elif order.status == order.Completed and order.exectype in (
+                bt.Order.Stop,
+                bt.Order.Limit,
+            ):
+                self.bracket_fills["buy" if order.isbuy() else "sell"] += 1
+
+        def _pine_exit(self, *args, **kwargs):
+            if self.position.size:
+                self.exit_calls += 1
+            return super()._pine_exit(*args, **kwargs)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(Counted)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+    totals = strategy.analyzers.trades.get_analysis().get("total", {})
+    # `closed` is what filled; `opened` includes a position still on at the end
+    # of the data, which has entry and exit orders but no completed trade.
+    return strategy, totals.get("closed", 0), totals.get("total", 0)
+
+
+def test_exit_with_stop_and_limit_emits_bracket_orders():
+    code = convert(BRACKET_STRATEGY).code
+    assert "bt.Order.Stop" in code and "bt.Order.Limit" in code
+    assert '"oco"' in code, "the pair must be one-cancels-other"
+
+
+def test_exit_without_levels_is_still_a_plain_close():
+    source = '//@version=6\nstrategy("S")\nif close > open\n    strategy.exit("x")\n'
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.close()" in result.code
+    assert "_pine_exit" not in result.code
+
+
+@pytest.mark.parametrize(
+    "argument", ["loss=100", "profit=50", "trail_points=10", "trail_offset=5"]
+)
+def test_exit_with_a_tick_offset_is_reported(argument):
+    source = (
+        '//@version=6\nstrategy("S")\nif close > open\n'
+        f'    strategy.exit("x", {argument})\n'
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("ticks" in item for item in result.unsupported)
+
+
+def test_generated_bracket_exits_actually_fill():
+    """Every trade must close through a stop or a limit, not by other means."""
+    strategy, closed, _ = _run_counting_orders(BRACKET_STRATEGY)
+    assert closed > 5
+    fills = strategy.bracket_fills["buy"] + strategy.bracket_fills["sell"]
+    assert fills == closed
+
+
+def test_generated_bracket_exits_do_not_stack_orders():
+    """The correctness crux, and a silent failure if it is wrong.
+
+    Pine's strategy.exit is a standing instruction re-evaluated every bar. If
+    each evaluation submitted a fresh pair, a position held ten bars would
+    carry twenty live exit orders and fill several times over. So the order
+    count has to track trades, not bars.
+    """
+    strategy, closed, opened = _run_counting_orders(BRACKET_STRATEGY)
+    assert strategy.exit_calls > closed * 2, "the exit has to be re-evaluated a lot"
+    # One entry plus one stop and one limit per position taken, and nothing
+    # more. `opened` rather than `closed`, so a position still on at the end of
+    # the data still counts its orders.
+    assert strategy.submitted == opened * 3
+
+
+def test_generated_short_bracket_exits_buy_to_cover():
+    strategy, closed, opened = _run_counting_orders(SHORT_BRACKET)
+    assert closed > 5
+    assert strategy.bracket_fills["buy"] == closed
+    assert strategy.bracket_fills["sell"] == 0
+    # A stop only, so two orders per position rather than three.
+    assert strategy.submitted == opened * 2
+
+
+def test_a_moving_stop_replaces_its_order_rather_than_adding_one():
+    """A stop recomputed each bar must move, which means cancel and resubmit."""
+    source = (
+        '//@version=6\nstrategy("Trail")\n'
+        "a = ta.atr(14)\nma = ta.sma(close, 20)\n"
+        'if strategy.position_size == 0 and close > ma\n    strategy.entry("L", strategy.long)\n'
+        'if strategy.position_size > 0\n    strategy.exit("LX", "L", stop=close - a)\n'
+    )
+    strategy, closed, _ = _run_counting_orders(source)
+    assert closed > 5
+    assert strategy.bracket_fills["sell"] == closed
+    # Replacement, not accumulation: comfortably fewer than one per evaluation.
+    assert strategy.submitted < strategy.exit_calls * 2
+
+
+def test_a_na_level_submits_no_order():
+    """`var float sl = na` is 'no level yet'; a stop at NaN never compares."""
+    source = (
+        '//@version=6\nstrategy("S")\nvar float sl = na\n'
+        "ma = ta.sma(close, 20)\n"
+        'if close > ma\n    strategy.entry("L", strategy.long)\n'
+        'if strategy.position_size > 0\n    strategy.exit("LX", "L", stop=sl)\n'
+    )
+    strategy, _, _ = _run_counting_orders(source)
+    assert strategy.exit_calls > 0, "the exit has to actually be reached"
+    assert strategy.bracket_fills == {"buy": 0, "sell": 0}
+
+
+def test_convert_maps_strategy_position_avg_price():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ma = ta.sma(close, 20)\n"
+        'if close > ma\n    strategy.entry("L", strategy.long)\n'
+        "if strategy.position_size > 0\n"
+        '    strategy.exit("BE", "L", stop=strategy.position_avg_price)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.position.price" in result.code
 
 
 # --- request.security: a second timeframe ------------------------------------
