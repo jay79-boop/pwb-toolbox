@@ -1124,6 +1124,102 @@ def test_bare_na_is_still_the_literal():
     assert "self.x = float('nan')" in result.code.split("def next")[1]
 
 
+SWITCH_STRATEGY = """//@version=6
+strategy("Switch")
+mode = input.string("Tight", "Mode")
+band = switch mode
+    "Tight" => 0.002
+    "Wide"  => 0.05
+    => 0.02
+ma = ta.sma(close, 20)
+if close > ma * (1 + band)
+    strategy.entry("l", strategy.long)
+if close < ma
+    strategy.close()
+"""
+
+
+def test_switch_with_a_subject_folds_into_conditionals():
+    """Pine's switch is a chain of conditionals written vertically."""
+    source = (
+        '//@version=6\nstrategy("S")\nmode = input.string("a", "M")\n'
+        'm = switch mode\n    "a" => 1.0\n    "b" => 2.0\n    => 3.0\n'
+        "if close > m\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "1 if (self.p.mode == 'a')" in result.code
+    assert "2 if (self.p.mode == 'b')" in result.code
+    assert "else 3" in result.code
+
+
+def test_switch_without_a_default_yields_na():
+    """Pine returns `na` when nothing matches and no default was written."""
+    source = (
+        '//@version=6\nstrategy("S")\nmode = input.string("a", "M")\n'
+        'm = switch mode\n    "a" => 1.0\n'
+        "if close > m\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "float('nan')" in result.code
+
+
+def test_switch_without_a_subject_tests_each_case_as_a_condition():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "m = switch\n    close > open => 1.0\n    close < open => 2.0\n    => 3.0\n"
+        "if close > m\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "1 if (self.data.close[0] > self.data.open[0])" in result.code
+
+
+def test_switch_case_may_itself_be_a_ternary():
+    source = (
+        '//@version=6\nstrategy("S")\nmode = input.string("a", "M")\n'
+        'm = switch mode\n    "a" => close > open ? 1.0 : 2.0\n    => 3.0\n'
+        "if close > m\n    strategy.close()\n"
+    )
+    assert convert(source).ok
+
+
+def test_parsing_resumes_after_a_switch_block():
+    program = parse(
+        '//@version=6\nstrategy("S")\nmode = input.string("a", "M")\n'
+        'm = switch mode\n    "a" => 1.0\n    => 2.0\n'
+        "y = ta.sma(close, 5)\n"
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+def test_a_switch_used_as_a_statement_is_reported():
+    """A switch whose result goes nowhere is a side-effecting block, not this."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nswitch\n    close > open => 1\n    => 2\n'
+    )
+    assert not result.ok
+    assert any("switch statement" in item for item in result.unsupported)
+
+
+def test_switch_is_still_usable_as_a_variable_name():
+    result = convert(
+        '//@version=6\nstrategy("S")\nswitch = 5\nif close > switch\n    strategy.close()\n'
+    )
+    assert result.ok, result.unsupported
+
+
+def test_generated_switch_strategy_responds_to_its_input():
+    """Every branch, default included, has to actually reach the trades."""
+    _, tight = _run(SWITCH_STRATEGY, mode="Tight")
+    _, wide = _run(SWITCH_STRATEGY, mode="Wide")
+    _, fallthrough = _run(SWITCH_STRATEGY, mode="Neither")
+    assert tight > 0
+    assert len({tight, wide, fallthrough}) == 3, (tight, wide, fallthrough)
+
+
 @pytest.mark.parametrize(
     "operator, expected",
     [

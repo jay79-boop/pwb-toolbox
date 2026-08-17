@@ -421,6 +421,19 @@ class Parser:
         if token.kind == "NAME" and token.value in _BLOCK_KEYWORDS:
             return self._skip_block(token.value, token.line)
 
+        # A switch whose result goes nowhere is a side-effecting block, which
+        # is a different thing from the expression handled below. Skip and
+        # report it rather than mis-reading it as one.
+        if (
+            token.kind == "NAME"
+            and token.value == "switch"
+            and not (
+                self.tokens[self.pos + 1].kind == "OP"
+                and self.tokens[self.pos + 1].value in _ASSIGN_OPS
+            )
+        ):
+            return self._skip_block("switch statement", token.line)
+
         if token.kind == "NAME" and token.value == "if":
             return self.parse_if()
 
@@ -457,8 +470,13 @@ class Parser:
             if nxt.kind == "OP" and nxt.value in _ASSIGN_OPS:
                 target = self.advance().value
                 operator = self.advance().value
-                value = self.parse_expression()
-                self.expect("NEWLINE")
+                if self.at("NAME", "switch"):
+                    # The block runs to its DEDENT, so there is no trailing
+                    # newline of its own to consume.
+                    value = self.parse_switch()
+                else:
+                    value = self.parse_expression()
+                    self.expect("NEWLINE")
                 if operator in _COMPOUND_ASSIGN:
                     # The whole right-hand side is the operand, so
                     # `q += a ? 1 : 0` reads as `q := q + (a ? 1 : 0)`.
@@ -473,6 +491,43 @@ class Parser:
         value = self.parse_expression()
         self.expect("NEWLINE")
         return ExprStmt(value)
+
+    def parse_switch(self):
+        """Parse ``switch [subject]`` and its indented ``pattern => value`` block.
+
+        Pine's switch is an expression, and it is exactly a chain of
+        conditionals written vertically, so that is what it folds into. With a
+        subject each pattern is compared against it; without one each pattern is
+        already a condition.
+        """
+        self.advance()  # `switch`
+        subject = None if self.at("NEWLINE") else self.parse_expression()
+        self.expect("NEWLINE")
+        self.expect("INDENT")
+
+        cases = []
+        while not self.at("DEDENT") and not self.at("EOF"):
+            self.skip_newlines()
+            if self.at("DEDENT") or self.at("EOF"):
+                break
+            # A case with no pattern before the arrow is the default.
+            pattern = None if self.at("OP", "=>") else self.parse_expression()
+            self.expect("OP", "=>")
+            cases.append((pattern, self.parse_expression()))
+            self.skip_newlines()
+        if self.at("DEDENT"):
+            self.advance()
+
+        # Pine yields `na` when nothing matches and no default was written.
+        result = Na()
+        remaining = cases
+        if cases and cases[-1][0] is None:
+            result = cases[-1][1]
+            remaining = cases[:-1]
+        for pattern, value in reversed(remaining):
+            test = Binary("==", subject, pattern) if subject is not None else pattern
+            result = Ternary(test, value, result)
+        return result
 
     def _at_type_declaration(self) -> bool:
         """True for `type Name` on its own line, which opens a type block.
