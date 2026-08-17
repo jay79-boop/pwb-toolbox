@@ -69,6 +69,38 @@ _OPERATORS = (
 _COMPARISONS = {"==", "!=", "<", "<=", ">", ">="}
 _BLOCK_KEYWORDS = {"for", "while"}
 
+#: A long expression is routinely split across lines. Pine's own rule keys on
+#: the continuation being indented by something other than a multiple of four,
+#: which collides with the indentation that marks a block. Reading the operator
+#: instead is unambiguous: no statement ends with a binary operator, and none
+#: begins with one, so either position can only mean "this line and the next
+#: are one expression".
+_DANGLING_OPS = {
+    "?",
+    ":",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "=",
+    ":=",
+    ",",
+    "==",
+    "!=",
+    "<",
+    "<=",
+    ">",
+    ">=",
+}
+_DANGLING_WORDS = {"and", "or", "not"}
+
+#: `[` is deliberately absent: a line starting with it is tuple destructuring,
+#: `[macd, signal, hist] = ta.macd(...)`, which is a statement of its own.
+_LEADING_CONTINUATION = re.compile(
+    r"^\s*(?:and\b|or\b|\?|:|==|!=|<=|>=|<|>|\+|-|\*|/|%)"
+)
+
 #: Words that may precede the name in a declaration, as in
 #: ``float entryPrice = na`` or ``series int n = 0``. Pine allows a type, a
 #: type qualifier, or both. None of it changes what the assignment means to
@@ -130,18 +162,42 @@ def _strip_comment(line: str) -> str:
     return line
 
 
+def _ends_dangling(tokens, start) -> bool:
+    """True when the tokens lexed for one line cannot be a complete statement."""
+    if len(tokens) <= start:
+        return False
+    last = tokens[-1]
+    if last.kind == "OP":
+        return last.value in _DANGLING_OPS
+    return last.kind == "NAME" and last.value in _DANGLING_WORDS
+
+
 def tokenize(source: str) -> list:
     """Turn Pine source into tokens, with INDENT/DEDENT for block structure."""
     tokens = []
     indents = [0]
     depth = 0  # bracket nesting; newlines inside brackets are insignificant
 
-    for lineno, raw in enumerate(source.splitlines(), start=1):
-        line = _strip_comment(raw)
-        if not line.strip():
-            continue
+    # Comments and blank lines are dropped first, so a continuation still finds
+    # its previous line across them.
+    lines = [
+        (n, stripped)
+        for n, stripped in (
+            (n, _strip_comment(raw)) for n, raw in enumerate(source.splitlines(), 1)
+        )
+        if stripped.strip()
+    ]
 
-        if depth == 0:
+    # A source of nothing but comments and blanks leaves the loop below
+    # unentered, and the trailing DEDENT/EOF still need a line to point at.
+    lineno = len(source.splitlines()) or 1
+
+    continuing = False  # the previous line left an expression unfinished
+    for index, (lineno, line) in enumerate(lines):
+        starts_continuation = bool(_LEADING_CONTINUATION.match(line))
+        # A continuation is part of the line above, so its indentation says
+        # nothing about block structure and must not open one.
+        if depth == 0 and not continuing and not starts_continuation:
             column = 0
             for ch in line:
                 if ch == " ":
@@ -159,6 +215,7 @@ def tokenize(source: str) -> list:
                 if column > indents[-1]:
                     raise PineSyntaxError(f"inconsistent indentation on line {lineno}")
 
+        line_start = len(tokens)
         i = 0
         while i < len(line):
             ch = line[i]
@@ -217,7 +274,13 @@ def tokenize(source: str) -> list:
             else:
                 raise PineSyntaxError(f"unexpected character {ch!r} on line {lineno}")
 
-        if depth == 0:
+        # Hold the newline back when this line is unfinished, or when the next
+        # one picks the expression up with a leading operator.
+        nxt = lines[index + 1][1] if index + 1 < len(lines) else ""
+        continuing = _ends_dangling(tokens, line_start) or bool(
+            _LEADING_CONTINUATION.match(nxt)
+        )
+        if depth == 0 and not continuing:
             tokens.append(Token("NEWLINE", None, lineno))
 
     while len(indents) > 1:

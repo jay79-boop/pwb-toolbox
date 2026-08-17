@@ -86,6 +86,80 @@ def test_tokenize_rejects_unterminated_string():
         tokenize('x = "oops\n')
 
 
+# --- lexer: expressions split across lines ------------------------------------
+#
+# Pine's own rule keys on the continuation being indented by something that is
+# not a multiple of four, which collides with the indentation that opens a
+# block. Reading the operator is unambiguous instead: no statement ends with a
+# binary operator, and none begins with one.
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "ok = (a > 0) and\n     (b > 0)\n",  # trailing word operator
+        "t = c > o ? 1 :\n     2\n",  # trailing ternary colon
+        "s = 'a' +\n    'b'\n",  # trailing arithmetic
+        "z =\n    ta.sma(close, 10)\n",  # trailing assignment
+        "y = c > o\n     ? 1\n     : 2\n",  # leading ternary arms
+        "ok = (a > 0)\n     and (b > 0)\n",  # leading word operator
+        "q = 1 and\n\n     2\n",  # blank line between
+        "q = 1 and\n// a comment\n     2\n",  # comment between
+    ],
+)
+def test_tokenize_joins_a_split_expression(source):
+    kinds = _kinds(source)
+    assert kinds.count("NEWLINE") == 1, kinds
+    assert "INDENT" not in kinds, "a continuation must not open a block"
+
+
+def test_tokenize_still_opens_blocks_on_real_indentation():
+    kinds = _kinds("if close > open\n    strategy.close()\n")
+    assert "INDENT" in kinds and "DEDENT" in kinds
+
+
+def test_tokenize_does_not_join_a_tuple_destructuring():
+    """`[a, b] = ...` starts a statement; `[` must never read as a continuation."""
+    kinds = _kinds("x = close\n[m, s, h] = ta.macd(close, 12, 26, 9)\n")
+    assert kinds.count("NEWLINE") == 2
+
+
+def _split_pair(joined, split):
+    head = '//@version=6\nstrategy("Split")\nma = ta.sma(close, 10)\n'
+    tail = 'if entryOk\n    strategy.entry("l", strategy.long)\nif close < ma\n    strategy.close()\n'
+    return head + joined + tail, head + split + tail
+
+
+@pytest.mark.parametrize(
+    "joined, split",
+    [
+        (
+            "entryOk = (close > ma) and (high > low)\n",
+            "entryOk = (close > ma) and\n          (high > low)\n",
+        ),
+        (
+            "entryOk = (close > ma) and (high > low)\n",
+            "entryOk = (close > ma)\n          and (high > low)\n",
+        ),
+        (
+            "entryOk = close > ma ? true : false\n",
+            "entryOk = close > ma\n          ? true\n          : false\n",
+        ),
+    ],
+)
+def test_splitting_a_line_changes_nothing(joined, split):
+    """Where the line breaks fall must not reach the generated strategy."""
+    one, many = _split_pair(joined, split)
+    assert convert(one).code == convert(many).code
+
+
+def test_generated_split_strategy_still_trades():
+    """And the joined-up condition has to actually drive orders."""
+    _, split = _split_pair("", "entryOk = (close > ma) and\n          (high > low)\n")
+    _, closed = _run(split)
+    assert closed > 0
+
+
 # --- parser ------------------------------------------------------------------
 
 
