@@ -18,16 +18,24 @@ What is deliberately not translated
 -----------------------------------
 
 Anything whose Backtrader equivalent would be a guess is reported rather than
-emitted: multi-timeframe ``request.security``, ``varip``'s intrabar updates,
-arrays and matrices, user-defined functions, loops, and ``strategy.exit`` with
-stops or limits attached. Presentational calls (``plot``, ``bgcolor``,
-``label.new``) are dropped, but reported separately as *ignored* -- they change
-nothing about how the strategy trades.
+emitted: ``varip``'s intrabar updates, arrays and matrices, user-defined
+functions, loops, and ``strategy.exit`` with stops or limits attached.
+Presentational calls (``plot``, ``bgcolor``, ``label.new``) are dropped, but
+reported separately as *ignored* -- they change nothing about how the strategy
+trades.
 
 ``var`` is the exception that is *not* a guess: Pine initialises it once and
 keeps it across bars, which is what an instance attribute already does, so it
 becomes one. Only a literal initial value works -- ``var x = close`` means the
 first bar's close and ``__init__`` runs before there is a first bar.
+
+``request.security`` is the other. Pine reaches another timeframe inline;
+Backtrader reaches it through a resampled feed added to the cerebro before the
+strategy exists. So the call becomes a read from ``self.datas[n]`` and the
+class records, in ``resample_spec``, the feeds the caller has to supply. The
+timeframe stops being tunable at that point -- resampling happens before
+``addstrategy`` -- which is why a timeframe taken from an input is resolved to
+that input's default and reported.
 
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
@@ -93,23 +101,54 @@ CROSSES = {
     "ta.cross": "!= 0",
 }
 
+#: Pine price series, as line names. The feed they are read from is decided at
+#: lowering time -- inside a ``request.security`` they belong to a resampled
+#: feed rather than the chart's own.
 PRICE_SERIES = {
-    "open": "self.data.open",
-    "high": "self.data.high",
-    "low": "self.data.low",
-    "close": "self.data.close",
-    "volume": "self.data.volume",
+    "open": "open",
+    "high": "high",
+    "low": "low",
+    "close": "close",
+    "volume": "volume",
 }
 
-#: Pine's derived price series, which Backtrader has no line for.
+#: Pine's derived price series, which Backtrader has no line for. ``{d}`` is
+#: the feed, ``{i}`` the bar offset.
 DERIVED_SERIES = {
-    "hl2": "(self.data.high[{i}] + self.data.low[{i}]) / 2",
-    "hlc3": "(self.data.high[{i}] + self.data.low[{i}] + self.data.close[{i}]) / 3",
-    "ohlc4": (
-        "(self.data.open[{i}] + self.data.high[{i}] "
-        "+ self.data.low[{i}] + self.data.close[{i}]) / 4"
-    ),
+    "hl2": "({d}.high[{i}] + {d}.low[{i}]) / 2",
+    "hlc3": "({d}.high[{i}] + {d}.low[{i}] + {d}.close[{i}]) / 3",
+    "ohlc4": ("({d}.open[{i}] + {d}.high[{i}] " "+ {d}.low[{i}] + {d}.close[{i}]) / 4"),
 }
+
+#: Pine timeframe strings mapped to a Backtrader (timeframe, compression).
+#: A bare number is minutes; a trailing S, D, W or M names the unit.
+_TIMEFRAME_UNITS = {
+    "S": "bt.TimeFrame.Seconds",
+    "": "bt.TimeFrame.Minutes",
+    "D": "bt.TimeFrame.Days",
+    "W": "bt.TimeFrame.Weeks",
+    "M": "bt.TimeFrame.Months",
+}
+
+
+def parse_timeframe(text):
+    """Turn a Pine timeframe string into ``(bt.TimeFrame.X, compression)``.
+
+    ``"240"`` is 240 minutes, ``"D"`` and ``"1D"`` are one day. Returns None
+    for anything unrecognised, including the empty string, which in Pine means
+    the chart's own timeframe and so needs no second feed.
+    """
+    if not isinstance(text, str):
+        return None
+    token = text.strip().upper()
+    match = re.fullmatch(r"(\d*)([SDWM]?)", token)
+    if not match or token == "":
+        return None
+    count, unit = match.groups()
+    if unit == "" and count == "":
+        return None
+    return _TIMEFRAME_UNITS[unit], int(count) if count else 1
+
 
 #: Pine builtins that read straight across to a Backtrader expression.
 #: ``strategy.position_size`` is signed and in units on both sides, so the
@@ -289,6 +328,11 @@ class _Generator:
         self._hoisted = {}  # construction source -> attribute name
         self._inputs = {}  # input call signature -> param name
         self.state = {}  # pine `var` name -> attribute name on the strategy
+        self.feeds = []  # (bt.TimeFrame expression, compression) per extra feed
+        self._feed_index = {}  # timeframe text -> index into self.datas
+        #: The feed expressions currently lower against. Swapped while the
+        #: inner expression of a request.security is translated.
+        self._feed = "self.data"
 
     # --- helpers -------------------------------------------------------------
 
@@ -328,7 +372,7 @@ class _Generator:
         """
         if isinstance(node, Name):
             if node.id in PRICE_SERIES:
-                return PRICE_SERIES[node.id]
+                return f"{self._feed}.{PRICE_SERIES[node.id]}"
             if node.id in self.series:
                 return f"self.{self.series[node.id]}"
             if node.id in self.param_names:
@@ -352,14 +396,14 @@ class _Generator:
             if len(args) >= 2 or (len(args) == 1 and not spec.takes_period):
                 source_code = self._line_expr(args.pop(0))
             else:
-                source_code = PRICE_SERIES[spec.default_source]
+                source_code = f"{self._feed}.{PRICE_SERIES[spec.default_source]}"
             if source_code is None:
                 self._reject(
                     f"{call.func}: source argument is not a plain series or parameter"
                 )
                 return None
         else:
-            source_code = "self.data"
+            source_code = self._feed
 
         pieces = [source_code]
         if spec.takes_period:
@@ -433,9 +477,9 @@ class _Generator:
 
     def _value_name(self, name, index):
         if name in PRICE_SERIES:
-            return f"{PRICE_SERIES[name]}[{index}]"
+            return f"{self._feed}.{PRICE_SERIES[name]}[{index}]"
         if name in DERIVED_SERIES:
-            return DERIVED_SERIES[name].format(i=index)
+            return DERIVED_SERIES[name].format(d=self._feed, i=index)
         if name in self.series:
             return f"self.{self.series[name]}[{index}]"
         if name in self.state:
@@ -518,6 +562,9 @@ class _Generator:
             inner = ", ".join(self._value_expr(a) for a in call.args)
             return f"{mapped}({inner})"
 
+        if call.func == "request.security":
+            return self._value_security(call)
+
         if call.func == "na":
             # `x != x` is the NaN test, matching how nz() below already spells
             # it. Pairs with `var float x = na`, which is how most strategies
@@ -537,6 +584,100 @@ class _Generator:
         return "None"
 
     # --- statements ----------------------------------------------------------
+
+    def _value_security(self, call):
+        """Lower ``request.security`` onto a resampled Backtrader feed.
+
+        Pine reaches another timeframe inline; Backtrader reaches it through a
+        second data feed set up on the cerebro before the strategy exists. So
+        the call becomes a read from ``self.datas[n]``, and the feeds the
+        caller has to supply are recorded on the class.
+        """
+        if len(call.args) < 3:
+            self._reject("request.security needs a symbol, timeframe and expression")
+            return "None"
+
+        symbol, timeframe, expression = call.args[0], call.args[1], call.args[2]
+
+        if not (isinstance(symbol, Name) and symbol.id == "syminfo.tickerid"):
+            self._reject(
+                "request.security on a symbol other than syminfo.tickerid needs "
+                "a second instrument, which is a data-loading decision"
+            )
+            return "None"
+
+        for key, value in call.kwargs:
+            if key == "lookahead" and isinstance(value, Name):
+                if value.id.endswith("lookahead_on"):
+                    # Reads the higher-timeframe bar before it has closed.
+                    # Backtrader has no equivalent, and inventing one would
+                    # mean feeding the strategy data it could not have had.
+                    self._reject(
+                        "request.security with barmerge.lookahead_on reads a bar "
+                        "before it closes; there is no Backtrader equivalent"
+                    )
+                    return "None"
+
+        if isinstance(timeframe, Name) and timeframe.id == "timeframe.period":
+            # The chart's own timeframe. Pine still routes it through
+            # request.security; Backtrader needs no second feed for it.
+            feed = self._feed
+        else:
+            resolved, from_param = self._timeframe_text(timeframe)
+            if resolved is None:
+                self._reject(
+                    "request.security: the timeframe must be a literal string or "
+                    "an input default, because the feed is built before the "
+                    "strategy runs"
+                )
+                return "None"
+            spec = parse_timeframe(resolved)
+            if spec is None:
+                self._reject(
+                    f"request.security: timeframe {resolved!r} is not recognised"
+                )
+                return "None"
+            if from_param:
+                # The param stays, because the script may read it elsewhere,
+                # but it cannot move the feed: resampledata runs before the
+                # strategy is instantiated. Say so rather than leave a knob
+                # that looks live and is not.
+                self._ignore(
+                    f"{from_param}: timeframe fixed to {resolved!r} at conversion "
+                    "time; change resample_spec, not the param"
+                )
+            index = self._feed_index.get(resolved)
+            if index is None:
+                self.feeds.append(spec)
+                index = len(self.feeds)  # datas[0] is the chart itself
+                self._feed_index[resolved] = index
+            feed = f"self.datas[{index}]"
+
+        previous, self._feed = self._feed, feed
+        try:
+            line = self._line_expr(expression)
+            if line is not None:
+                return f"{line}[0]"
+            return self._value_expr(expression)
+        finally:
+            self._feed = previous
+
+    def _timeframe_text(self, node):
+        """Recover the timeframe string and, if it came from one, the param.
+
+        A timeframe cannot stay tunable: `cerebro.resampledata` runs before the
+        strategy is instantiated, so a param changed at `addstrategy` time would
+        not move the feed underneath it. Resolving the input's default and
+        baking it in is the honest reading.
+        """
+        literal = _literal(node)
+        if isinstance(literal, str):
+            return literal, None
+        if isinstance(node, Name):
+            for name, default in self.params:
+                if name == node.id and isinstance(default, str):
+                    return default, name
+        return None, None
 
     def _input_default(self, call):
         default = None
@@ -825,7 +966,27 @@ class _Generator:
             out.append("    )")
             out.append("")
 
+        if self.feeds:
+            out.append("    #: Feeds this strategy needs beyond the chart itself,")
+            out.append("    #: in the order they become self.datas[1:]. Add each")
+            out.append("    #: with cerebro.resampledata(data, timeframe=..., ")
+            out.append("    #: compression=...) before cerebro.addstrategy().")
+            out.append("    resample_spec = (")
+            for timeframe, compression in self.feeds:
+                out.append(f"        ({timeframe}, {compression}),")
+            out.append("    )")
+            out.append("")
+
         out.append("    def __init__(self):")
+        if self.feeds:
+            # Without this the first read of self.datas[1] raises IndexError
+            # somewhere in next(), which says nothing about what is missing.
+            needed = len(self.feeds) + 1
+            out.append(f"        if len(self.datas) < {needed}:")
+            out.append(
+                f'            raise ValueError("{self.class_name} needs '
+                f'{needed} data feeds; see resample_spec")'
+            )
         if self.init_lines:
             out.extend(f"        {line}" for line in self.init_lines)
         else:
