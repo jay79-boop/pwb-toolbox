@@ -78,6 +78,7 @@ duplicate is pure waste.
 | `strategy("T")` / `indicator("T")` | class name and docstring |
 | `input.int/float/bool/string(...)` | entries in `params` |
 | `float x = ...`, `series int n = ...` | the type annotation is dropped |
+| `array<float> b = ...`, `Zone z = ...` | likewise, generics and user types included |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
@@ -130,7 +131,7 @@ Reported in `result.unsupported`, never approximated:
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
-- arrays, matrices, maps, user-defined functions and types
+- arrays, matrices, maps, user-defined functions and `type` blocks — all reported, so the rest of the script is still diagnosed
 - `for` / `while` loops
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
 - `strategy.exit` carrying `loss`, `profit` or `trail_*` — distances in ticks, and tick size belongs to the instrument, not the script

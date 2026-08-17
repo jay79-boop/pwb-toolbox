@@ -938,6 +938,13 @@ class _Generator:
         """
         initial = self._state_initial(statement.value)
         if initial is None:
+            if isinstance(statement.value, Call):
+                # Lower it purely for the reason it reports. "array.new_float()
+                # is not supported" tells the caller what to do about
+                # `var array<float> buf = array.new_float(n)`; "the initial
+                # value must be a literal" sends them after the wrong thing.
+                self._value_expr(statement.value)
+                return
             self._reject(
                 f"var {statement.target}: only a literal initial value is "
                 "supported, because __init__ runs before the first bar"

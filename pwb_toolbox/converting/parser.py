@@ -232,6 +232,8 @@ class Parser:
         self.tokens = tokens
         self.lines = lines
         self.pos = 0
+        #: Names introduced by `type X` blocks, which then act as type words.
+        self.user_types = set()
 
     # --- token helpers -------------------------------------------------------
 
@@ -348,6 +350,15 @@ class Parser:
         if self._at_function_declaration():
             return self._skip_block("user-defined function", token.line)
 
+        # `type Zone` opens a user-defined type, its fields on an indented
+        # block. Same reasoning as a function: skip it and report it, rather
+        # than giving up on the whole file.
+        if self._at_type_declaration():
+            # Remember the name: `bar b = bar.new()` declares `b` with `bar` as
+            # its type, which only reads as a declaration once `bar` is known.
+            self.user_types.add(self.tokens[self.pos + 1].value)
+            return self._skip_block("user-defined type", token.line)
+
         # `[a, b] = ta.macd(...)` -- tuple destructuring.
         if token.kind == "OP" and token.value == "[":
             return self.parse_tuple_assign()
@@ -378,6 +389,50 @@ class Parser:
         self.expect("NEWLINE")
         return ExprStmt(value)
 
+    def _at_type_declaration(self) -> bool:
+        """True for `type Name` on its own line, which opens a type block.
+
+        Requiring the newline keeps an ordinary variable called ``type`` --
+        ``type = 5``, ``type x = 1`` -- out of it.
+        """
+        if not self.at("NAME", "type") or self.pos + 2 >= len(self.tokens):
+            return False
+        name, after = self.tokens[self.pos + 1], self.tokens[self.pos + 2]
+        return name.kind == "NAME" and after.kind == "NEWLINE"
+
+    def _is_call_at(self, index) -> bool:
+        token = self.tokens[index] if index < len(self.tokens) else None
+        return token is not None and token.kind == "OP" and token.value == "("
+
+    def _generic_end(self, index):
+        """End of an ``array<float>``-style generic starting at ``index``.
+
+        Returns None when the ``<`` is a comparison rather than a type
+        parameter, which is why the contents are checked rather than assumed:
+        ``count < limit`` must not be eaten as a type.
+        """
+        if self.tokens[index].kind != "OP" or self.tokens[index].value != "<":
+            return None
+        depth = 0
+        i = index
+        while i < len(self.tokens):
+            token = self.tokens[i]
+            if token.kind in ("NEWLINE", "EOF"):
+                return None
+            if token.kind == "OP":
+                if token.value == "<":
+                    depth += 1
+                elif token.value == ">":
+                    depth -= 1
+                    if depth == 0:
+                        return i + 1
+                elif token.value != ",":
+                    return None  # arithmetic inside: it was a comparison
+            elif token.kind != "NAME":
+                return None
+            i += 1
+        return None
+
     def _skip_declared_type(self):
         """Consume a type annotation such as the ``float`` in ``float x = na``.
 
@@ -386,8 +441,15 @@ class Parser:
         both left alone.
         """
         end = self.pos
-        while self.tokens[end].kind == "NAME" and self.tokens[end].value in _TYPE_WORDS:
+        while self.tokens[end].kind == "NAME" and (
+            self.tokens[end].value in _TYPE_WORDS
+            or self.tokens[end].value in self.user_types
+        ):
             end += 1
+            generic = self._generic_end(end)
+            if generic is not None:
+                end = generic
+                break  # `array<float>` is the whole annotation
 
         # Back off one word at a time: the variable itself may be named after a
         # type, as in `string label = "x"`, and it must survive the scan.
@@ -555,6 +617,11 @@ class Parser:
             # that tests for it. Check for the paren before deciding.
             if token.value == "na" and not self.at("OP", "("):
                 return Na()
+            # `array.new<float>()` -- the type argument says nothing the
+            # generator needs, and the call itself is reported downstream.
+            generic = self._generic_end(self.pos)
+            if generic is not None and self._is_call_at(generic):
+                self.pos = generic
             if self.at("OP", "("):
                 return self.parse_call(token.value)
             return Name(token.value)
