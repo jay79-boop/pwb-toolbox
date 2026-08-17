@@ -1124,6 +1124,89 @@ def test_bare_na_is_still_the_literal():
     assert "self.x = float('nan')" in result.code.split("def next")[1]
 
 
+@pytest.mark.parametrize(
+    "operator, expected",
+    [
+        ("+=", "self.n = (self.n + 2)"),
+        ("-=", "self.n = (self.n - 2)"),
+        ("*=", "self.n = (self.n * 2)"),
+        ("/=", "self.n = (self.n / 2)"),
+        ("%=", "self.n = (self.n % 2)"),
+    ],
+)
+def test_compound_assignment_writes_through_to_var_state(operator, expected):
+    source = (
+        '//@version=6\nstrategy("S")\nvar float n = 8.0\n'
+        f"if close > open\n    n {operator} 2\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert expected in result.code
+
+
+def test_compound_assignment_on_a_local_stays_local():
+    source = (
+        '//@version=6\nstrategy("S")\nq = 0\nq += 1\nif q > 0\n    strategy.close()\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "q = (q + 1)" in result.code
+    assert "self.q" not in result.code
+
+
+def test_compound_assignment_takes_the_whole_right_hand_side():
+    """`q += a ? 1 : 0` is `q := q + (a ? 1 : 0)`, not `(q + a) ? 1 : 0`."""
+    source = (
+        '//@version=6\nstrategy("S")\nvar int q = 0\n'
+        "if close > open\n    q += close > open ? 1 : 0\n"
+    )
+    code = convert(source).code
+    assert "self.q = (self.q + (1 if" in code
+
+
+def test_compound_assignment_to_an_undefined_name_is_reported():
+    result = convert('//@version=6\nstrategy("S")\nzzz += 1\n')
+    assert not result.ok
+    assert any("zzz" in item and "not defined" in item for item in result.unsupported)
+
+
+def test_compound_assignment_may_be_split_across_lines():
+    source = (
+        '//@version=6\nstrategy("S")\nvar int n = 0\n'
+        "if close > open\n    n +=\n        1\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.n = (self.n + 1)" in result.code
+
+
+def test_generated_compound_counter_survives_across_bars():
+    """A `+=` counter that resets each bar has not really been converted."""
+    source = (
+        '//@version=6\nstrategy("Counter")\n'
+        "var int trades = 0\nma = ta.sma(close, 10)\n"
+        "if strategy.position_size == 0 and close > ma\n"
+        '    strategy.entry("l", strategy.long)\n'
+        "    trades += 1\n"
+        "if close < ma\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+    totals = strategy.analyzers.trades.get_analysis().get("total", {})
+
+    assert totals.get("total", 0) > 1
+    assert strategy.trades == totals.get("total", 0)
+
+
 def test_generated_var_state_survives_across_bars():
     """The whole point: a counter that resets each bar has not been converted.
 

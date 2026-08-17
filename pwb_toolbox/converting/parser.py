@@ -49,6 +49,11 @@ _OPERATORS = (
     "<=",
     ">=",
     "=>",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "%=",
     "+",
     "-",
     "*",
@@ -68,6 +73,13 @@ _OPERATORS = (
 
 _COMPARISONS = {"==", "!=", "<", "<=", ">", ">="}
 _BLOCK_KEYWORDS = {"for", "while"}
+
+#: `x += y` is `x := x + y`. Desugaring it in the parser means the generator's
+#: existing reassignment paths apply untouched -- a `var` target still writes
+#: through to its attribute, a local still stays a local, and a name that was
+#: never defined is still reported.
+_COMPOUND_ASSIGN = {"+=": "+", "-=": "-", "*=": "*", "/=": "/", "%=": "%"}
+_ASSIGN_OPS = {"=", ":=", *_COMPOUND_ASSIGN}
 
 #: A long expression is routinely split across lines. Pine's own rule keys on
 #: the continuation being indented by something other than a multiple of four,
@@ -92,6 +104,11 @@ _DANGLING_OPS = {
     "<=",
     ">",
     ">=",
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "%=",
 }
 _DANGLING_WORDS = {"and", "or", "not"}
 
@@ -437,11 +454,16 @@ class Parser:
 
         if self.at("NAME"):
             nxt = self.tokens[self.pos + 1]
-            if nxt.kind == "OP" and nxt.value in ("=", ":="):
+            if nxt.kind == "OP" and nxt.value in _ASSIGN_OPS:
                 target = self.advance().value
                 operator = self.advance().value
                 value = self.parse_expression()
                 self.expect("NEWLINE")
+                if operator in _COMPOUND_ASSIGN:
+                    # The whole right-hand side is the operand, so
+                    # `q += a ? 1 : 0` reads as `q := q + (a ? 1 : 0)`.
+                    value = Binary(_COMPOUND_ASSIGN[operator], Name(target), value)
+                    operator = ":="
                 return Assign(
                     target=target,
                     value=value,
