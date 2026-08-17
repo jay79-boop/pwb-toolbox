@@ -88,7 +88,9 @@ duplicate is pure waste.
 | `cond ? a : b` | `a if cond else b` |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
-| `strategy.close`, `strategy.close_all`, plain `strategy.exit` | `self.close()` |
+| `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
+| `strategy.exit(..., stop=, limit=)` | an OCO stop/limit pair, maintained |
+| `strategy.position_avg_price` | `self.position.price` |
 | `strategy.position_size` | `self.position.size` |
 | `bar_index` | `len(self)` |
 | `var x = <literal>` | an attribute set once in `__init__` |
@@ -131,7 +133,7 @@ Reported in `result.unsupported`, never approximated:
 - arrays, matrices, maps, user-defined functions and types
 - `for` / `while` loops
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
-- `strategy.exit` carrying `stop`, `limit`, `trail_*` — bracket orders differ enough that a guess would silently change behavior
+- `strategy.exit` carrying `loss`, `profit` or `trail_*` — distances in ticks, and tick size belongs to the instrument, not the script
 - any identifier or call the converter does not know
 
 Reported separately in `result.ignored`, because dropping them changes nothing
@@ -142,6 +144,38 @@ cannot change a trade, so refusing one would fail a conversion over nothing.
 
 Both lists are also written into the generated class's docstring, so a
 converted file explains its own gaps without needing the original result object.
+
+## Stops and targets
+
+`strategy.exit` with a `stop` or a `limit` becomes a Backtrader stop order and
+limit order, linked one-cancels-other so whichever fills cancels the sibling:
+
+```pinescript
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+```
+
+Both are absolute prices in Pine, which is what makes them translatable — no
+tick size or entry price has to be inferred.
+
+The subtlety is that **Pine's exit is a standing instruction, not a
+submission.** It is re-evaluated on every bar, and when the levels change it
+*moves* its orders rather than adding more. Translating each call into a fresh
+`self.sell(...)` would leave a position held ten bars carrying twenty live exit
+orders, filling several times over — a wrong backtest rather than an error.
+
+So the generated class maintains them in a `_pine_exit` helper: same levels and
+the orders still live, do nothing; levels moved, cancel and resubmit; position
+closed, cancel and forget. The test suite counts orders against trades and
+asserts the exact ratio, because that is the only way this failure shows up.
+
+Direction is decided at runtime from the position, so exiting a long sells and
+exiting a short buys. A level that is `na` submits nothing — `var float sl = na`
+is how a script spells "no level yet", and a stop at NaN would never compare.
+
+`loss`, `profit` and the `trail_*` family are refused. They are distances
+measured in ticks, and tick size is a property of the instrument rather than
+anything the script states.
 
 ## A second timeframe
 

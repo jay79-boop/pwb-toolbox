@@ -19,7 +19,7 @@ What is deliberately not translated
 
 Anything whose Backtrader equivalent would be a guess is reported rather than
 emitted: ``varip``'s intrabar updates, arrays and matrices, user-defined
-functions, loops, and ``strategy.exit`` with stops or limits attached.
+functions, loops, and ``strategy.exit`` offsets measured in ticks.
 Presentational calls (``plot``, ``bgcolor``, ``label.new``) are dropped, but
 reported separately as *ignored* -- they change nothing about how the strategy
 trades.
@@ -36,6 +36,14 @@ class records, in ``resample_spec``, the feeds the caller has to supply. The
 timeframe stops being tunable at that point -- resampling happens before
 ``addstrategy`` -- which is why a timeframe taken from an input is resolved to
 that input's default and reported.
+
+``strategy.exit`` with a ``stop`` or ``limit`` is a third. Both are absolute
+prices, so they become a Backtrader stop and limit order linked one-cancels-
+other. The subtlety is that Pine's exit is a *standing instruction* rather than
+a submission: it is re-evaluated on every bar and moves its orders when the
+levels change. Emitting a fresh order per call would stack them and fill
+several times over, so the generated class maintains them instead -- see
+``_EXIT_HELPER``.
 
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
@@ -156,6 +164,7 @@ def parse_timeframe(text):
 BUILTIN_VALUES = {
     "bar_index": "len(self)",
     "strategy.position_size": "self.position.size",
+    "strategy.position_avg_price": "self.position.price",
 }
 
 INPUT_FUNCS = {
@@ -254,6 +263,62 @@ _RESERVED = {
 }
 
 
+#: Emitted into a strategy that uses `strategy.exit` with a stop or a limit.
+#:
+#: Pine's `strategy.exit` is a standing instruction rather than a submission:
+#: it is re-evaluated on every bar, and when the levels move it moves its
+#: orders instead of adding more. Translating each call into a fresh
+#: `self.sell(...)` would stack an order per bar and fill several times, which
+#: is a wrong backtest rather than an error -- so the orders are maintained.
+_EXIT_HELPER = (
+    "    def _pine_exit(self, tag, stop=None, limit=None):",
+    '        """Keep one exit order set for the open position, as Pine does."""',
+    "        # `var float sl = na` is the usual way to spell 'no level yet',",
+    "        # and a stop submitted at NaN would never be comparable.",
+    "        if stop is not None and stop != stop:",
+    "            stop = None",
+    "        if limit is not None and limit != limit:",
+    "            limit = None",
+    "",
+    "        state = self._pine_exits.get(tag)",
+    "        size = self.position.size",
+    "        if not size or (stop is None and limit is None):",
+    "            if state:",
+    "                for order in state[1]:",
+    "                    self.cancel(order)",
+    "                del self._pine_exits[tag]",
+    "            return",
+    "",
+    "        levels = (stop, limit)",
+    "        if state and state[0] == levels and any(o.alive() for o in state[1]):",
+    "            return",
+    "        if state:",
+    "            for order in state[1]:",
+    "                self.cancel(order)",
+    "",
+    "        # Exiting a long means selling; exiting a short means buying.",
+    "        leave = self.sell if size > 0 else self.buy",
+    "        quantity = abs(size)",
+    "        orders = []",
+    "        if stop is not None:",
+    "            orders.append(",
+    "                leave(size=quantity, exectype=bt.Order.Stop, price=stop)",
+    "            )",
+    "        if limit is not None:",
+    "            # oco links the pair, so whichever fills cancels the other.",
+    '            extra = {"oco": orders[0]} if orders else {}',
+    "            orders.append(",
+    "                leave(",
+    "                    size=quantity,",
+    "                    exectype=bt.Order.Limit,",
+    "                    price=limit,",
+    "                    **extra,",
+    "                )",
+    "            )",
+    "        self._pine_exits[tag] = (levels, orders)",
+)
+
+
 class ConversionError(RuntimeError):
     """Raised when the source cannot be converted at all."""
 
@@ -333,6 +398,7 @@ class _Generator:
         #: The feed expressions currently lower against. Swapped while the
         #: inner expression of a request.security is translated.
         self._feed = "self.data"
+        self._uses_exit = False
 
     # --- helpers -------------------------------------------------------------
 
@@ -584,6 +650,40 @@ class _Generator:
         return "None"
 
     # --- statements ----------------------------------------------------------
+
+    def _emit_exit(self, expr, pad):
+        """Lower ``strategy.exit``, including its stop and limit levels."""
+        offsets = {key for key, _ in expr.kwargs} & {
+            "loss",
+            "profit",
+            "trail_price",
+            "trail_points",
+            "trail_offset",
+        }
+        if offsets:
+            # These are distances rather than prices, measured in Pine's ticks,
+            # which depend on the instrument's tick size rather than on
+            # anything visible in the script.
+            self._reject(
+                "strategy.exit with "
+                + ", ".join(sorted(offsets))
+                + ": these are distances in ticks, and the tick size is a "
+                "property of the instrument rather than of the script"
+            )
+            return
+
+        levels = {key: value for key, value in expr.kwargs if key in ("stop", "limit")}
+        if not levels:
+            self.next_lines.append(f"{pad}self.close()")
+            return
+
+        tag = _literal(expr.args[0]) if expr.args else "exit"
+        self._uses_exit = True
+        arguments = [repr(str(tag))]
+        for key in ("stop", "limit"):
+            if key in levels:
+                arguments.append(f"{key}={self._value_expr(levels[key])}")
+        self.next_lines.append(f"{pad}self._pine_exit({', '.join(arguments)})")
 
     def _value_security(self, call):
         """Lower ``request.security`` onto a resampled Backtrader feed.
@@ -877,23 +977,7 @@ class _Generator:
             return
 
         if expr.func == "strategy.exit":
-            attached = {key for key, _ in expr.kwargs} & {
-                "stop",
-                "limit",
-                "loss",
-                "profit",
-                "trail_price",
-                "trail_points",
-                "trail_offset",
-            }
-            if attached:
-                self._reject(
-                    "strategy.exit with "
-                    + ", ".join(sorted(attached))
-                    + ": bracket orders need an explicit Backtrader equivalent"
-                )
-                return
-            self.next_lines.append(f"{pad}self.close()")
+            self._emit_exit(expr, pad)
             return
 
         self._reject(f"call to {expr.func}() is not supported")
@@ -978,6 +1062,8 @@ class _Generator:
             out.append("")
 
         out.append("    def __init__(self):")
+        if self._uses_exit:
+            out.append("        self._pine_exits = {}")
         if self.feeds:
             # Without this the first read of self.datas[1] raises IndexError
             # somewhere in next(), which says nothing about what is missing.
@@ -989,9 +1075,13 @@ class _Generator:
             )
         if self.init_lines:
             out.extend(f"        {line}" for line in self.init_lines)
-        else:
+        elif not self._uses_exit:
             out.append("        pass")
         out.append("")
+
+        if self._uses_exit:
+            out.extend(_EXIT_HELPER)
+            out.append("")
 
         out.append("    def next(self):")
         if self.next_lines:
