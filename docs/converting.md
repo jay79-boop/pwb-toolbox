@@ -97,6 +97,7 @@ duplicate is pure waste.
 | `bar_index` | `len(self)` |
 | `var x = <literal>` | an attribute set once in `__init__` |
 | `x := value` | assignment, writing through to the attribute for a `var` |
+| `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
 | `na(x)` | the NaN test `x != x` |
 | `request.security(syminfo.tickerid, tf, expr)` | a read from a resampled `self.datas[n]` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
