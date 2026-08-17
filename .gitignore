@@ -1,5 +1,6 @@
 .env
 .DS_Store
+grok-export/
 __pycache__
 ssrn-abstract-classifier
 wandb
@@ -13,3 +14,17 @@ server/airflow/airflow.db
 server/airflow/logs/
 server/airflow/simple_auth_manager_passwords.json.generated
 trade_log.csv
+
+# graphify - machine-specific sidecars (absolute paths / local cache)
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/cache/
+graphify-out/.vocab.txt
+
+# graphify - regenerable output. GRAPH_REPORT.md (the written findings) and
+# graph.json (the fixture tools/graph_audit.py reads) stay tracked; these two
+# do not. graph.html is a 740 KB rendering of graph.json, and manifest.json is
+# the incremental-rebuild index, keyed on float mtimes that differ on every
+# machine — so it produced a large diff on every rebuild while meaning nothing.
+graphify-out/graph.html
+graphify-out/manifest.json
