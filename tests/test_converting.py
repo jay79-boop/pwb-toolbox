@@ -512,6 +512,85 @@ def test_parsing_resumes_after_a_user_defined_function():
     assert program.body[-1].target == "y"
 
 
+def test_user_defined_type_block_is_reported_not_fatal():
+    """`type Zone` is out of scope to translate, but not to get past."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "type Zone\n    float top\n    bool bull\n"
+        "ma = ta.sma(close, 10)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("user-defined type" in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+def test_type_block_fields_may_carry_defaults():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "type bar\n    float o = open\n    float c = close\n"
+        "ma = ta.sma(close, 10)\n"
+    )
+    assert any("user-defined type" in item for item in convert(source).unsupported)
+
+
+def test_parsing_resumes_after_a_type_block():
+    program = parse(
+        '//@version=6\nstrategy("S")\n'
+        "type Zone\n    float top\n    bool bull\n"
+        "y = ta.sma(close, 10)\n"
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+@pytest.mark.parametrize(
+    "declaration, expected",
+    [
+        ("var array<float> b = array.new_float(10, na)", "array.new_float()"),
+        ("var array<float> b = array.new<float>()", "array.new()"),
+        ("var matrix<float> m = matrix.new<float>(2, 2)", "matrix.new()"),
+        (
+            "var map<string, array<float>> m = map.new<string, array<float>>()",
+            "map.new()",
+        ),
+    ],
+)
+def test_generic_types_reach_a_real_reason(declaration, expected):
+    """`array<float>` used to be a syntax error; the array is the real gap."""
+    result = convert('//@version=6\nstrategy("S")\n' + declaration + "\n")
+    assert not result.ok
+    assert any(expected in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+def test_a_declared_user_type_is_recognised_after_its_block():
+    """`bar b = bar.new()` only reads as a declaration once `bar` is known."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "type bar\n    float o = open\n"
+        "bar b = bar.new()\n"
+    )
+    result = convert(source)
+    assert any("bar.new()" in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "n = 3\nlimit = 9\nif n < limit\n    strategy.close()\n",
+        "a = 2\nb = 9\nif a < (b + 1)\n    strategy.close()\n",
+        "x = 1\ny = 2\nz = x < y ? 1 : 2\n",
+        "type = 5\n",
+    ],
+)
+def test_angle_brackets_are_only_generics_when_they_really_are(snippet):
+    """`a < b` is a comparison; eating it as a type parameter would be silent."""
+    result = convert('//@version=6\nstrategy("S")\n' + snippet)
+    assert result.ok, result.unsupported
+
+
 def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
     result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
     assert result.ok, result.unsupported
