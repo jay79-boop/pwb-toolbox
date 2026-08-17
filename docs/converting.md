@@ -87,6 +87,7 @@ duplicate is pure waste.
 | `close[3]` | `self.data.close[-3]` |
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
 | `cond ? a : b` | `a if cond else b` |
+| `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
@@ -135,6 +136,7 @@ Reported in `result.unsupported`, never approximated:
 - `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps, user-defined functions and `type` blocks — all reported, so the rest of the script is still diagnosed
 - `for` / `while` loops
+- a `switch` used as a statement rather than for its value — that is a side-effecting block
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
 - `strategy.exit` carrying `loss`, `profit` or `trail_*` — distances in ticks, and tick size belongs to the instrument, not the script
 - any identifier or call the converter does not know
@@ -344,6 +346,21 @@ them, and it avoids a class of bugs where a partially-lowered expression looks
 like a line object but is not one. The cost: `spread[1]` — history of a computed
 value — is refused rather than supported, because it would need a real line
 object to be meaningful.
+
+The same boundary decides what can be an indicator's length. A Backtrader
+indicator fixes its period when it is constructed, so the length has to be a
+number or a param:
+
+```pinescript
+len = switch mode          // computed per bar
+    "Fast" => 5
+    => 20
+ma = ta.sma(close, len)    // reported, not guessed
+```
+
+That is refused with *"could not resolve its length argument"*. Real scripts
+mostly use a `switch` for a multiplier or a condition, where it works fine; a
+switched *length* needs the branch written into the Backtrader params instead.
 
 ## Verification
 
