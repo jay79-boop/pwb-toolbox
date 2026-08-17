@@ -24,14 +24,12 @@ when nothing is needed; do not pad it with optional suggestions, or it stops
 meaning anything.
 
 Commands in that block get pasted into **Windows PowerShell**, so write them for
-PowerShell rather than bash. No `curl … | sed` pipelines — `curl` is an alias for
-`Invoke-WebRequest` there and takes different arguments, and `sed` does not exist.
-No `~` for the home directory (use `$HOME`), and no `&&` chaining, which Windows
-PowerShell 5.1 rejects. When the text being written contains em dashes or emoji,
-append with `[IO.File]::AppendAllText(..., (New-Object Text.UTF8Encoding $false))` —
-`Add-Content` defaults to ANSI on 5.1 and mangles them. Pin any
-`raw.githubusercontent.com` URL to a commit SHA rather than to `main`: a branch that
-has not merged yet still serves the old file, so the command silently does nothing.
+PowerShell rather than bash. The specific traps — `curl` being an alias for
+`Invoke-WebRequest`, the missing `sed`, `~`, `&&`, `Add-Content`'s encoding, pinning
+`raw.githubusercontent.com` to a commit SHA — are in the `gexio-machine` skill, which
+loads before any command written for the user to run. They are deliberately not
+restated here: two copies drift, and the skill's copy is the one that reaches sessions
+outside this repository.
 
 Each step is one self-contained paste, and each step names the program it goes into
 and how to open it. "Export the key" is not a step; "Open PowerShell (`Win`+`R`, type
