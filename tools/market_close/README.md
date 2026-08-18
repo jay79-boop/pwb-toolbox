@@ -53,7 +53,7 @@ as everywhere else here: report what you measured. It's a cheaper seat and it sa
 | # | segment | what it is |
 |---|---------|------------|
 | 1 | `[COLD OPEN]` | your story, then a fixed handoff into the market |
-| 2 | `[THE TAPE]` | the move, what it means, and how wide it was |
+| 2 | `[THE TAPE]` | the move, what it means, which way it leaned |
 | 3 | `[MOVERS]` | the day's biggest single move, and the heuristic behind it |
 | 4 | `[STRAIGHT]` | the disclaimer |
 | 5 | `[SIGN-OFF]` | the proposition, then the ask |
@@ -68,9 +68,9 @@ because a story about being confidently wrong hands straight over to a show whos
 whole thesis is that nobody knows why anything moved.
 
 **`--full` is the long version, and everything it adds is unasked for.** A bond quote,
-an oil quote, a Bitcoin quote, and a second single-stock move, and the raw advancer/decliner tally. That density is the
-information overload that makes every one of these channels skippable; cutting it is
-what buys the attention the rest of the script needs.
+an oil quote, a Bitcoin quote, a second single-stock move, and the raw advancer/decliner
+tally. That density is the information overload that makes every one of these channels
+skippable; cutting it is what buys the attention the rest of the script needs.
 
 Two of those cuts are worth spelling out. A gainer *and* a loser every night is a
 format rather than a reason — it fills the same twenty seconds whether or not either
@@ -134,6 +134,36 @@ instead of waving the day away:
 
 A test forbids "not a story", "least reportable" and "nothing" from ever appearing in
 that bank.
+
+## Writing before the bell
+
+Writing the script and recording it both happen before the close — you need the words
+in hand to render them. So "the S and P five hundred **closed** down one percent" is
+false at eleven in the morning, and it is the one claim in the show a viewer could
+catch outright.
+
+`session_is_open()` compares the latest bar's date against the clock in New York. When
+the session is still running, every verb switches to the present:
+
+| after the bell | still open |
+|---|---|
+| "closed up six tenths of a percent" | "is up six tenths of a percent" |
+| "led the tape, up fourteen percent, closing at…" | "are leading the tape, up fourteen percent, at…" |
+| "The biggest move today went the wrong way" | "The biggest move so far has gone the wrong way" |
+| "the ten-year yield eased three basis points" | "the ten-year yield has eased three basis points" |
+| "Crude settled at seventy-one dollars" | "Crude is at seventy-one dollars" |
+
+The CLI also says so on stderr, because the figures will all have moved by the close.
+
+Timezone detection needs an IANA database, which Windows does not ship; `zoneinfo`
+finds one there only because pandas pulls in `tzdata`. If that ever stops being true,
+`_now_eastern()` returns `None` and the check falls back to comparing dates alone
+rather than raising.
+
+Two smaller things still read as past tense mid-session: the breadth banks ("the
+advance was narrow") and the fallback cold open used when no story is supplied. Both
+describe what has happened so far, which is true either way — unlike "closed", which
+names an event.
 
 ## Why there are no digits in the output
 

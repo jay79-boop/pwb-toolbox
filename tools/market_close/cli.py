@@ -171,6 +171,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.date is not None:
             facts.session_date = args.date
 
+    if facts.session_open:
+        _log(
+            "note: the market is still open, so the script is written in the "
+            "present tense and every figure in it will move before the bell. "
+            "Re-run after the close for the final numbers."
+        )
+
     if args.preview:
         text = script.preview(facts)
         if not text:
