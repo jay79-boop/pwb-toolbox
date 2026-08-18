@@ -23,16 +23,18 @@ from tools.build_profit_planner import (  # noqa: E402
     POS_TOTAL,
     POSITIONS,
     SECTORS,
+    TP_RUNG_FIRST,
+    TP_RUNG_LAST,
+    TP_RUNGS,
     build_workbook,
 )
 
 EXPECTED_SHEETS = [
     "Start Here",
-    "Dashboard",
+    "Ticker Plan",
     "Positions",
     "Exit Ladder",
-    "Sell Calculator",
-    "Gain Table",
+    "Dashboard",
     "Trade Log",
     "Settings",
     "Lists",
@@ -45,8 +47,7 @@ def wb():
 
 
 def test_expected_sheets_present(wb):
-    assert set(wb.sheetnames) == set(EXPECTED_SHEETS)
-    assert wb.sheetnames[0] == "Start Here"
+    assert wb.sheetnames == EXPECTED_SHEETS
     assert wb["Lists"].sheet_state == "hidden"
 
 
@@ -180,3 +181,36 @@ def test_workbook_saves(wb, tmp_path):
     assert out.stat().st_size > 10_000
     reopened = openpyxl.load_workbook(out)
     assert reopened.sheetnames == wb.sheetnames
+
+
+def test_ticker_plan_rungs_rise_and_do_not_oversell():
+    gains = [gain for gain, _ in TP_RUNGS]
+    assert gains == sorted(gains)
+    assert all(gain > 0 for gain in gains)
+    sold = sum(pct for _, pct in TP_RUNGS)
+    assert sold <= 1.0, f"the seeded plan sells {sold:.0%} of the position"
+    assert sold > 0.5, "a plan that sells almost nothing is not a plan"
+
+
+def test_ticker_plan_fits_its_rows():
+    assert len(TP_RUNGS) <= TP_RUNG_LAST - TP_RUNG_FIRST + 1
+
+
+def test_ticker_plan_is_self_contained(wb):
+    """Duplicating the tab has to give a working plan for the next coin.
+
+    A reference to another sheet would survive the copy and quietly keep
+    pointing at the original, so the copy would show the first coin's numbers
+    under the second coin's ticker. Only the two Settings rates may leak in,
+    and they come through defined names rather than cell references.
+    """
+    others = [n for n in wb.sheetnames if n != "Ticker Plan"]
+    ws = wb["Ticker Plan"]
+    for row in ws.iter_rows():
+        for cell in row:
+            if not (isinstance(cell.value, str) and cell.value.startswith("=")):
+                continue
+            for name in others:
+                assert (
+                    f"{name}!" not in cell.value
+                ), f"Ticker Plan!{cell.coordinate} references {name}"

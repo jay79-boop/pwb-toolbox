@@ -97,6 +97,41 @@ LADDER_LAST = 43
 LOG_FIRST = 5
 LOG_LAST = 204
 
+# Row geography of the Ticker Plan sheet. It is the tab that gets used daily,
+# so the layout is fixed here and every formula on it refers back to these.
+TP_TICKER = 4
+TP_UNITS = 5
+TP_COST = 6
+TP_MANUAL = 7
+TP_LIVE = 8
+TP_FEED = 9
+TP_BASIS = 10
+TP_VALUE = 11
+TP_OPEN = 12
+TP_OPENPCT = 13
+TP_TILE_LABEL = 16
+TP_TILE_VALUE = 17
+TP_BANNER = 20
+TP_HEADER = 21
+TP_RUNG_FIRST = 22
+TP_RUNG_LAST = 35
+
+# (gain above your average cost, share of the position sold at that rung).
+# Sums to 95%, leaving a deliberate 5% riding rather than mechanically
+# closing the whole position at the top rung.
+TP_RUNGS = [
+    (0.05, 0.10),
+    (0.10, 0.15),
+    (0.15, 0.15),
+    (0.20, 0.15),
+    (0.25, 0.10),
+    (0.30, 0.10),
+    (0.40, 0.05),
+    (0.50, 0.05),
+    (0.75, 0.05),
+    (1.00, 0.05),
+]
+
 
 @dataclass
 class Position:
@@ -800,288 +835,402 @@ def build_ladder(wb: Workbook):
     return ws
 
 
-def build_sell_calculator(wb: Workbook):
-    ws = wb.create_sheet("Sell Calculator")
-    ws.sheet_properties.tabColor = "0891B2"
+def build_ticker_plan(wb: Workbook):
+    """One ticker, one screen, the whole exit plan.
+
+    This is the tab that gets used daily, so it is deliberately self-contained:
+    every formula refers to a cell on this sheet (plus the two rates from
+    Settings), which means right-click → Duplicate gives a working plan for the
+    next coin instead of a sheet full of references pointing back at the
+    original.
+    """
+    ws = wb.create_sheet("Ticker Plan")
+    ws.sheet_properties.tabColor = ACCENT
     ws.sheet_view.showGridLines = False
     sheet_title(
         ws,
-        "Sell Calculator",
-        "Pick one position and a price. The grid answers the only question "
-        "that matters: after selling this slice, is the rest of it free?",
-        13,
+        "Ticker Plan",
+        "Type a ticker, what you paid and how much you hold. Everything below "
+        "is the plan. Right-click the tab and Duplicate it for the next coin.",
+        15,
     )
+
     ws.column_dimensions["A"].width = 3
-    ws.column_dimensions["B"].width = 26
+    ws.column_dimensions["B"].width = 24
+    ws.column_dimensions["C"].width = 16
+    for col in "DEFGHIJKLMNO":
+        ws.column_dimensions[col].width = 15
 
-    asset_dv = DataValidation(
-        type="list",
-        formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
-        allow_blank=True,
-    )
-    ws.add_data_validation(asset_dv)
+    # ---- the position -----------------------------------------------------
+    inputs = [
+        (
+            TP_TICKER,
+            "Ticker",
+            "CURRENCY:XRPUSD",
+            None,
+            "Crypto is CURRENCY:XRPUSD, CURRENCY:BTCUSD and so on. A stock is "
+            "just its symbol — NVDA.",
+        ),
+        (TP_UNITS, "Units held", 1000, QTY, "Coins or shares. Fractions are fine."),
+        (
+            TP_COST,
+            "Average cost",
+            1.00,
+            MONEY,
+            "What you actually paid per unit. Every target below is measured "
+            "from this number, not from today's price.",
+        ),
+        (
+            TP_MANUAL,
+            "Manual price",
+            1.00,
+            MONEY,
+            "Only used when the feed does not carry the ticker. Harmless " "otherwise.",
+        ),
+    ]
+    for row, label, value, fmt, note in inputs:
+        lab = ws.cell(row=row, column=2, value=label)
+        lab.font = BOLD_F
+        cell = ws.cell(row=row, column=3, value=value)
+        style_input(cell)
+        if fmt:
+            cell.number_format = fmt
+        hint = ws.cell(row=row, column=4, value=note)
+        hint.font = SMALL_F
+        hint.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=9)
 
-    asset = label_value(
-        ws, 4, "Position", "Bitcoin", None, "Pick from the Positions tab."
-    )
-    asset_dv.add(asset)
-    ws.column_dimensions["C"].width = 18
-    ws.column_dimensions["D"].width = 60
-
-    for row, (label, formula, fmt, note) in enumerate(
-        [
-            (
-                "Quantity held",
-                f"=IFERROR({pos_lookup('D', '$C$4')},0)",
-                QTY,
-                "From Positions.",
-            ),
-            (
-                "Average cost",
-                f"=IFERROR({pos_lookup('E', '$C$4')},0)",
-                MONEY,
-                "From Positions.",
-            ),
-            ("Cost basis", "=$C$5*$C$6", MONEY, "What you have at risk."),
-            (
-                "Current price",
-                f"=IFERROR({pos_lookup('I', '$C$4')},0)",
-                MONEY,
-                "From Positions.",
-            ),
-            (
-                "Sell at this price",
-                "=ROUND($C$8*2,2)",
-                MONEY,
-                "The one number to play with. Seeded at 2x the current price.",
-            ),
-        ],
-        start=5,
-    ):
+    derived = [
+        (
+            TP_LIVE,
+            "Live price",
+            f"=IFERROR(GOOGLEFINANCE($C${TP_TICKER}),$C${TP_MANUAL})",
+            MONEY,
+        ),
+        (
+            TP_FEED,
+            "Feed",
+            f'=IF(ISERROR(GOOGLEFINANCE($C${TP_TICKER})),"manual — no feed for this ticker","live")',
+            None,
+        ),
+        (TP_BASIS, "Cost basis", f"=$C${TP_UNITS}*$C${TP_COST}", MONEY),
+        (TP_VALUE, "Market value", f"=$C${TP_UNITS}*$C${TP_LIVE}", MONEY),
+        (TP_OPEN, "Open profit", f"=$C${TP_VALUE}-$C${TP_BASIS}", MONEY),
+        (
+            TP_OPENPCT,
+            "Open profit %",
+            f'=IF($C${TP_BASIS}=0,"",$C${TP_OPEN}/$C${TP_BASIS})',
+            PCT,
+        ),
+    ]
+    for row, label, formula, fmt in derived:
         lab = ws.cell(row=row, column=2, value=label)
         lab.font = BOLD_F
         cell = ws.cell(row=row, column=3, value=formula)
-        cell.number_format = fmt
-        if row == 9:
-            style_input(cell)
-        else:
-            style_derived(cell)
-        hint = ws.cell(row=row, column=4, value=note)
-        hint.font = SMALL_F
+        style_derived(cell)
+        if fmt:
+            cell.number_format = fmt
+
+    for ref in (f"C{TP_OPEN}", f"C{TP_OPENPCT}"):
+        ws.conditional_formatting.add(
+            ref,
+            CellIsRule(
+                operator="lessThan", formula=["0"], font=Font(bold=True, color=BAD)
+            ),
+        )
+        ws.conditional_formatting.add(
+            ref,
+            CellIsRule(
+                operator="greaterThan", formula=["0"], font=Font(bold=True, color=GOOD)
+            ),
+        )
+
+    # ---- what the whole plan adds up to ------------------------------------
+    first, last = TP_RUNG_FIRST, TP_RUNG_LAST
+    heading = ws.cell(
+        row=TP_TILE_LABEL - 1, column=2, value="If you run the whole plan"
+    )
+    heading.font = Font(name="Calibri", size=12, bold=True, color=ACCENT)
+
+    tiles = [
+        (2, "Net cash it returns", f"=SUM($K${first}:$K${last})", MONEY0),
+        (
+            4,
+            "Average exit price",
+            f'=IF(SUM($I${first}:$I${last})=0,"—",SUM($J${first}:$J${last})/SUM($I${first}:$I${last}))',
+            MONEY,
+        ),
+        (
+            6,
+            "% of position sold",
+            f'=IF($C${TP_UNITS}=0,"",SUM($I${first}:$I${last})/$C${TP_UNITS})',
+            PCT,
+        ),
+        (
+            8,
+            "Units still riding",
+            f"=$C${TP_UNITS}-SUM($I${first}:$I${last})",
+            QTY,
+        ),
+        (
+            10,
+            "Free ride from",
+            f'=IFERROR("+"&TEXT(INDEX($B${first}:$B${last},'
+            f'MATCH("Free ride",$N${first}:$N${last},0)),"0%"),"not with this plan")',
+            None,
+        ),
+    ]
+    for col, label, formula, fmt in tiles:
+        ws.merge_cells(
+            start_row=TP_TILE_LABEL,
+            start_column=col,
+            end_row=TP_TILE_LABEL,
+            end_column=col + 1,
+        )
+        head = ws.cell(row=TP_TILE_LABEL, column=col, value=label.upper())
+        head.font = KPI_LABEL_F
+        head.fill = PatternFill("solid", fgColor=DERIVED)
+        head.alignment = Alignment(vertical="center", indent=1)
+        ws.merge_cells(
+            start_row=TP_TILE_VALUE,
+            start_column=col,
+            end_row=TP_TILE_VALUE + 1,
+            end_column=col + 1,
+        )
+        val = ws.cell(row=TP_TILE_VALUE, column=col, value=formula)
+        val.font = Font(name="Calibri", size=15, bold=True, color=INK)
+        val.alignment = Alignment(vertical="center", indent=1)
+        if fmt:
+            val.number_format = fmt
+        for offset in range(2):
+            for r in (TP_TILE_LABEL, TP_TILE_VALUE, TP_TILE_VALUE + 1):
+                ws.cell(row=r, column=col + offset).border = BOX
+
+    # Selling more than you hold is the exact failure the old sheet made.
+    ws.conditional_formatting.add(
+        f"F{TP_TILE_VALUE}",
+        CellIsRule(
+            operator="greaterThan",
+            formula=["1"],
+            font=Font(size=15, bold=True, color=BAD),
+            fill=PatternFill("solid", fgColor=BAD_SOFT),
+        ),
+    )
+
+    # ---- the ladder --------------------------------------------------------
+    banners = [
+        (2, 5, "The rung", SLATE),
+        (6, 7, "If you sold the whole position here", "1D4ED8"),
+        (8, 15, "Or take a slice at each rung", ACCENT),
+    ]
+    for start, end, text, colour in banners:
+        ws.merge_cells(
+            start_row=TP_BANNER, start_column=start, end_row=TP_BANNER, end_column=end
+        )
+        cell = ws.cell(row=TP_BANNER, column=start, value=text)
+        cell.font = HEAD_F
+        cell.fill = PatternFill("solid", fgColor=colour)
+        cell.alignment = Alignment(vertical="center", horizontal="center")
+        for col in range(start, end + 1):
+            ws.cell(row=TP_BANNER, column=col).fill = PatternFill(
+                "solid", fgColor=colour
+            )
+    ws.row_dimensions[TP_BANNER].height = 20
 
     headers = [
-        "",
-        "% sold",
-        "Qty sold",
-        "Gross",
-        "Fees",
-        "Cost of qty sold",
-        "Realised gain",
-        "Est. tax",
+        "Gain from your cost",
+        "Target price",
+        "vs today's price",
+        "Profit per unit",
         "Net cash",
-        "Qty left",
-        "Cost still at risk",
-        "Break-even of remainder",
+        "Net profit",
+        "% to sell here",
+        "Units sold",
+        "Gross",
+        "Net cash",
+        "Cash so far",
+        "Units left",
         "Status",
+        "Break-even of the rest",
     ]
-    widths = [3, 26, 16, 14, 11, 17, 15, 12, 14, 14, 17, 22, 22]
-    header_row(ws, 11, headers, widths)
+    for offset, label in enumerate(headers):
+        cell = ws.cell(row=TP_HEADER, column=2 + offset, value=label)
+        cell.font = HEAD_F
+        cell.fill = HEAD_FILL
+        cell.border = BOX
+        cell.alignment = Alignment(vertical="center", wrap_text=True, indent=1)
+    ws.row_dimensions[TP_HEADER].height = 32
+    ws.freeze_panes = f"D{TP_RUNG_FIRST}"
 
-    steps = [0.05 * i for i in range(5, 21)]
-    for offset, pct in enumerate(steps):
-        row = 12 + offset
-        for col in range(2, 14):
+    for offset in range(last - first + 1):
+        row = first + offset
+        seed = TP_RUNGS[offset] if offset < len(TP_RUNGS) else None
+        for col in range(2, 16):
             cell = ws.cell(row=row, column=col)
             style_body(cell)
             if offset % 2 == 1:
                 cell.fill = BAND_FILL
-        ws.cell(row=row, column=2, value=round(pct, 2)).number_format = PCT0
-        ws.cell(row=row, column=3, value=f"=$C$5*$B{row}").number_format = QTY
-        ws.cell(row=row, column=4, value=f"=$C{row}*$C$9").number_format = MONEY
-        ws.cell(row=row, column=5, value=f"=$D{row}*FeeRate").number_format = MONEY
-        ws.cell(row=row, column=6, value=f"=$C{row}*$C$6").number_format = MONEY
-        ws.cell(row=row, column=7, value=f"=$D{row}-$F{row}").number_format = MONEY
-        ws.cell(row=row, column=8, value=f"=MAX(0,$G{row})*TaxRate").number_format = (
-            MONEY
-        )
-        ws.cell(row=row, column=9, value=f"=$D{row}-$E{row}-$H{row}").number_format = (
-            MONEY
-        )
-        ws.cell(row=row, column=10, value=f"=$C$5-$C{row}").number_format = QTY
-        ws.cell(row=row, column=11, value=f"=MAX(0,$C$7-$I{row})").number_format = MONEY
-        # The number the old sheet never computed: what the leftovers now have
-        # to be worth for the whole trade to be flat.
+        for col in (2, 8):
+            style_input(ws.cell(row=row, column=col))
+
+        gain = ws.cell(row=row, column=2, value=seed[0] if seed else None)
+        gain.number_format = PCT0
+        slice_pct = ws.cell(row=row, column=8, value=seed[1] if seed else None)
+        slice_pct.number_format = PCT0
+
+        blank = f'$B{row}=""'
+        noslice = f'$I{row}=""'
+        ws.cell(
+            row=row, column=3, value=f'=IF({blank},"",$C${TP_COST}*(1+$B{row}))'
+        ).number_format = MONEY
         ws.cell(
             row=row,
-            column=12,
-            value=f'=IF($J{row}<=0,"—",$K{row}/$J{row})',
+            column=4,
+            value=f'=IF(OR({blank},$C${TP_LIVE}=0),"",$C{row}/$C${TP_LIVE}-1)',
+        ).number_format = PCT
+        ws.cell(
+            row=row, column=5, value=f'=IF({blank},"",$C{row}-$C${TP_COST})'
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=6,
+            value=(
+                f'=IF({blank},"",$C${TP_UNITS}*$C{row}*(1-FeeRate)'
+                f"-MAX(0,($C{row}-$C${TP_COST})*$C${TP_UNITS})*TaxRate)"
+            ),
+        ).number_format = MONEY
+        ws.cell(
+            row=row, column=7, value=f'=IF({blank},"",$F{row}-$C${TP_BASIS})'
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=9,
+            value=f'=IF(OR({blank},$H{row}=""),"",$H{row}*$C${TP_UNITS})',
+        ).number_format = QTY
+        ws.cell(
+            row=row, column=10, value=f'=IF({noslice},"",$I{row}*$C{row})'
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=11,
+            value=(
+                f'=IF({noslice},"",$J{row}*(1-FeeRate)'
+                f"-MAX(0,($C{row}-$C${TP_COST})*$I{row})*TaxRate)"
+            ),
+        ).number_format = MONEY
+        ws.cell(
+            row=row, column=12, value=f'=IF({noslice},"",SUM($K${first}:$K{row}))'
         ).number_format = MONEY
         ws.cell(
             row=row,
             column=13,
-            value=(
-                f'=IF($J{row}<=0,"Fully closed",'
-                f'IF($I{row}>=$C$7,"Free ride — cost is back",'
-                f'"Still exposed"))'
-            ),
+            value=f'=IF({noslice},"",$C${TP_UNITS}-SUM($I${first}:$I{row}))',
+        ).number_format = QTY
+        # The whole point of the ladder: the rung where the money you have
+        # taken off the table covers what you put in.
+        ws.cell(
+            row=row,
+            column=14,
+            value=f'=IF({noslice},"",IF($L{row}>=$C${TP_BASIS},"Free ride","Still exposed"))',
         )
+        ws.cell(
+            row=row,
+            column=15,
+            value=(
+                f'=IF({noslice},"",IF($M{row}<=0,"—",'
+                f"MAX(0,$C${TP_BASIS}-$L{row})/$M{row}))"
+            ),
+        ).number_format = MONEY
 
-    last = 12 + len(steps) - 1
     ws.conditional_formatting.add(
-        f"M12:M{last}",
+        f"N{first}:N{last}",
         CellIsRule(
             operator="equal",
-            formula=['"Free ride — cost is back"'],
+            formula=['"Free ride"'],
             font=Font(color=GOOD, bold=True),
             fill=PatternFill("solid", fgColor=GOOD_SOFT),
         ),
     )
     ws.conditional_formatting.add(
-        f"M12:M{last}",
-        CellIsRule(operator="equal", formula=['"Fully closed"'], fill=ACCENT_FILL),
+        f"D{first}:D{last}",
+        CellIsRule(
+            operator="lessThanOrEqual",
+            formula=["0"],
+            font=Font(color=GOOD, bold=True),
+            fill=PatternFill("solid", fgColor=GOOD_SOFT),
+        ),
     )
     ws.conditional_formatting.add(
-        f"L12:L{last}",
-        DataBarRule(start_type="min", end_type="max", color="93C5FD"),
+        f"M{first}:M{last}",
+        CellIsRule(
+            operator="lessThan",
+            formula=["0"],
+            font=Font(color=BAD, bold=True),
+            fill=PatternFill("solid", fgColor=BAD_SOFT),
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"L{first}:L{last}",
+        DataBarRule(start_type="min", end_type="max", color=ACCENT),
     )
 
     note = ws.cell(
         row=last + 2,
         column=2,
         value=(
-            "Break-even of remainder is the cost you have not yet recovered "
-            "divided by the units you still hold. Once it drops below zero the "
-            "position cannot lose you money, whatever the price does next — "
-            "that is the row the old sheet's 60%–100% tables were groping for."
+            'Green in "vs today\'s price" means the market is already past that '
+            'rung. "Break-even of the rest" is what the units you still hold '
+            "have to be worth for the whole trade to be flat — once a rung says "
+            "Free ride, the position cannot lose you money whatever happens next."
         ),
     )
     note.font = SMALL_F
     note.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.merge_cells(start_row=last + 2, start_column=2, end_row=last + 3, end_column=9)
-    return ws
+    ws.merge_cells(start_row=last + 2, start_column=2, end_row=last + 3, end_column=10)
 
-
-def build_gain_table(wb: Workbook):
-    ws = wb.create_sheet("Gain Table")
-    ws.sheet_properties.tabColor = "B45309"
-    ws.sheet_view.showGridLines = False
-    sheet_title(
-        ws,
-        "Gain Table",
-        "The old sheet's percentage grid, rebuilt as two inputs and a column "
-        "of formulas. Change the entry price and the whole table moves.",
-        14,
-    )
-    ws.column_dimensions["A"].width = 3
-    ws.column_dimensions["B"].width = 22
-    ws.column_dimensions["C"].width = 16
-    ws.column_dimensions["D"].width = 4
-
-    label_value(ws, 4, "Entry price", 2.17, MONEY, "")
-    label_value(ws, 5, "Units held", 276, QTY, "")
-    lab = ws.cell(row=6, column=2, value="Position cost")
-    lab.font = BOLD_F
-    cost = ws.cell(row=6, column=3, value="=$C$4*$C$5")
-    cost.number_format = MONEY
-    style_derived(cost)
-    seednote = ws.cell(
-        row=7,
+    # ---- recovery math -----------------------------------------------------
+    head_row = last + 5
+    heading = ws.cell(
+        row=head_row,
         column=2,
-        value="Seeded with the $2.17 / 276-unit example from the old sheet's percentage tab.",
+        value="If it goes the other way — down is not the same distance as up",
     )
-    seednote.font = SMALL_F
-    ws.merge_cells(start_row=7, start_column=2, end_row=7, end_column=8)
-
-    headers = [
-        "",
-        "Gain",
-        "Sell price",
-        "",
-        "Position value",
-        "Gross profit",
-        "Fees + tax",
-        "Net profit",
-        "Multiple",
-        "Units to sell to get your cost back",
-    ]
-    widths = [3, 10, 14, 4, 16, 14, 13, 14, 11, 32]
-    header_row(ws, 9, headers, widths)
-    ws.cell(row=9, column=4).fill = PatternFill("solid", fgColor=WHITE)
-    ws.cell(row=9, column=4).border = Border()
-
-    gains = (
-        [i / 100 for i in range(1, 31)]
-        + [i / 100 for i in range(35, 101, 5)]
-        + [i / 100 for i in range(110, 301, 10)]
-        + [4.0, 5.0, 7.0, 9.0]
-    )
-    for offset, gain in enumerate(gains):
-        row = 10 + offset
-        for col in list(range(2, 4)) + list(range(5, 11)):
-            cell = ws.cell(row=row, column=col)
-            style_body(cell)
-            if offset % 2 == 1:
-                cell.fill = BAND_FILL
-        ws.cell(row=row, column=2, value=round(gain, 4)).number_format = PCT0
-        ws.cell(row=row, column=3, value=f"=$C$4*(1+$B{row})").number_format = MONEY
-        ws.cell(row=row, column=5, value=f"=$C{row}*$C$5").number_format = MONEY
-        ws.cell(row=row, column=6, value=f"=$E{row}-$C$6").number_format = MONEY
-        ws.cell(
-            row=row, column=7, value=f"=$E{row}*FeeRate+MAX(0,$F{row})*TaxRate"
-        ).number_format = MONEY
-        ws.cell(row=row, column=8, value=f"=$F{row}-$G{row}").number_format = MONEY
-        ws.cell(row=row, column=9, value=f"=1+$B{row}").number_format = MULT
-        ws.cell(
-            row=row, column=10, value=f'=IF($C{row}=0,"—",MIN($C$5,$C$6/$C{row}))'
-        ).number_format = QTY
-
-    last = 10 + len(gains) - 1
-    ws.conditional_formatting.add(
-        f"H10:H{last}", DataBarRule(start_type="min", end_type="max", color=ACCENT)
-    )
-
-    # The half of the arithmetic the old sheet never had: what a drawdown costs
-    # to undo. It is not symmetric, and the table makes that impossible to miss.
-    ws.merge_cells(start_row=9, start_column=12, end_row=9, end_column=15)
-    rec = ws.cell(
-        row=9, column=12, value="Recovery math — down is not the same distance as up"
-    )
-    rec.font = HEAD_F
-    rec.fill = PatternFill("solid", fgColor=BAD)
-    rec.alignment = Alignment(vertical="center", indent=1)
-    for col, (label, width) in enumerate(
+    heading.font = Font(name="Calibri", size=12, bold=True, color=BAD)
+    for offset, label in enumerate(
         [
-            ("If you are down", 16),
-            ("Price becomes", 14),
-            ("Value becomes", 15),
-            ("Gain needed to get back", 24),
-        ],
-        start=12,
+            "If you are down",
+            "Price becomes",
+            "Position worth",
+            "Gain needed to get back",
+        ]
     ):
-        cell = ws.cell(row=10, column=col, value=label)
+        cell = ws.cell(row=head_row + 1, column=2 + offset, value=label)
         cell.font = HEAD_F
         cell.fill = HEAD_FILL
         cell.border = BOX
         cell.alignment = Alignment(vertical="center", wrap_text=True, indent=1)
-        ws.column_dimensions[get_column_letter(col)].width = width
-    ws.row_dimensions[10].height = 30
+    ws.row_dimensions[head_row + 1].height = 30
 
-    for offset, dd in enumerate([i / 100 for i in range(5, 96, 5)]):
-        row = 11 + offset
-        for col in range(12, 16):
+    for offset, drawdown in enumerate([i / 100 for i in range(10, 81, 10)]):
+        row = head_row + 2 + offset
+        for col in range(2, 6):
             cell = ws.cell(row=row, column=col)
             style_body(cell)
             if offset % 2 == 1:
                 cell.fill = BAND_FILL
-        ws.cell(row=row, column=12, value=round(dd, 2)).number_format = PCT0
-        ws.cell(row=row, column=13, value=f"=$C$4*(1-$L{row})").number_format = MONEY
-        ws.cell(row=row, column=14, value=f"=$M{row}*$C$5").number_format = MONEY
-        ws.cell(row=row, column=15, value=f"=1/(1-$L{row})-1").number_format = PCT0
+        ws.cell(row=row, column=2, value=round(drawdown, 2)).number_format = PCT0
+        ws.cell(row=row, column=3, value=f"=$C${TP_COST}*(1-$B{row})").number_format = (
+            MONEY
+        )
+        ws.cell(row=row, column=4, value=f"=$C{row}*$C${TP_UNITS}").number_format = (
+            MONEY
+        )
+        ws.cell(row=row, column=5, value=f"=1/(1-$B{row})-1").number_format = PCT0
 
     ws.conditional_formatting.add(
-        f"O11:O{11 + 18}",
+        f"E{head_row + 2}:E{head_row + 9}",
         CellIsRule(
-            operator="greaterThan",
+            operator="greaterThanOrEqual",
             formula=["1"],
             font=Font(color=BAD, bold=True),
             fill=PatternFill("solid", fgColor=BAD_SOFT),
@@ -1170,7 +1319,7 @@ def build_trade_log(wb: Workbook):
 
 
 def build_dashboard(wb: Workbook):
-    ws = wb.create_sheet("Dashboard", 1)
+    ws = wb.create_sheet("Dashboard")
     ws.sheet_properties.tabColor = INK
     ws.sheet_view.showGridLines = False
     sheet_title(
@@ -1379,7 +1528,7 @@ def build_dashboard(wb: Workbook):
 
 
 def build_start_here(wb: Workbook):
-    ws = wb.create_sheet("Start Here", 0)
+    ws = wb.create_sheet("Start Here")
     ws.sheet_properties.tabColor = ACCENT
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 3
@@ -1420,34 +1569,36 @@ def build_start_here(wb: Workbook):
     )
     row += 1
 
-    row = section(row, "The three tabs you actually use")
+    row = section(row, "Start on Ticker Plan")
     row = line(
         row,
-        "Positions",
-        "What you hold. Type the amber columns; everything else follows.",
-    )
-    row = line(
-        row,
-        "Exit Ladder",
-        "What you sell, at what price, decided in advance. The point of the whole workbook.",
-    )
-    row = line(
-        row,
-        "Sell Calculator",
-        "One position, one price, sixteen ways to slice it — and whether the rest is free afterwards.",
+        "Ticker Plan",
+        "Type a ticker, what you paid and how much you hold. It shows the live "
+        "price and every exit rung measured from your cost: what the price has "
+        "to reach, what you make per unit, what selling the lot would return, "
+        "and what taking a slice at each rung leaves you still holding. "
+        "Right-click the tab and choose Duplicate to make one per coin — it "
+        "links to no other tab, so the copy works on its own.",
     )
     row += 1
 
     row = section(row, "The rest")
     row = line(
         row,
-        "Dashboard",
-        "Totals and three checks that go red when something needs attention.",
+        "Positions",
+        "Every holding in one table — the portfolio view Ticker Plan does not "
+        "give you. Type the amber columns; the rest follows.",
     )
     row = line(
         row,
-        "Gain Table",
-        "The old percentage grid as formulas, plus the recovery table it never had.",
+        "Exit Ladder",
+        "The same rungs, but for every coin at once, so nothing sits unplanned. "
+        "The Dashboard counts the holdings missing from it.",
+    )
+    row = line(
+        row,
+        "Dashboard",
+        "Totals and three checks that go red when something needs attention.",
     )
     row = line(
         row,
@@ -1504,7 +1655,11 @@ def build_start_here(wb: Workbook):
         ),
         (
             "The percentage grid",
-            "About 1,900 hand-typed cells across 14 blocks, all of them the same arithmetic. Now two inputs and eight formulas.",
+            "About 1,900 hand-typed cells across 14 blocks, all of them the same arithmetic. It is now four inputs on Ticker Plan, and the rungs move when you change what you paid.",
+        ),
+        (
+            "Six tabs became one",
+            "Working out an exit used to mean reading a percentage table, a sell-profit table and a pull-profits block that did not agree with each other. Ticker Plan answers all three questions in one row: what the price has to reach, what selling the lot returns, and what selling a slice leaves you holding.",
         ),
         (
             "Prices unfroze",
@@ -1567,15 +1722,16 @@ def build_start_here(wb: Workbook):
 def build_workbook() -> Workbook:
     wb = Workbook()
     wb.remove(wb.active)
+    # Created in the order they should appear: the daily driver first, the
+    # reference tabs behind it.
+    build_start_here(wb)
+    build_ticker_plan(wb)
     build_positions(wb)
     build_ladder(wb)
-    build_sell_calculator(wb)
-    build_gain_table(wb)
+    build_dashboard(wb)
     build_trade_log(wb)
     build_settings(wb)
     build_lists(wb)
-    build_dashboard(wb)
-    build_start_here(wb)
     wb.active = 0
     return wb
 
