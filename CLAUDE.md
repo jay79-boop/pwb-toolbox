@@ -53,11 +53,13 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
-- `static/trade-journal-autofill.js` — derived fields for a single-file HTML trade
-  journal: caps money-at-risk at the debit paid, and computes everything else the
-  form would otherwise ask for. `static/trade-journal-autofill.html` is a working
-  harness for it; `node static/trade-journal-autofill.test.js` is its suite, run
-  under pytest by `tests/test_trade_journal_autofill.py`
+- `static/trade-journal.html` — the single-file trade journal: log a trade against a
+  locked thesis, close it against that thesis, and read the diagnostics. It opens
+  from `file://` with no server and no build step, which is the property to protect
+  when changing it. Its pure arithmetic sits in one marked "derived-fields block"
+  that `static/trade-journal.test.js` slices out of the HTML and runs under node —
+  the comment banners around that block are load-bearing. `tests/test_trade_journal.py`
+  runs that suite under pytest
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
   `index.html` (the published landing page; see "Design tooling" below)
 
@@ -103,7 +105,7 @@ pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
-node static/trade-journal-autofill.test.js   # journal field math (also run by pytest)
+node static/trade-journal.test.js           # journal field math (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
