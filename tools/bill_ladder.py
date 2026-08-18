@@ -29,12 +29,12 @@ Every command takes explicit --rate overrides, so all of it works with no
 network. Examples::
 
     python tools/bill_ladder.py curve
-    python tools/bill_ladder.py compare --roll-rate 3.65 --hold-rate 3.86
+    python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81
     python tools/bill_ladder.py compare --roll-weeks 4 --hold-weeks 26 --live
-    python tools/bill_ladder.py savings --bill-rate 3.68 --savings-apy 3.90 \\
+    python tools/bill_ladder.py savings --bill-rate 3.81 --savings-apy 3.90 \\
         --federal 24 --state 9.3
 
-Rates are entered as percentages: ``--roll-rate 3.65`` means 3.65%.
+Rates are entered as percentages: ``--roll-rate 3.70`` means 3.70%.
 """
 
 from __future__ import annotations

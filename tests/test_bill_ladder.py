@@ -77,7 +77,12 @@ def test_roll_growth_with_no_stub_matches_plain_compounding():
 
 
 def test_rolling_four_week_loses_to_the_thirteen_week_at_august_2026_rates():
-    # 4-week at 3.65% against 13-week at 3.86%, the curve on 2026-08-14.
+    # 4-week at 3.65% against 13-week at 3.86%. Not a curve Treasury ever
+    # published — 3.86% is the 3-month constant-maturity rate of 2026-08-14,
+    # which runs a few basis points above the bill's own coupon equivalent.
+    # Kept as the pin anyway: the arithmetic is what is under test, and a wider
+    # spread than the real curve's exercises it further from the tie. The
+    # curve as actually published is pinned further down.
     # Pinned to the cent: this is the case the tool was written to answer.
     result = compare(
         roll_rate=0.0365,
@@ -338,3 +343,47 @@ def test_savings_command_says_so_when_no_state_rate_was_given():
     )
     assert result.exit_code == 0, result.output
     assert "exemption scored nothing" in result.output
+
+
+# The shape Treasury actually publishes, which the fixture above does not have:
+# seven maturities including the 6-week and the 17-week. Coupon equivalents are
+# the real curve of 2026-08-17; the discount column beside them is the discount
+# rate those yields imply, d = 360*CE / (365 + CE*days), rather than invented
+# numbers. The 52-week has no coupon-equivalent conversion of that form and is
+# quoted directly.
+LIVE_CSV = """\
+Date,"4 WEEKS BANK DISCOUNT","4 WEEKS COUPON EQUIVALENT","6 WEEKS BANK DISCOUNT",\
+"6 WEEKS COUPON EQUIVALENT","8 WEEKS BANK DISCOUNT","8 WEEKS COUPON EQUIVALENT",\
+"13 WEEKS BANK DISCOUNT","13 WEEKS COUPON EQUIVALENT","17 WEEKS BANK DISCOUNT",\
+"17 WEEKS COUPON EQUIVALENT","26 WEEKS BANK DISCOUNT","26 WEEKS COUPON EQUIVALENT",\
+"52 WEEKS BANK DISCOUNT","52 WEEKS COUPON EQUIVALENT"
+08/17/2026,3.64,3.70,3.63,3.70,3.68,3.75,3.72,3.81,3.75,3.85,3.79,3.92,3.83,3.99
+"""
+
+
+def test_parse_bill_csv_reads_the_full_published_maturity_set():
+    # The 6-week and 17-week columns are easy to omit from a hand-built fixture
+    # and are present in the real file; a parser keyed to a fixed list of
+    # maturities would drop them silently.
+    curve = parse_bill_csv(LIVE_CSV)
+    assert sorted(curve.rates) == [4, 6, 8, 13, 17, 26, 52]
+    assert curve.rate(6) == pytest.approx(0.0370)
+    assert curve.rate(17) == pytest.approx(0.0385)
+
+
+def test_the_curve_of_2026_08_17_favours_holding_at_every_maturity_but_one():
+    # The 6-week is quoted at the same 3.70% as the 4-week, so rolling the
+    # shorter one wins on compounding alone — the single case on this curve
+    # where staying short is not paid for.
+    curve = parse_bill_csv(LIVE_CSV)
+    short = curve.rate(4)
+    edges = {
+        weeks: compare(short, curve.rate(weeks), 28, curve.days(weeks)).edge
+        for weeks in sorted(curve.rates)
+        if weeks > 4
+    }
+    assert edges[6] > 0.0
+    assert all(edge < 0.0 for weeks, edge in edges.items() if weeks > 6)
+    # Staying in 4-week paper for a year instead of buying the 52-week bill
+    # costs this much per 100k, if the curve never moves.
+    assert edges[52] == pytest.approx(-225.71, abs=0.01)
