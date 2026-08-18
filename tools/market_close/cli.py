@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="JSON object mapping ticker -> spoken company name, merged over the built-ins",
     )
-    parser.add_argument("--anchor", default="Max Brennan", help="anchor name")
+    parser.add_argument("--anchor", default="Toadchu Y'all", help="anchor name")
     parser.add_argument("--show", default="the Market Close", help="programme name")
     parser.add_argument(
         "--free",

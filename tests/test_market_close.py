@@ -5,7 +5,7 @@ built in-process and the renderer against ``demo_facts``, so nothing needs
 ``PWB_API_KEY``, a Hugging Face login, or a live session.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -396,6 +396,149 @@ def test_thin_breadth_drops_the_line_rather_than_guessing():
 
 
 # --------------------------------------------------------------------------
+# noise vs news
+# --------------------------------------------------------------------------
+
+
+def history(symbol="SPY", daily_pct=0.5, days=24, today_pct=-0.5):
+    """Alternating moves of ``daily_pct``, then one final move of ``today_pct``.
+
+    Gives a baseline of almost exactly ``daily_pct``, so the ratio a test is
+    asserting on is ``today_pct / daily_pct``.
+    """
+    rows, price, start = [], 100.0, date(2026, 7, 10)
+    for step in range(days):
+        price *= 1 + (daily_pct / 100 if step % 2 else -daily_pct / 100)
+        rows.append((start + timedelta(days=step), symbol, price))
+    rows.append((start + timedelta(days=days), symbol, price * (1 + today_pct / 100)))
+    return pd.DataFrame(rows, columns=["date", "symbol", "close"])
+
+
+def test_typical_moves_measures_a_normal_day():
+    assert market.typical_moves(history(daily_pct=0.5))["SPY"] == pytest.approx(
+        0.5, abs=0.02
+    )
+
+
+def test_typical_moves_excludes_today_from_its_own_baseline():
+    """A big day must not inflate the average it is measured against.
+
+    Without this, the sessions most worth flagging are the ones the show would
+    most understate.
+    """
+    calm = market.typical_moves(history(today_pct=-0.5))["SPY"]
+    wild = market.typical_moves(history(today_pct=-8.0))["SPY"]
+    assert wild == pytest.approx(calm, abs=1e-9)
+
+
+def test_typical_moves_needs_enough_history():
+    assert market.typical_moves(history(days=4)) == {}
+    assert "SPY" in market.typical_moves(history(days=24))
+
+
+def test_typical_moves_on_empty_frame():
+    assert market.typical_moves(pd.DataFrame()) == {}
+
+
+@pytest.mark.parametrize(
+    "today_pct,expected",
+    [
+        (-0.15, "quiet"),
+        (0.2, "quiet"),
+        (-0.5, "ordinary"),
+        (0.7, "ordinary"),
+        (-1.0, "notable"),
+        (-2.2, "big"),
+        (5.0, "big"),
+    ],
+)
+def test_move_scale(today_pct, expected):
+    quote = market.index_quotes(history(today_pct=today_pct), ["SPY"])[0]
+    assert quote.move_scale == expected
+
+
+def test_move_scale_is_none_without_a_baseline():
+    quote = Quote("SPY", "the index", 100.0, 101.0)
+    assert quote.typical_move is None
+    assert quote.move_ratio is None
+    assert quote.move_scale is None
+
+
+def test_move_scale_survives_a_zero_baseline():
+    assert Quote("SPY", "x", 100.0, 101.0, typical_move=0.0).move_scale is None
+
+
+@pytest.mark.parametrize(
+    "ratio,expected",
+    [
+        (0.9, "about the same as"),
+        (1.4, "about the same as"),
+        (2.0, "about twice"),
+        (2.4, "about twice"),
+        (3.2, "about three times"),
+        (8.0, "about eight times"),
+    ],
+)
+def test_say_multiple_stays_coarse(ratio, expected):
+    """A decimal would imply precision the baseline doesn't have."""
+    assert spoken.say_multiple(ratio) == expected
+
+
+def test_scale_line_is_none_without_a_baseline():
+    assert script.scale_line(Quote("SPY", "x", 100.0, 101.0), DAY_TWO) is None
+
+
+def test_scale_line_capitalizes_a_sentence_initial_multiple():
+    """Regression: "That is a real move. [pause] about four times…"."""
+    quote = market.index_quotes(history(today_pct=-2.2), ["SPY"])[0]
+    for day in range(1, 15):
+        line = script.scale_line(quote, date(2026, 8, day))
+        assert "] about " not in line, line
+
+
+def test_no_placeholder_survives_substitution():
+    for pct in (-0.15, -0.5, -1.0, -2.2, -6.0):
+        quote = market.index_quotes(history(today_pct=pct), ["SPY"])[0]
+        for day in range(1, 8):
+            line = script.scale_line(quote, date(2026, 8, day))
+            assert "{" not in line and "}" not in line, line
+
+
+def test_scale_lines_keep_the_no_digits_invariant():
+    for pct in (-0.15, -0.5, -1.0, -2.2, -12.0):
+        quote = market.index_quotes(history(today_pct=pct), ["SPY"])[0]
+        for day in range(1, 8):
+            line = script.scale_line(quote, date(2026, 8, day))
+            assert not any(c.isdigit() for c in line), line
+
+
+def test_every_scale_band_has_a_bank():
+    assert set(script.SCALE_BANKS) == {"quiet", "ordinary", "notable", "big"}
+    assert all(script.SCALE_BANKS[band] for band in script.SCALE_BANKS)
+
+
+def test_tape_carries_the_scale_line():
+    quotes = market.index_quotes(history(today_pct=-2.2), ["SPY"])
+    quotes[0].name = market.INDEX_NAMES["SPX"]
+    facts = MarketFacts(
+        session_date=DAY_TWO, indices=quotes, advancers=13, decliners=27
+    )
+    text = script.tape(facts)
+    assert script.scale_line(quotes[0], DAY_TWO) in text
+
+
+def test_tape_omits_the_scale_line_without_a_baseline():
+    facts = session(13, 27)
+    assert facts.indices[0].move_scale is None
+    for marker in (
+        "wearing a headline",
+        "boringly ordinary",
+        "what this market does on",
+    ):
+        assert marker not in script.tape(facts)
+
+
+# --------------------------------------------------------------------------
 # rotation
 # --------------------------------------------------------------------------
 
@@ -635,7 +778,7 @@ def test_cli_demo_writes_a_script(tmp_path, capsys):
     assert main(["--demo", "--out", str(out)]) == 0
     text = out.read_text(encoding="utf-8")
     assert "[COLD OPEN]" in text
-    assert "Max Brennan" in text
+    assert "Toadchu Y'all" in text
 
 
 def test_cli_demo_prints_to_stdout(capsys):

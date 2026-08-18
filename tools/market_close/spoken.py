@@ -219,6 +219,21 @@ def say_dollars(amount: float) -> str:
     return f"{int_to_words(whole)} dollars and {int_to_words(cents)} cents"
 
 
+def say_multiple(ratio: float) -> str:
+    """A ratio as a spoken multiple: "about twice", "about three times".
+
+    Deliberately coarse. The show's claim is that today was roughly twice a
+    normal day, not that it was two point three times one — a decimal here
+    would imply a precision the baseline does not have.
+    """
+    n = int(round(abs(float(ratio))))
+    if n <= 1:
+        return "about the same as"
+    if n == 2:
+        return "about twice"
+    return f"about {int_to_words(n)} times"
+
+
 def say_ticker(symbol: str) -> str:
     """Spell a ticker letter by letter, which is how it is read on air.
 

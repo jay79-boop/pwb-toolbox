@@ -99,6 +99,21 @@ COMPANY_NAMES = {
 }
 
 
+# How today's move compares to a typical day, as multiples of the baseline.
+# Below QUIET the move is smaller than an ordinary session; above BIG it is
+# the kind of day worth remembering.
+QUIET_MOVE = 0.6
+NOTABLE_MOVE = 1.6
+BIG_MOVE = 2.5
+
+# A baseline needs enough observations to mean anything. Fewer than this and
+# the scale is None, and the renderer says nothing about it.
+MIN_BASELINE_DAYS = 10
+
+# Trailing sessions used for the baseline.
+BASELINE_WINDOW = 20
+
+
 @dataclass
 class Quote:
     """One instrument's move on the session."""
@@ -107,6 +122,9 @@ class Quote:
     name: str
     close: float
     previous_close: float
+    # Mean absolute daily percent change over the trailing window, excluding
+    # today. ``None`` when there was not enough history to compute one.
+    typical_move: float | None = None
 
     @property
     def point_change(self) -> float:
@@ -117,6 +135,33 @@ class Quote:
         if not self.previous_close:
             return 0.0
         return 100.0 * (self.close - self.previous_close) / self.previous_close
+
+    @property
+    def move_ratio(self) -> float | None:
+        """Today's move as a multiple of a typical day for this instrument."""
+        if not self.typical_move:
+            return None
+        return abs(self.percent_change) / self.typical_move
+
+    @property
+    def move_scale(self) -> str | None:
+        """``quiet``, ``ordinary``, ``notable`` or ``big`` — ``None`` if unknown.
+
+        This is the show's one genuinely non-obvious number. "The index fell
+        half a percent" is what every outlet says; whether half a percent is
+        large for *this* market this month is what none of them say, and it is
+        the difference between a report and a newscast.
+        """
+        ratio = self.move_ratio
+        if ratio is None:
+            return None
+        if ratio < QUIET_MOVE:
+            return "quiet"
+        if ratio < NOTABLE_MOVE:
+            return "ordinary"
+        if ratio < BIG_MOVE:
+            return "notable"
+        return "big"
 
 
 @dataclass
@@ -232,11 +277,58 @@ def _quote(changes: pd.DataFrame, symbol: str, name: str | None = None) -> Quote
     )
 
 
+def typical_moves(df: pd.DataFrame, window: int = BASELINE_WINDOW) -> dict[str, float]:
+    """Mean absolute daily percent change per symbol, over the trailing window.
+
+    The yardstick behind "that's a nothing move". Three choices worth stating:
+
+    **Today is excluded from its own baseline.** A large session would
+    otherwise inflate the average it is being measured against, quietly
+    understating exactly the days most worth flagging.
+
+    **Mean, not standard deviation.** The sentence this backs is about a
+    typical day, not about a distribution — and one outlier moves a standard
+    deviation far more than it moves an average.
+
+    **Absolute values.** Direction is already in the report; this is about size.
+
+    Symbols with fewer than ``MIN_BASELINE_DAYS`` usable observations are
+    omitted, so the renderer says nothing rather than characterising a month
+    it cannot see.
+    """
+    if df is None or df.empty:
+        return {}
+
+    frame = df.sort_values("date")
+    baselines: dict[str, float] = {}
+
+    for symbol, part in frame.groupby("symbol", sort=False):
+        closes = part["close"].astype(float)
+        moves = closes.pct_change().dropna().abs() * 100.0
+        # Drop today's move, then take the window behind it.
+        history = moves.iloc[:-1].tail(window)
+        if len(history) < MIN_BASELINE_DAYS:
+            continue
+        baseline = float(history.mean())
+        if baseline > 0:
+            baselines[str(symbol)] = baseline
+
+    return baselines
+
+
 def index_quotes(df: pd.DataFrame, symbols=DEFAULT_INDICES) -> list[Quote]:
-    """Quotes for the tracked indices, in the order given."""
+    """Quotes for the tracked indices, in the order given, with baselines."""
     changes = latest_changes(df)
-    found = (_quote(changes, symbol) for symbol in symbols)
-    return [quote for quote in found if quote is not None]
+    baselines = typical_moves(df)
+
+    quotes = []
+    for symbol in symbols:
+        quote = _quote(changes, symbol)
+        if quote is None:
+            continue
+        quote.typical_move = baselines.get(symbol)
+        quotes.append(quote)
+    return quotes
 
 
 def company_name(symbol: str, names: dict[str, str] | None = None) -> str:
@@ -318,9 +410,12 @@ def demo_facts(session: date | None = None) -> MarketFacts:
     return MarketFacts(
         session_date=session,
         indices=[
-            Quote("SPX", INDEX_NAMES["SPX"], 5432.10, 5399.72),
-            Quote("CCMP", INDEX_NAMES["CCMP"], 17_204.55, 17_051.21),
-            Quote("INDU", INDEX_NAMES["INDU"], 39_140.00, 39_000.00),
+            # A three-tenths baseline makes the six-tenths session twice a
+            # normal day, so --demo exercises the scale line rather than
+            # silently skipping it.
+            Quote("SPX", INDEX_NAMES["SPX"], 5432.10, 5399.72, typical_move=0.30),
+            Quote("CCMP", INDEX_NAMES["CCMP"], 17_204.55, 17_051.21, typical_move=0.42),
+            Quote("INDU", INDEX_NAMES["INDU"], 39_140.00, 39_000.00, typical_move=0.28),
         ],
         gainer=Quote("NVDA", "Nvidia", 128.40, 112.63),
         loser=Quote("PFE", "Pfizer", 27.31, 35.01),

@@ -58,6 +58,35 @@ Rendering segment by segment is not fussiness. v3 holds a performance together
 better across a few sentences than across a whole broadcast, and a bad take on the
 kicker should cost you one re-roll rather than the night's work.
 
+## Noise or news
+
+The one number here a viewer cannot get anywhere else.
+
+Every outlet reports that the index fell half a percent. None of them say whether
+half a percent is *large for this market this month* — which is the only part that
+tells you whether to care. So the tape leads with that comparison:
+
+> The S and P five hundred E T F closed down half a percent.
+> [pause] Which sounds like something. [pause] It isn't. [pause] This market moves
+> about that much on an ordinary day, just clearing its throat.
+
+`typical_moves()` computes the baseline: the mean absolute daily percent change over
+the trailing twenty sessions. Today is measured against it and lands in one of four
+bands — `quiet`, `ordinary`, `notable`, `big` — each with its own bank.
+
+Three choices in that calculation are deliberate:
+
+- **Today is excluded from its own baseline.** Otherwise a large session inflates the
+  average it is being judged against, and the days most worth flagging are exactly
+  the ones the show would understate.
+- **Mean, not standard deviation.** The claim is about a typical day, not about a
+  distribution, and one outlier moves a standard deviation far more than an average.
+- **Fewer than ten usable observations and the line is dropped.** Same rule as breadth:
+  say nothing rather than characterise a month you cannot see.
+
+The spoken multiple stays coarse — "about twice", "about three times", never "two
+point three times". A decimal would imply a precision twenty sessions don't support.
+
 ## Why there are no digits in the output
 
 ElevenLabs reads numerals by its own rules, and on a markets script that is most of

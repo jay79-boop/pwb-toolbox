@@ -23,7 +23,15 @@ from datetime import date
 
 import pandas as pd
 
-from .market import COMPANY_NAMES, MarketFacts, Quote, breadth, latest_changes, movers
+from .market import (
+    COMPANY_NAMES,
+    MarketFacts,
+    Quote,
+    breadth,
+    latest_changes,
+    movers,
+    typical_moves,
+)
 
 # Yahoo tickers, paired with the name an anchor would say. The "E T F" spacing
 # is for the voice model — see spoken.say_ticker.
@@ -207,11 +215,17 @@ def collect_free(
         frame = pd.DataFrame(columns=["date", "symbol", "close"])
 
     if not frame.empty:
-        found = [
-            _quote_from(frame, symbol, FREE_INDEX_NAMES[symbol])
-            for symbol in FREE_INDICES
-        ]
-        facts.indices = [quote for quote in found if quote is not None]
+        # DEFAULT_PERIOD is a month precisely so this baseline has something to
+        # average over; the reducers themselves only want the last two closes.
+        baselines = typical_moves(frame)
+        found = []
+        for symbol in FREE_INDICES:
+            quote = _quote_from(frame, symbol, FREE_INDEX_NAMES[symbol])
+            if quote is None:
+                continue
+            quote.typical_move = baselines.get(symbol)
+            found.append(quote)
+        facts.indices = found
 
         latest = pd.to_datetime(frame["date"]).max()
         if not pd.isna(latest):
