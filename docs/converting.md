@@ -86,7 +86,7 @@ duplicate is pure waste.
 | the short form, `ta.pivothigh(left, right)` | the same over `high` / `low` |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
 | `close`, `open`, `high`, `low`, `volume` | `self.data.<line>[0]` |
-| `hl2`, `hlc3`, `ohlc4` | the arithmetic spelled out |
+| `hl2`, `hlc3`, `ohlc4` | the arithmetic spelled out, as a line or a read |
 | `close[3]` | `self.data.close[-3]` |
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
 | `cond ? a : b` | `a if cond else b` |
@@ -160,6 +160,7 @@ Reported in `result.unsupported`, never approximated:
 - `pyramiding` above 0 — Backtrader nets one position per feed; see below
 - `strategy.closedtrades.max_runup/max_drawdown/commission/entry_id/exit_id/exit_comment` — Backtrader records none of them
 - more than one bar of history on a trade counter — only the previous bar is kept
+- a computed value used as an indicator source when it is conditional, reassigned, or a ternary — see "Computed values as indicator sources"
 - any identifier or call the converter does not know
 
 Reported separately in `result.ignored`, because dropping them changes nothing
@@ -673,17 +674,64 @@ This matters for the corpus loop at the top of this page. Raising would kill
 that loop on its first odd script and tell you nothing about the rest — which is
 exactly what the module exists to avoid.
 
+## Computed values as indicator sources
+
+Backtrader overloads arithmetic on line objects, so a composition of lines is
+itself a line and can be handed straight to an indicator. That is what makes
+the commonest shape in published scripts work:
+
+```pinescript
+esa = ta.ema(hlc3, chLen)
+d   = ta.ema(math.abs(hlc3 - esa), chLen)
+ci  = (hlc3 - esa) / (0.015 * d)
+wt1 = ta.ema(ci, avgLen)
+```
+
+```python
+self._ema_1 = bt.indicators.EMA(((self.data.high + self.data.low + self.data.close) / 3), period=self.p.chLen)
+self._ema_2 = bt.indicators.EMA(abs((((self.data.high + self.data.low + self.data.close) / 3) - self._ema_1)), period=self.p.chLen)
+self._line_ci_3 = ((((self.data.high + self.data.low + self.data.close) / 3) - self._ema_1) / (0.015 * self._ema_2))
+self._ema_4 = bt.indicators.EMA(self._line_ci_3, period=self.p.avgLen)
+```
+
+`ci` is assigned as an ordinary value, and it is still computed per bar in
+`next()` as one — but when something asks for it as a *source*, the same
+expression is lowered a second time as a line. Both spellings compute the same
+number; there is a test asserting they agree to twelve significant figures,
+because a divergence between them would mean a strategy saw different values
+depending on whether anything happened to want a line.
+
+Note `close[1]` becomes `close(-1)`, the line delayed by a bar, and not
+`close[-1]`, which would be a *read* — and `__init__` runs before there is a
+bar to read.
+
+### When a value will not become a line
+
+Promotion is refused wherever one line would be a lie about what the script
+means, and each of these is a separate rule:
+
+- **assigned more than once** — two assignments are two different values
+- **assigned inside an `if`** — it holds a value on some bars and not others, where a line is computed on every one
+- **reassigned with `:=`, or a `var`** — the same objection, spread over time
+
+**A ternary is not lowered to a line either**, and this one is worth stating
+plainly because it is the largest remaining gap. `bt.If` is a line operation,
+so it computes *both* of its branches on every bar. The idiom
+
+```pinescript
+ci = d != 0 ? (hlc3 - esa) / (0.015 * d) : 0.0
+```
+
+is written precisely so the division does not happen when `d` is zero — and
+Backtrader's line division raises `ZeroDivisionError` rather than yielding
+`na`. Lowered eagerly, the guard would stop working and the run would crash.
+So a ternary stays the per-bar conditional it is in `next()`, and anything
+built on one is reported rather than promoted. In the sweep corpus that is 85
+of the remaining refusals; making it work needs the expression compiled into a
+custom indicator's `next()`, the way `PinePivot` is, rather than composed from
+operators.
+
 ## A known simplification
-
-Only a bare `ta.*` call on the right-hand side of an assignment is hoisted into
-`__init__`. Compound expressions such as `spread = maFast - maSlow` are computed
-in `next()` from indexed values instead of becoming a Backtrader line.
-
-That is correct for evaluating conditions, which is what strategies do with
-them, and it avoids a class of bugs where a partially-lowered expression looks
-like a line object but is not one. The cost: `spread[1]` — history of a computed
-value — is refused rather than supported, because it would need a real line
-object to be meaningful.
 
 The same boundary decides what can be an indicator's length. A Backtrader
 indicator fixes its period when it is constructed, so the length has to be a
