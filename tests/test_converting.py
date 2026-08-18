@@ -2229,3 +2229,122 @@ def test_generated_jma_state_actually_carries_across_bars():
     _, fast = _run(JMA_STRATEGY, length=5)
     _, slow = _run(JMA_STRATEGY, length=60)
     assert fast != slow
+
+
+# --- barstate: where the script sits in the chart's history ------------------
+
+BARSTATE_STRATEGY = """//@version=6
+strategy("Barstate")
+confirmOnly = input.bool(true, "Confirm close only")
+ma = ta.sma(close, 10)
+raw = close > ma
+signal = raw and (not confirmOnly or barstate.isconfirmed)
+if signal
+    strategy.entry("l", strategy.long)
+if close < ma
+    strategy.close()
+if barstate.islast
+    strategy.close()
+"""
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("barstate.isconfirmed", "True"),
+        ("barstate.isnew", "True"),
+        ("barstate.ishistory", "True"),
+        ("barstate.isrealtime", "False"),
+        ("barstate.isfirst", "(len(self) == 1)"),
+        ("barstate.islast", "(len(self) == self.data.buflen())"),
+        ("barstate.islastconfirmedhistory", "(len(self) == self.data.buflen())"),
+    ],
+)
+def test_barstate_identifiers(name, expected):
+    """A bar-close backtest already knows where it is in the history."""
+    source = (
+        '//@version=6\nstrategy("S")\n' f"v = {name}\n" "if v\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert f"v = {expected}" in result.code
+
+
+def test_barstate_positions_are_parenthesised():
+    """`len(self) == buflen()` bare would rebind under `*`, silently.
+
+    `==` binds looser than arithmetic, so an unparenthesised comparison
+    dropped into a larger expression means something else entirely.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "n = (barstate.islast ? 1 : 0) * 2\n"
+        "if close > n\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "n = ((1 if (len(self) == self.data.buflen()) else 0) * 2)" in result.code
+
+
+def test_a_confirmed_bar_guard_becomes_a_no_op():
+    """Every bar `next()` sees has closed, so the repaint guard is vacuous."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ma = ta.sma(close, 10)\n"
+        "signal = close > ma and barstate.isconfirmed\n"
+        "if signal\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "signal = ((self.data.close[0] > self._sma_1[0]) and True)" in result.code
+
+
+def test_barstate_history_is_reported():
+    """`barstate.isconfirmed[1]` is a series read this cannot answer."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "v = barstate.isconfirmed[1]\n"
+        "if v\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("history of this builtin" in i for i in result.unsupported)
+
+
+def test_generated_barstate_strategy_runs_and_trades():
+    value, closed = _run(BARSTATE_STRATEGY)
+    assert closed > 0
+    assert value != 10_000.0
+
+
+def test_generated_isfirst_and_islast_fire_on_exactly_one_bar_each():
+    """`islast` and `isfirst` are positions in the feed, not constants.
+
+    Counting them needs `var`, because trades cannot see either one: an order
+    placed on the last bar has no next bar to fill on, so a strategy that
+    closes on `islast` finishes with the position still open and the trade
+    count says nothing. A counter says everything -- wrong in either
+    direction, never or every bar, shows up as 0 or 300.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int firstBars = 0\n"
+        "var int lastBars = 0\n"
+        "if barstate.isfirst\n    firstBars := firstBars + 1\n"
+        "if barstate.islast\n    lastBars := lastBars + 1\n"
+        "if close > open\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    frame = _price_frame()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(namespace[result.class_name])
+    strategy = cerebro.run()[0]
+
+    assert len(frame) > 1
+    assert strategy.firstBars == 1
+    assert strategy.lastBars == 1

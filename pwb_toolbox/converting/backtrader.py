@@ -59,6 +59,14 @@ levels change. Emitting a fresh order per call would stack them and fill
 several times over, so the generated class maintains them instead -- see
 ``_EXIT_HELPER``.
 
+``barstate.*`` is the fifth, and the only one that is a constant. It asks where
+the script sits in the chart's history, and a bar-close backtest already knows:
+``next()`` runs once per completed historical bar. So ``barstate.isconfirmed``
+is ``True`` -- which is what TradingView's own backtest answers on a historical
+bar, not a simplification of it -- and the repaint guards built on it correctly
+become no-ops. ``islast`` and ``isfirst`` are positions in the feed rather than
+constants, so they stay live.
+
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
 """
@@ -181,6 +189,20 @@ BUILTIN_VALUES = {
     "math.pi": "math.pi",
     "strategy.position_size": "self.position.size",
     "strategy.position_avg_price": "self.position.price",
+    #: `barstate.*` describes where the script is in the chart's history. A
+    #: bar-close backtest answers most of it outright: `next()` runs once per
+    #: completed historical bar, so that bar is confirmed, it is new, it is
+    #: history, and it is not realtime. Constants, not approximations -- see
+    #: the module note below.
+    "barstate.isconfirmed": "True",
+    "barstate.isnew": "True",
+    "barstate.ishistory": "True",
+    "barstate.isrealtime": "False",
+    "barstate.isfirst": "(len(self) == 1)",
+    "barstate.islast": "(len(self) == self.data.buflen())",
+    #: With no realtime bar to follow it, the last confirmed historical bar is
+    #: the last bar.
+    "barstate.islastconfirmedhistory": "(len(self) == self.data.buflen())",
 }
 
 #: Pine math calls that are Python builtins under another name.
