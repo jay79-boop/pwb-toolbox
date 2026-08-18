@@ -397,7 +397,15 @@ def scale_line(quote: Quote, session: date) -> str | None:
     )
 
 
-def tape(facts: MarketFacts) -> str | None:
+def tape(facts: MarketFacts, counts: bool = False) -> str | None:
+    """The session's move, what its size means, and how wide it was.
+
+    ``counts`` adds the raw advancer/decliner tally. Off by default: the
+    breadth *line* already says which way the market leaned and what that is
+    worth, and "thirteen names rose, twenty-seven fell" is the recitation the
+    interpretation was written to replace. Every bank line stands on its own
+    without the numbers in front of it.
+    """
     if not facts.indices:
         return None
 
@@ -417,13 +425,15 @@ def tape(facts: MarketFacts) -> str | None:
         # assert something the data doesn't support.
         return f"[THE TAPE]\n\n{body}"
 
-    counts = (
-        f"[pause] {_capitalize(spoken.int_to_words(facts.advancers))} names "
-        f"rose, {spoken.int_to_words(facts.decliners)} fell.\n"
-    )
+    tally = ""
+    if counts:
+        tally = (
+            f"[pause] {_capitalize(spoken.int_to_words(facts.advancers))} names "
+            f"rose, {spoken.int_to_words(facts.decliners)} fell.\n"
+        )
     joke = pick(BREADTH_BANKS[state], facts.session_date, "breadth")
 
-    return f"[THE TAPE]\n\n{body}\n{counts}[pause] {joke}"
+    return f"[THE TAPE]\n\n{body}\n{tally}[pause] {joke}"
 
 
 def _gainer_block(quote: Quote, session: date) -> str:
@@ -559,13 +569,18 @@ def render(
 
     ``full`` is the long version, and everything it adds is something a viewer
     who came for a market read did not ask for — a bond quote, an oil quote, a
-    Bitcoin quote, and a second single-stock move. That density is the
-    information overload that makes every one of these channels skippable;
-    cutting it is what buys the attention the rest of the script needs.
+    Bitcoin quote, a second single-stock move, and the raw advancer/decliner
+    tally. That density is the information overload that makes every one of
+    these channels skippable; cutting it is what buys the attention the rest of
+    the script needs.
     """
     options = options or ScriptOptions()
 
-    segments = [cold_open(facts, options), tape(facts), movers(facts, both=full)]
+    segments = [
+        cold_open(facts, options),
+        tape(facts, counts=full),
+        movers(facts, both=full),
+    ]
     if full:
         segments += [rates(facts), commodities(facts)]
     segments += [straight_beat(), sign_off(facts, options)]
