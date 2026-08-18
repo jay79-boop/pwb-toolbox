@@ -45,6 +45,12 @@ here -- and it also dissolves the length problem, since ``ta.sma(src, len)``
 gets a concrete length the moment the call site's argument replaces ``len``.
 See :meth:`_Generator._inline_call`.
 
+A body that keeps ``var`` state cannot fold into one expression -- the state
+has to be *updated*, in order, once per bar -- so it becomes lines emitted in
+front of whichever statement asked for the value, plus a name. Each call site
+gets its own attributes, which is that same per-call-site rule again. See
+:meth:`_Generator._inline_stateful`.
+
 ``strategy.exit`` with a ``stop`` or ``limit`` is a fourth. Both are absolute
 prices, so they become a Backtrader stop and limit order linked one-cancels-
 other. The subtlety is that Pine's exit is a *standing instruction* rather than
@@ -172,8 +178,38 @@ def parse_timeframe(text):
 #: mapping is exact rather than approximate.
 BUILTIN_VALUES = {
     "bar_index": "len(self)",
+    "math.pi": "math.pi",
     "strategy.position_size": "self.position.size",
     "strategy.position_avg_price": "self.position.price",
+}
+
+#: Pine math calls that are Python builtins under another name.
+_BUILTIN_MATH = {
+    "math.abs": "abs",
+    "math.max": "max",
+    "math.min": "min",
+    "math.round": "round",
+}
+
+#: Pine math calls that are `math` module functions of the same name. Only
+#: scalar ones: `math.sum` is a rolling window over a series, which is an
+#: indicator rather than a function, and is deliberately absent.
+_MODULE_MATH = {
+    name: f"math.{name.split('.', 1)[1]}"
+    for name in (
+        "math.sqrt",
+        "math.log",
+        "math.log10",
+        "math.exp",
+        "math.floor",
+        "math.ceil",
+        "math.sin",
+        "math.cos",
+        "math.tan",
+        "math.asin",
+        "math.acos",
+        "math.atan",
+    )
 }
 
 INPUT_FUNCS = {
@@ -514,16 +550,34 @@ class _Generator:
         #: inner expression of a request.security is translated.
         self._feed = "self.data"
         self._uses_exit = False
+        self._uses_math = False
         self.functions = program.functions
         #: Names currently being inlined, so recursion is caught rather than
         #: followed. A stack catches mutual recursion as well as direct.
         self._inlining = []
+        #: Lines that must run in front of the statement being emitted -- the
+        #: per-bar state updates of an inlined function that keeps `var`.
+        self._prelude = []
+        #: State slot -> the Pine name it came from, for slots whose `[1]` may
+        #: be read. Only function-body vars qualify; see `_state_history`.
+        self._var_history = {}
+        #: State slots already assigned during the body being inlined.
+        self._var_written = set()
 
     # --- helpers -------------------------------------------------------------
 
     def _fresh(self, stem):
         self._counter += 1
         return f"_{stem}_{self._counter}"
+
+    def _local(self, stem):
+        """A fresh name for a local in ``next()``.
+
+        Unlike an attribute it carries no leading underscore, which `_safe`
+        would otherwise have to escape -- `pine__f_jma_beta_6` reads far worse
+        than `f_jma_beta_6` for no gain.
+        """
+        return self._fresh(stem)[1:]
 
     def _hoist(self, stem, construction):
         """Build ``construction`` in ``__init__`` once, returning its handle.
@@ -578,6 +632,11 @@ class _Generator:
 
         self._inlining.append(call.func)
         try:
+            if any(
+                isinstance(s, Assign) and s.qualifier in ("var", "varip")
+                for s in func.body
+            ):
+                return self._inline_stateful(call, func, bindings)
             result = self._inline_body(func, bindings)
             if result is None:
                 return None
@@ -612,6 +671,112 @@ class _Generator:
             )
             return None
         return result
+
+    def _inline_stateful(self, call, func, bindings):
+        """Inline a body that keeps ``var`` state across bars.
+
+        A pure body folds into one expression. A body with ``var`` in it
+        cannot: the state has to be *updated*, in order, once per bar. So this
+        emits statements into the prelude -- the lines that go in front of
+        whichever statement the call appears in -- and hands back a name.
+
+        Each call site gets its own attributes, which is the same rule that
+        makes inlining the right translation in the first place. Two calls to
+        one filter are two filters, and they are here.
+        """
+        slug = _slug(func.name) or "fn"
+        for position, statement in enumerate(func.body):
+            last = position == len(func.body) - 1
+
+            if isinstance(statement, Assign) and statement.qualifier == "varip":
+                self._reject(
+                    f"{func.name}(): `varip {statement.target}` updates intrabar, "
+                    "which a bar-close Backtrader run has no equivalent for"
+                )
+                return None
+
+            if isinstance(statement, Assign) and statement.qualifier == "var":
+                initial = self._state_initial(statement.value)
+                if initial is None:
+                    self._reject(
+                        f"{func.name}(): `var {statement.target}` needs a literal "
+                        "initial value, because __init__ runs before the first bar"
+                    )
+                    return None
+                slot = self._fresh(f"{slug}_{_safe(statement.target.lstrip(chr(95)))}")
+                # Key the slot by its own attribute name: unique per call site,
+                # so a body local can never collide with one of the caller's.
+                self.state[slot] = slot
+                self._var_history[slot] = statement.target
+                self.init_lines.append(f"self.{slot} = {initial}")
+                bindings[statement.target] = Name(slot)
+                if last:
+                    return Name(slot)
+                continue
+
+            if isinstance(statement, Assign):
+                bound = bindings.get(statement.target)
+                held = isinstance(bound, Name) and bound.id in self.state
+                value = self._value_expr(_substitute(statement.value, bindings))
+                if held:
+                    self._prelude.append(f"self.{self.state[bound.id]} = {value}")
+                    # Only now: the right-hand side above still had to see the
+                    # previous bar's value, which is what `e0[1]` means.
+                    self._var_written.add(bound.id)
+                    if last:
+                        return bound
+                    continue
+                name = self._local(f"{slug}_{_safe(statement.target.lstrip(chr(95)))}")
+                self._prelude.append(f"{_safe(name)} = {value}")
+                self.scalars.add(name)
+                bindings[statement.target] = Name(name)
+                if last:
+                    return Name(name)
+                continue
+
+            if isinstance(statement, ExprStmt) and last:
+                value = self._value_expr(_substitute(statement.value, bindings))
+                name = self._local(f"{slug}_value")
+                self._prelude.append(f"{_safe(name)} = {value}")
+                self.scalars.add(name)
+                return Name(name)
+
+            if isinstance(statement, ExprStmt) and (
+                isinstance(statement.value, Call)
+                and statement.value.func in PRESENTATIONAL
+            ):
+                self._ignore(f"{statement.value.func}() dropped: presentational only")
+                continue
+
+            if isinstance(statement, If) and last:
+                folded = _if_as_expression(statement)
+                if folded is None:
+                    self._reject(
+                        f"{func.name}(): the trailing `if` has a branch carrying "
+                        "more than one expression"
+                    )
+                    return None
+                value = self._value_expr(_substitute(folded, bindings))
+                name = self._local(f"{slug}_value")
+                self._prelude.append(f"{_safe(name)} = {value}")
+                self.scalars.add(name)
+                return Name(name)
+
+            if isinstance(statement, Unsupported):
+                self._reject(
+                    f"{func.name}(): its body uses {statement.kind}, which is "
+                    "not supported"
+                )
+                return None
+
+            self._reject(
+                f"{func.name}(): its body uses "
+                f"{type(statement).__name__.lower()}, which this does not model"
+            )
+            return None
+
+        self._reject(f"{func.name}(): its body is empty")
+        return None
 
     def _resolve_user_calls(self, node):
         """Inline every user-defined call inside ``node``, innermost first."""
@@ -876,9 +1041,7 @@ class _Generator:
             return f"self.{self.series[name]}[{index}]"
         if name in self.state:
             if index:
-                self._reject(
-                    f"{name}: a var holds one value, not a series with history"
-                )
+                return self._state_history(name, index)
             return f"self.{self.state[name]}"
         # A computed local shadows a param of the same name. `width =
         # input.float(2.0, "Width") / 100` names the param from the title and
@@ -898,6 +1061,8 @@ class _Generator:
         if name in BUILTIN_VALUES:
             if index:
                 self._reject(f"{name}: history of this builtin is not supported")
+            if BUILTIN_VALUES[name].startswith("math."):
+                self._uses_math = True
             return BUILTIN_VALUES[name]
         if _presentational_constant(name):
             # `col = up ? color.green : color.red` only ever feeds a plot, and
@@ -907,6 +1072,28 @@ class _Generator:
             return "None"
         self._reject(f"unknown identifier {name!r}")
         return "None"
+
+    def _state_history(self, name, index):
+        """Read ``x[n]`` where ``x`` is a ``var``.
+
+        A ``var`` becomes one attribute, so the only history it can answer is
+        the previous bar -- and only until this bar overwrites it. Inside a
+        function body the updates are emitted in source order, so an attribute
+        read before its own assignment still holds the previous bar's value,
+        which is exactly what ``nz(e0[1], src)`` is asking for. Read after the
+        assignment the same attribute holds *this* bar's value, so that one is
+        refused rather than quietly answered with the wrong number.
+        """
+        if index != -1 or name not in self._var_history:
+            written = self._var_history.get(name, name)
+            self._reject(f"{written}: a var holds one value, not a series with history")
+            return f"self.{self.state[name]}"
+        if name in self._var_written:
+            self._reject(
+                f"{self._var_history[name]}[1]: read after this bar's assignment, "
+                "where a var no longer holds the previous bar's value"
+            )
+        return f"self.{self.state[name]}"
 
     def _value_call(self, call):
         if call.func in self.functions:
@@ -948,15 +1135,37 @@ class _Generator:
             )
             return f"({now} - {before})"
 
-        if call.func in ("math.abs", "math.max", "math.min", "math.round"):
-            mapped = {
-                "math.abs": "abs",
-                "math.max": "max",
-                "math.min": "min",
-                "math.round": "round",
-            }[call.func]
+        if call.func in _BUILTIN_MATH:
             inner = ", ".join(self._value_expr(a) for a in call.args)
-            return f"{mapped}({inner})"
+            return f"{_BUILTIN_MATH[call.func]}({inner})"
+
+        if call.func in _MODULE_MATH:
+            self._uses_math = True
+            inner = ", ".join(self._value_expr(a) for a in call.args)
+            return f"{_MODULE_MATH[call.func]}({inner})"
+
+        if call.func == "math.pow":
+            if len(call.args) != 2:
+                self._reject("math.pow expects two arguments")
+                return "None"
+            base, exponent = (self._value_expr(a) for a in call.args)
+            return f"({base} ** {exponent})"
+
+        if call.func == "math.sign":
+            # Python has no sign(). Pine's returns -1, 0 or 1, and the
+            # difference of two comparisons is exactly that.
+            if len(call.args) != 1:
+                self._reject("math.sign expects one argument")
+                return "None"
+            inner = self._value_expr(call.args[0])
+            return f"(({inner} > 0) - ({inner} < 0))"
+
+        if call.func == "math.avg":
+            if not call.args:
+                self._reject("math.avg expects at least one argument")
+                return "None"
+            parts = [self._value_expr(a) for a in call.args]
+            return f"(({' + '.join(parts)}) / {len(parts)})"
 
         if call.func == "request.security":
             return self._value_security(call)
@@ -1167,6 +1376,34 @@ class _Generator:
         self._register_input(statement.value, prefer=statement.target)
 
     def _emit_statement(self, statement, indent):
+        """Emit one statement, with any inlined state updates in front of it.
+
+        A function that keeps ``var`` state produces lines as well as a value,
+        and they have to run before the statement that asked for the value.
+        They are collected while the statement is lowered and spliced in at
+        the point it started.
+        """
+        outer, self._prelude = self._prelude, []
+        mark = len(self.next_lines)
+        try:
+            self._emit_one(statement, indent)
+        finally:
+            prelude, self._prelude = self._prelude, outer
+        if not prelude:
+            return
+        if indent:
+            # Pine updates a function's state on every bar wherever the call
+            # sits. Emitting these under an `if` would update it only on the
+            # bars the condition held, which is a different strategy.
+            self._reject(
+                "a function that keeps state across bars can only be called "
+                "from a top-level statement, since Pine updates it every bar"
+            )
+            return
+        pad = "    " * indent
+        self.next_lines[mark:mark] = [f"{pad}{line}" for line in prelude]
+
+    def _emit_one(self, statement, indent):
         pad = "    " * indent
 
         if isinstance(statement, Unsupported):
@@ -1372,7 +1609,10 @@ class _Generator:
         return self._render()
 
     def _render(self):
-        out = ["import backtrader as bt", "", ""]
+        out = ["import backtrader as bt"]
+        if self._uses_math:
+            out.append("import math")
+        out += ["", ""]
         out.append(f"class {self.class_name}(bt.Strategy):")
 
         title = self.declaration[1] if self.declaration else ""

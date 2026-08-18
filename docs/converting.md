@@ -106,6 +106,9 @@ duplicate is pure waste.
 | `na(x)` | the NaN test `x != x` |
 | `request.security(syminfo.tickerid, tf, expr)` | a read from a resampled `self.datas[n]` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
+| `math.pow`, `math.sign`, `math.avg` | the arithmetic spelled out |
+| `math.sqrt/log/log10/exp/floor/ceil`, the trig set, `math.pi` | the `math` module, imported only when used |
+| `var` inside a function body | an attribute per call site, updated each bar |
 
 Pine inputs become real Backtrader params, so they stay tunable:
 
@@ -139,7 +142,7 @@ Reported in `result.unsupported`, never approximated:
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps and `type` blocks — all reported, so the rest of the script is still diagnosed
-- a user-defined function that keeps `var` state, recurses, returns a tuple, or expands past the inlining limit — see below
+- a user-defined function that recurses, returns a tuple, expands past the inlining limit, or keeps state and is called from inside an `if` — see below
 - `for` / `while` loops
 - a `switch` used as a statement rather than for its value — that is a side-effecting block
 - an `if` read for its value whose branch carries more than one expression — see below
@@ -389,9 +392,63 @@ value, which is what sequential assignment means. The last statement carries the
 value, whether it is an expression, an assignment, a trailing `if`, or a
 trailing `switch`.
 
+### State that survives the bar, per call site
+
+A body may keep `var` state. This is what the JMA, Kalman and supersmoother
+filters in every published corpus are made of, and it is why they could not be
+converted before:
+
+```pinescript
+f_jma(src, len, phase, power) =>
+    var float jma = na
+    var float e0  = na
+    ...
+    e0  := (1 - _alpha) * src + _alpha * nz(e0[1], src)
+    e1  := (src - e0) * (1 - _beta) + _beta * nz(e1[1], 0)
+    jma := nz(jma[1], src) + e2
+    jma
+```
+
+A pure body folds into one expression. A body with `var` in it cannot — the
+state has to be *updated*, in order, once per bar. So it becomes lines in front
+of whichever statement asked for the value:
+
+```python
+def __init__(self):
+    self._f_jma_jma_1 = float('nan')
+    self._f_jma_e0_2 = float('nan')
+
+def next(self):
+    self._f_jma_e0_2 = ((1 - alpha) * self.data.close[0] + alpha
+                        * (self._f_jma_e0_2 if self._f_jma_e0_2 == self._f_jma_e0_2
+                           else self.data.close[0]))
+    ...
+    smooth = f_jma_value_8
+```
+
+Each call site gets its own attributes — the same rule that makes inlining the
+right translation at all. Two calls to one filter are two filters, and they are
+here.
+
+**`e0[1]` and bare `e0` both work, and they are different things.** One
+attribute holds one value; which value depends on when it is read. Before this
+bar's assignment it still holds the previous bar's — exactly what
+`nz(e0[1], src)` is asking for. After the assignment it holds this bar's, which
+is what Pine's bare `e0` on the next line means. Emitting the updates in source
+order gets both right for free.
+
+Reading `e0[1]` *after* `e0 :=` is the case where that stops working, and it is
+refused rather than answered with this bar's number. So is `e0[2]`: one
+attribute cannot reach two bars back.
+
+The one placement rule: **a stateful function has to be called from a top-level
+statement.** Pine updates the state on every bar wherever the call sits;
+emitting the updates under an `if` would update them only on the bars the
+condition held, which is a different strategy. That is reported, not emitted.
+
 ### What it refuses
 
-- **`var` or `varip` in the body.** Pine keeps one per call site; substitution has nowhere to put it. This is the single most common blocker left in real strategies — the JMA and Kalman-style filters all want it.
+- **`varip` in the body** — refused for the same reason `varip` is refused anywhere: it updates on every tick, and a bar-close run has none.
 - **Recursion, direct or mutual.** There is nothing to recurse over, and a stack catches `g → h → g` as well as `f → f`.
 - **A tuple return**, `[lower, upper, atr]`. It needs a destructuring call site, which is refused in its own right.
 - **A body the grammar cannot read at all** — Pine allows several declarations on one line, and a `switch` case whose value is an indented block. Those are skipped and reported by name, exactly as every body was before any of them could be read. A function outside the subset must not fail the whole file.
