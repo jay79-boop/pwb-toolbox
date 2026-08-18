@@ -426,29 +426,66 @@ def tape(facts: MarketFacts) -> str | None:
     return f"[THE TAPE]\n\n{body}\n{counts}[pause] {joke}"
 
 
-def movers(facts: MarketFacts) -> str | None:
+def _gainer_block(quote: Quote, session: date) -> str:
+    joke = pick(GAINER_JOKES, session, "gainer")
+    return (
+        f"Shares of {quote.name} led the tape, up "
+        f"{spoken.say_percent(quote.percent_change)}, closing at "
+        f"{spoken.say_dollars(quote.close)}.\n{joke}"
+    )
+
+
+def _loser_block(quote: Quote, session: date, lead: bool) -> str:
+    joke = pick(LOSER_JOKES, session, "loser")
+    # "Going the other way" needs something to be the other way from; standing
+    # alone it opens the segment mid-thought.
+    opening = (
+        f"The biggest move today went the wrong way. {quote.name} finished down"
+        if lead
+        else f"Going the other way — {quote.name} finished down"
+    )
+    return (
+        f"{opening} {spoken.say_percent(quote.percent_change)}, at "
+        f"{spoken.say_dollars(quote.close)}.\n{joke}"
+    )
+
+
+def movers(facts: MarketFacts, both: bool = False) -> str | None:
+    """The session's biggest move, or both extremes when ``both``.
+
+    One name by default. A gainer *and* a loser every night is a format rather
+    than a reason — it fills the same twenty seconds whether or not either move
+    was worth mentioning. The larger of the two is the actual story, so that is
+    what gets said, and the segment halves.
+    """
     if facts.gainer is None and facts.loser is None:
         return None
 
-    blocks = []
+    if both:
+        blocks = []
+        if facts.gainer is not None:
+            blocks.append(_gainer_block(facts.gainer, facts.session_date))
+        if facts.loser is not None:
+            blocks.append(
+                _loser_block(facts.loser, facts.session_date, lead=not blocks)
+            )
+        return "[MOVERS]\n\n" + "\n\n".join(blocks)
 
-    if facts.gainer is not None:
-        joke = pick(GAINER_JOKES, facts.session_date, "gainer")
-        blocks.append(
-            f"Shares of {facts.gainer.name} led the tape, up "
-            f"{spoken.say_percent(facts.gainer.percent_change)}, closing at "
-            f"{spoken.say_dollars(facts.gainer.close)}.\n{joke}"
+    if facts.loser is None:
+        lead_gainer = True
+    elif facts.gainer is None:
+        lead_gainer = False
+    else:
+        lead_gainer = abs(facts.gainer.percent_change) >= abs(
+            facts.loser.percent_change
         )
 
-    if facts.loser is not None:
-        joke = pick(LOSER_JOKES, facts.session_date, "loser")
-        blocks.append(
-            f"Going the other way — {facts.loser.name} finished down "
-            f"{spoken.say_percent(facts.loser.percent_change)}, at "
-            f"{spoken.say_dollars(facts.loser.close)}.\n{joke}"
-        )
-
-    return "[MOVERS]\n\n" + "\n\n".join(blocks)
+    block = (
+        _gainer_block(facts.gainer, facts.session_date)
+        if lead_gainer
+        else _loser_block(facts.loser, facts.session_date, lead=True)
+    )
+    return f"[MOVERS]\n\n{block}"
 
 
 def rates(facts: MarketFacts) -> str | None:
@@ -517,16 +554,18 @@ def render(
 ) -> str:
     """Build the script. Segments with no data are dropped, not faked.
 
-    Five segments by default, running two to three minutes: the story, the
-    tape, the movers, the disclaimer, the ask. Rates, crude and crypto sit
-    behind ``full`` because a viewer who came for a market read does not also
-    want a bond quote and an oil quote and a Bitcoin quote — that is the
-    information overload that makes every one of these channels skippable, and
+    Five segments by default, running under two minutes: the story, the tape,
+    one mover, the disclaimer, the ask.
+
+    ``full`` is the long version, and everything it adds is something a viewer
+    who came for a market read did not ask for — a bond quote, an oil quote, a
+    Bitcoin quote, and a second single-stock move. That density is the
+    information overload that makes every one of these channels skippable;
     cutting it is what buys the attention the rest of the script needs.
     """
     options = options or ScriptOptions()
 
-    segments = [cold_open(facts, options), tape(facts), movers(facts)]
+    segments = [cold_open(facts, options), tape(facts), movers(facts, both=full)]
     if full:
         segments += [rates(facts), commodities(facts)]
     segments += [straight_beat(), sign_off(facts, options)]
