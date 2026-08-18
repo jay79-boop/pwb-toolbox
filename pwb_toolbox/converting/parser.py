@@ -379,6 +379,7 @@ class Parser:
     def parse_program(self, version):
         body = []
         declaration = None
+        declaration_call = None
         self.skip_newlines()
         while not self.at("EOF"):
             statement = self.parse_statement()
@@ -398,6 +399,7 @@ class Parser:
                         "indicator" if kind == "study" else kind,
                         _declaration_title(statement.value),
                     )
+                    declaration_call = statement.value
                     continue
                 body.append(statement)
             self.skip_newlines()
@@ -406,6 +408,7 @@ class Parser:
             version=version,
             body=body,
             functions=self.functions,
+            declaration_call=declaration_call,
         )
 
     def _skip_block(self, kind, start_line):

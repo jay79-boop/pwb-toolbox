@@ -155,3 +155,6 @@ class Program:
     body: list
     #: Pine name -> :class:`FuncDef`, in declaration order.
     functions: dict = field(default_factory=dict)
+    #: The ``strategy(...)`` / ``indicator(...)`` call itself. Its settings
+    #: are not all translatable, so they have to be readable to be reported.
+    declaration_call: Any = None

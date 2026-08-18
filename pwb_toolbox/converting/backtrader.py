@@ -67,6 +67,16 @@ bar, not a simplification of it -- and the repaint guards built on it correctly
 become no-ops. ``islast`` and ``isfirst`` are positions in the feed rather than
 constants, so they stay live.
 
+``strategy.entry`` is the sixth, and the one that is easiest to get wrong by
+doing the obvious thing. It is not ``self.buy()``: Pine's default
+``pyramiding=0`` allows one entry per direction, so calling it again while
+already long does nothing, where ``buy()`` adds every time. An entry against
+the position is a reversal. See ``_ENTRY_HELPER``.
+
+Pine's trade counters are the seventh. Backtrader keeps no ledger of closed
+trades, so one is built from ``notify_trade`` -- but only in strategies that
+ask for it. See ``_TRADES_HELPER``.
+
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
 """
@@ -337,6 +347,131 @@ _RESERVED = {
 #: orders instead of adding more. Translating each call into a fresh
 #: `self.sell(...)` would stack an order per bar and fill several times, which
 #: is a wrong backtest rather than an error -- so the orders are maintained.
+#: Emitted into any strategy that uses `strategy.entry`.
+#:
+#: `self.buy()` is not what `strategy.entry` means, and the difference is not
+#: small. Pine's default `pyramiding=0` allows **one** entry per direction, so
+#: calling `strategy.entry` again while already long does nothing. Backtrader's
+#: `buy()` has no such rule: it adds every time, and a condition that holds for
+#: twenty bars running builds a twenty-unit position where Pine holds one.
+#:
+#: An entry against the position is a reversal in Pine -- close the old, open
+#: the new -- which is two orders here rather than one resize, so the entry
+#: size still comes from the strategy's own sizer.
+_ENTRY_HELPER = (
+    "    def _pine_entry(self, long, size=None):",
+    '        """Open or reverse a position, as Pine\'s strategy.entry does."""',
+    "        held = self.position.size",
+    "        if held > 0 if long else held < 0:",
+    "            # pyramiding is 0: Pine allows one entry per direction.",
+    "            return",
+    "        if held:",
+    "            self.close()",
+    "        if long:",
+    "            self.buy(size=size)",
+    "        else:",
+    "            self.sell(size=size)",
+    "",
+)
+
+#: Emitted into a strategy that reads any of Pine's trade counters.
+#:
+#: Backtrader keeps no ledger of closed trades -- ``notify_trade`` reports each
+#: one as it happens and then forgets it, and a closed ``Trade`` has already
+#: had its ``size`` zeroed. So the ledger is built here, from the two
+#: notifications that carry what Pine's accessors ask for. The exit price comes
+#: from the fill rather than from arithmetic on the P&L: deriving it would be
+#: exact only for a single-entry, single-exit, commission-free trade.
+#:
+#: ``notify_trade`` runs before ``next()`` on the same bar, so a trade that
+#: closed on this bar is already counted when the strategy body reads the
+#: counter -- which is what Pine does too.
+_TRADES_HELPER = (
+    "    def notify_order(self, order):",
+    "        if order.status == order.Completed:",
+    "            self._pine_fill = order.executed.price",
+    "",
+    "    def notify_trade(self, trade):",
+    "        if trade.justopened:",
+    "            self._pine_open = [",
+    "                {",
+    "                    'entry_price': trade.price,",
+    "                    'size': trade.size,",
+    "                    'entry_bar': len(self),",
+    "                }",
+    "            ]",
+    "        elif trade.isclosed:",
+    "            record = (",
+    "                self._pine_open[0]",
+    "                if self._pine_open",
+    "                else {",
+    "                    'entry_price': trade.price,",
+    "                    'size': 0,",
+    "                    'entry_bar': trade.baropen,",
+    "                }",
+    "            )",
+    "            record['exit_price'] = self._pine_fill",
+    "            record['exit_bar'] = len(self)",
+    "            record['profit'] = trade.pnlcomm",
+    "            self._pine_closed.append(record)",
+    "            self._pine_open = []",
+    "            if trade.pnlcomm > 0:",
+    "                self._pine_wins += 1",
+    "            elif trade.pnlcomm < 0:",
+    "                self._pine_losses += 1",
+    "",
+    "    def _pine_trade(self, trades, index, field):",
+    '        """One field of one trade, or NaN where Pine would answer `na`."""',
+    "        try:",
+    "            position = int(index)",
+    "        except (TypeError, ValueError):",
+    "            return float('nan')",
+    "        # Pine has no negative indexing: an out-of-range index is `na`,",
+    "        # where Python would silently count from the end.",
+    "        if position < 0 or position >= len(trades):",
+    "            return float('nan')",
+    "        value = trades[position].get(field)",
+    "        return float('nan') if value is None else value",
+    "",
+)
+
+#: What ``strategy.closedtrades`` and friends read, and where the previous
+#: bar's value of each is kept. Pine updates them as trades close, so ``[1]``
+#: is a real question: `strategy.losstrades > strategy.losstrades[1]` is how a
+#: script asks "did a loss just book".
+TRADE_COUNTERS = {
+    "strategy.closedtrades": ("len(self._pine_closed)", 0),
+    "strategy.wintrades": ("self._pine_wins", 1),
+    "strategy.losstrades": ("self._pine_losses", 2),
+    "strategy.opentrades": ("len(self._pine_open)", 3),
+    "strategy.eventrades": (
+        "(len(self._pine_closed) - self._pine_wins - self._pine_losses)",
+        None,
+    ),
+}
+
+#: Pine's per-trade accessors, as the ledger field each one reads.
+TRADE_FIELDS = {
+    "entry_price": "entry_price",
+    "exit_price": "exit_price",
+    "entry_bar_index": "entry_bar",
+    "exit_bar_index": "exit_bar",
+    "size": "size",
+    "profit": "profit",
+}
+
+#: Accessors Backtrader keeps nothing to answer with. Named individually so
+#: the report says which one, rather than "unknown identifier".
+TRADE_FIELDS_UNTRACKED = {
+    "max_runup": "the run-up inside a trade is not recorded",
+    "max_drawdown": "the drawdown inside a trade is not recorded",
+    "commission": "commission is folded into profit, not kept separately",
+    "entry_comment": "orders carry no comment",
+    "exit_comment": "orders carry no comment",
+    "entry_id": "orders carry no Pine id",
+    "exit_id": "orders carry no Pine id",
+}
+
 _EXIT_HELPER = (
     "    def _pine_exit(self, tag, stop=None, limit=None):",
     '        """Keep one exit order set for the open position, as Pine does."""',
@@ -573,6 +708,8 @@ class _Generator:
         self._feed = "self.data"
         self._uses_exit = False
         self._uses_math = False
+        self._uses_trades = False
+        self._uses_entry = False
         self.functions = program.functions
         #: Names currently being inlined, so recursion is caught rather than
         #: followed. A stack catches mutual recursion as well as direct.
@@ -1080,6 +1217,19 @@ class _Generator:
             if index:
                 self._reject(f"{name}: a parameter has no bar history")
             return f"self.p.{_safe(name)}"
+        if name in TRADE_COUNTERS:
+            current, slot = TRADE_COUNTERS[name]
+            self._uses_trades = True
+            if not index:
+                return current
+            if index == -1 and slot is not None:
+                return f"self._pine_prev[{slot}]"
+            self._reject(
+                f"{name}[{-index}]: only the previous bar's value is kept, "
+                "not a full history"
+            )
+            return current
+
         if name in BUILTIN_VALUES:
             if index:
                 self._reject(f"{name}: history of this builtin is not supported")
@@ -1094,6 +1244,27 @@ class _Generator:
             return "None"
         self._reject(f"unknown identifier {name!r}")
         return "None"
+
+    def _value_trade_field(self, call):
+        """Lower ``strategy.closedtrades.entry_price(i)`` and its siblings."""
+        ledger, _, field = call.func.rpartition(".")
+        if field in TRADE_FIELDS_UNTRACKED:
+            self._reject(f"{call.func}(): {TRADE_FIELDS_UNTRACKED[field]}")
+            return "None"
+        if field not in TRADE_FIELDS:
+            self._reject(f"call to {call.func}() is not supported")
+            return "None"
+        if len(call.args) != 1:
+            self._reject(f"{call.func}() expects one argument, the trade index")
+            return "None"
+        self._uses_trades = True
+        store = (
+            "self._pine_closed"
+            if ledger == "strategy.closedtrades"
+            else "self._pine_open"
+        )
+        index = self._value_expr(call.args[0])
+        return f"self._pine_trade({store}, {index}, {TRADE_FIELDS[field]!r})"
 
     def _state_history(self, name, index):
         """Read ``x[n]`` where ``x`` is a ``var``.
@@ -1156,6 +1327,9 @@ class _Generator:
                 else source
             )
             return f"({now} - {before})"
+
+        if call.func.startswith(("strategy.closedtrades.", "strategy.opentrades.")):
+            return self._value_trade_field(call)
 
         if call.func in _BUILTIN_MATH:
             inner = ", ".join(self._value_expr(a) for a in call.args)
@@ -1607,11 +1781,36 @@ class _Generator:
         for key, value in call.kwargs:
             if key in ("qty", "size"):
                 size = self._value_expr(value)
-        arguments = f"size={size}" if size else ""
-        action = "buy" if direction == "strategy.long" else "sell"
-        self.next_lines.append(f"{pad}self.{action}({arguments})")
+        long = "True" if direction == "strategy.long" else "False"
+        arguments = f"{long}, size={size}" if size else long
+        self._uses_entry = True
+        self.next_lines.append(f"{pad}self._pine_entry({arguments})")
 
     # --- assembly ------------------------------------------------------------
+
+    def _check_declaration(self):
+        """Report declaration settings the translation cannot honour.
+
+        Backtrader nets a position per feed: a second `strategy.entry` adds to
+        the one position rather than opening a second trade beside it. Pine
+        does the same at `pyramiding=0`, its default, and that is what every
+        entry and every trade counter here assumes. Above zero the two models
+        genuinely differ, and `strategy.opentrades` is where it would show.
+        """
+        call = self.program.declaration_call
+        if call is None:
+            return
+        for key, value in call.kwargs:
+            if key != "pyramiding":
+                continue
+            literal = _literal(value)
+            if literal == 0:
+                return
+            self._reject(
+                "pyramiding: Backtrader nets one position per feed, so a "
+                "second entry adds to the first rather than opening a "
+                "trade beside it"
+            )
 
     def generate(self):
         if self.declaration is None:
@@ -1624,6 +1823,7 @@ class _Generator:
                 "script declares indicator(), not strategy(); "
                 "the generated class computes its lines but places no orders"
             )
+        self._check_declaration()
 
         for statement in self.program.body:
             self._emit_statement(statement, indent=0)
@@ -1676,6 +1876,13 @@ class _Generator:
         out.append("    def __init__(self):")
         if self._uses_exit:
             out.append("        self._pine_exits = {}")
+        if self._uses_trades:
+            out.append("        self._pine_closed = []")
+            out.append("        self._pine_open = []")
+            out.append("        self._pine_wins = 0")
+            out.append("        self._pine_losses = 0")
+            out.append("        self._pine_fill = None")
+            out.append("        self._pine_prev = (0, 0, 0, 0)")
         if self.feeds:
             # Without this the first read of self.datas[1] raises IndexError
             # somewhere in next(), which says nothing about what is missing.
@@ -1687,17 +1894,30 @@ class _Generator:
             )
         if self.init_lines:
             out.extend(f"        {line}" for line in self.init_lines)
-        elif not self._uses_exit:
+        elif not (self._uses_exit or self._uses_trades):
             out.append("        pass")
         out.append("")
 
+        if self._uses_entry:
+            out.extend(_ENTRY_HELPER)
         if self._uses_exit:
             out.extend(_EXIT_HELPER)
-            out.append("")
+        if self._uses_trades:
+            out.extend(_TRADES_HELPER)
 
         out.append("    def next(self):")
-        if self.next_lines:
-            out.extend(f"        {line}" for line in self.next_lines)
+        body = list(self.next_lines)
+        if self._uses_trades:
+            # Snapshotting at the *end* of the bar is what makes `[1]` mean
+            # the previous bar: a trade closing on bar N is notified before
+            # next() runs, so the counter has already moved by the time the
+            # body reads it, and only this holds what it was.
+            body.append(
+                "self._pine_prev = (len(self._pine_closed), self._pine_wins, "
+                "self._pine_losses, len(self._pine_open))"
+            )
+        if body:
+            out.extend(f"        {line}" for line in body)
         else:
             out.append("        pass")
 

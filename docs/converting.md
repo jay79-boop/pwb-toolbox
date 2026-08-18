@@ -94,7 +94,11 @@ duplicate is pure waste.
 | `f(a, b) => ...` and its call sites | the body, inlined where it is called |
 | a parameter with a type, a default, or both | the type dropped, the default kept |
 | an expression split over several lines | joined before parsing |
-| `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
+| `strategy.entry(..., strategy.long/short, qty=)` | one entry per direction, reversing — see below |
+| `strategy.closedtrades`, `opentrades`, `wintrades`, `losstrades`, `eventrades` | counters kept from `notify_trade` |
+| any of those with `[1]` | the previous bar's value |
+| `strategy.closedtrades.entry_price/exit_price/profit/size(i)` | a ledger built as trades close |
+| `.entry_bar_index(i)`, `.exit_bar_index(i)` | likewise, on the same bar numbering as `bar_index` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
 | `strategy.exit(..., stop=, limit=)` | an OCO stop/limit pair, maintained |
 | `strategy.position_avg_price` | `self.position.price` |
@@ -151,6 +155,9 @@ Reported in `result.unsupported`, never approximated:
 - an `if` read for its value whose branch carries more than one expression — see below
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
 - `strategy.exit` carrying `loss`, `profit` or `trail_*` — distances in ticks, and tick size belongs to the instrument, not the script
+- `pyramiding` above 0 — Backtrader nets one position per feed; see below
+- `strategy.closedtrades.max_runup/max_drawdown/commission/entry_id/exit_id/exit_comment` — Backtrader records none of them
+- more than one bar of history on a trade counter — only the previous bar is kept
 - any identifier or call the converter does not know
 
 Reported separately in `result.ignored`, because dropping them changes nothing
@@ -349,6 +356,84 @@ other way — which is what happened before this rule existed — an `if` branch
 
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## `strategy.entry` is not `self.buy()`
+
+This is the correction most likely to change a number you already have.
+
+Pine's default is `pyramiding=0`, which allows **one entry per direction**.
+Calling `strategy.entry` again while already long does nothing at all.
+Backtrader's `buy()` has no such rule — it adds, every time. So the ordinary
+Pine idiom
+
+```pinescript
+if close > ma
+    strategy.entry("l", strategy.long)
+```
+
+which in Pine opens one position and holds it, used to emit a `self.buy()` on
+**every bar the condition held**. On the test feed that built a 21-unit
+position where Pine holds 1. Everything downstream — position value, P&L,
+drawdown — was wrong by that factor, and nothing about the generated source
+looked wrong.
+
+An entry is now one call:
+
+```python
+def _pine_entry(self, long, size=None):
+    held = self.position.size
+    if held > 0 if long else held < 0:
+        return                      # pyramiding is 0: Pine allows one
+    if held:
+        self.close()                # an entry against the position reverses
+    if long:
+        self.buy(size=size)
+    else:
+        self.sell(size=size)
+```
+
+Reversal is two orders rather than one resize, so the new position's size still
+comes from the strategy's own sizer rather than being computed from the old
+one.
+
+`pyramiding` above 0 is refused. Above zero Pine really can hold several trades
+in one direction, and Backtrader nets them into one position per feed — the two
+models diverge, and `strategy.opentrades` is exactly where you would notice.
+
+## The trade counters, and a ledger to answer them from
+
+Backtrader keeps no record of closed trades: `notify_trade` reports each one as
+it happens and then forgets it, and a closed `Trade` has already had its `size`
+zeroed. So the ledger is built from the notifications, and only in strategies
+that ask for it.
+
+```pinescript
+newLoss  = strategy.losstrades > strategy.losstrades[1]
+barsIn   = bar_index - strategy.opentrades.entry_bar_index(0)
+lastPnl  = strategy.closedtrades.profit(strategy.closedtrades - 1)
+```
+
+Three details are load-bearing:
+
+- **`notify_trade` runs before `next()` on the same bar.** A trade that closed
+  on this bar is already counted when the body reads the counter — which is
+  what Pine does too.
+- **`[1]` needs a snapshot taken at the end of the bar**, for exactly that
+  reason: by the time the body runs, the counter has already moved. That is
+  what makes `strategy.losstrades > strategy.losstrades[1]` mean "did a loss
+  just book" rather than nothing at all. Only one bar back is kept; `[2]` is
+  refused.
+- **The exit price comes from the fill**, not from arithmetic on the P&L.
+  Deriving it as `entry + pnl/size` is exact only for a single-entry,
+  single-exit, commission-free trade, and silently wrong otherwise.
+
+An out-of-range trade index answers `na`, as Pine does, rather than raising or
+— worse — silently counting from the end the way Python's negative indexing
+would.
+
+The counters are checked against `TradeAnalyzer` in the test suite: it counts
+the same trades from the same notifications by a different route, so agreement
+between them is real evidence rather than a restatement.
 
 ## `barstate`, and the repaint guard that stops mattering
 
