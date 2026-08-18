@@ -144,24 +144,33 @@ class MarketFacts:
 
     @property
     def breadth_state(self) -> str | None:
-        """``narrow``, ``even`` or ``broad`` — ``None`` when the sample is thin.
+        """How the breadth relates to the index move.
 
-        Backs the breadth line with something real, so "breadth was narrow" and
-        "most names participated" each only fire when earned. The middle band
-        matters: at a near-even split neither claim is true, and asserting one
-        would be the same failure as inventing a cause for a move.
+        Narrow and broad only mean anything *relative to direction*. Thirteen
+        advancers out of forty on a down day is an ordinary broad decline;
+        the same thirteen on an up day is a handful of megacaps carrying the
+        tape while everything else sinks. Identical counts, opposite stories —
+        so the state is the relationship, not the raw share:
 
-        ``None`` below twenty names — too small a sample to characterise, so the
+        ``narrow``     index up, most names down — the rally nobody joined
+        ``advancing``  index up, most names up — genuine participation
+        ``declining``  index down, most names down — nowhere to hide
+        ``divergent``  index down, most names up — a few big losers dragging
+        ``even``       a coin flip, where no claim about breadth is true
+
+        ``None`` below twenty names: too small a sample to characterise, so the
         renderer drops the line rather than guessing.
         """
         if self.breadth_total < 20:
             return None
+
         share = self.advancers / self.breadth_total
-        if share < 0.45:
-            return "narrow"
+        if 0.45 <= share <= 0.55:
+            return "even"
+
         if share > 0.55:
-            return "broad"
-        return "even"
+            return "divergent" if self.direction == "down" else "advancing"
+        return "narrow" if self.direction == "up" else "declining"
 
     @property
     def is_narrow(self) -> bool:

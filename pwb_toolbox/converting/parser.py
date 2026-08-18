@@ -474,6 +474,8 @@ class Parser:
                     # The block runs to its DEDENT, so there is no trailing
                     # newline of its own to consume.
                     value = self.parse_switch()
+                elif self.at("NAME", "if"):
+                    value = self.parse_if_expression()
                 else:
                     value = self.parse_expression()
                     self.expect("NEWLINE")
@@ -651,6 +653,37 @@ class Parser:
         if self.at("DEDENT"):
             self.advance()
         return body
+
+    def parse_if_expression(self):
+        """Parse an ``if`` used for its value rather than for its effect.
+
+        Pine allows the same keyword in both roles. Read for its value it is a
+        conditional expression with its arms on separate lines, so it folds
+        into the same nesting a ternary or a ``switch`` does.
+        """
+        self.expect("NAME", "if")
+        cond = self.parse_expression()
+        then = self._branch_value(self.parse_block())
+
+        # No `else` at all: Pine yields `na` when the condition is false.
+        other = Na()
+        self.skip_newlines()
+        if self.at("NAME", "else"):
+            self.advance()
+            if self.at("NAME", "if"):
+                other = self.parse_if_expression()
+            else:
+                other = self._branch_value(self.parse_block())
+        return Ternary(cond, then, other)
+
+    def _branch_value(self, body):
+        """The single expression a value-carrying branch yields."""
+        if len(body) == 1 and isinstance(body[0], ExprStmt):
+            return body[0].value
+        raise PineSyntaxError(
+            "an if used for its value needs one expression per branch; this "
+            "one carries a block, which a conditional expression cannot hold"
+        )
 
     def parse_if(self):
         self.expect("NAME", "if")

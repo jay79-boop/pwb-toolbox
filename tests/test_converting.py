@@ -1178,6 +1178,103 @@ if close < ma
 """
 
 
+IF_EXPRESSION_STRATEGY = """//@version=6
+strategy("If Expression")
+edge = input.float(1.0, "Edge")
+ma = ta.sma(close, 20)
+score = if close > ma * (1 + 0.002 * edge)
+    1.0
+else if close > ma
+    0.5
+else
+    0.0
+if score > 0.75
+    strategy.entry("l", strategy.long)
+if close < ma
+    strategy.close()
+"""
+
+
+def test_if_used_for_its_value_folds_into_conditionals():
+    """Pine spells a conditional expression with its arms on separate lines."""
+    source = (
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "x = if close > ma\n    1.0\nelse\n    0.0\n"
+        "if x > 0.5\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "1 if (self.data.close[0] > self._sma_1[0]) else 0" in result.code
+
+
+def test_if_expression_chains_through_else_if():
+    source = (
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "x = if close > ma\n    1.0\nelse if close < ma\n    0.45\nelse\n    0.0\n"
+        "if x > 0.5\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "0.45 if (self.data.close[0] < self._sma_1[0])" in result.code
+
+
+def test_if_expression_without_an_else_yields_na():
+    source = (
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "x = if close > ma\n    1.0\n"
+        "if x > 0.5\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "float('nan')" in result.code
+
+
+def test_if_expression_may_carry_a_declared_type():
+    source = (
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "float x = if close > ma\n    1.0\nelse\n    0.0\n"
+        "if x > 0.5\n    strategy.close()\n"
+    )
+    assert convert(source).ok
+
+
+def test_parsing_resumes_after_an_if_expression():
+    program = parse(
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "x = if close > ma\n    1.0\nelse\n    0.0\n"
+        "y = ta.sma(close, 5)\n"
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+def test_if_expression_branch_carrying_a_block_is_reported():
+    """A branch with side effects cannot become a conditional expression."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        "x = if close > ma\n    strategy.close()\n    1.0\nelse\n    0.0\n"
+    )
+    assert not result.ok
+    assert any("one expression per branch" in item for item in result.unsupported)
+
+
+def test_if_used_as_a_statement_is_untouched():
+    """The same keyword still opens an ordinary block when nothing reads it."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nma = ta.sma(close, 10)\n'
+        'if close > ma\n    strategy.entry("l", strategy.long)\nelse\n    strategy.close()\n'
+    )
+    assert result.ok, result.unsupported
+    assert "self.buy()" in result.code and "self.close()" in result.code
+
+
+def test_generated_if_expression_strategy_trades_on_every_branch():
+    tight, tight_trades = _run(IF_EXPRESSION_STRATEGY, edge=1.0)
+    wide, wide_trades = _run(IF_EXPRESSION_STRATEGY, edge=25.0)
+    assert tight_trades > 0
+    assert tight_trades != wide_trades
+
+
 def test_switch_with_a_subject_folds_into_conditionals():
     """Pine's switch is a chain of conditionals written vertically."""
     source = (
