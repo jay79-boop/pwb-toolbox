@@ -151,6 +151,53 @@ BREADTH_BANKS = {
     "even": BREADTH_EVEN,
 }
 
+# Is today's move actually large? Every outlet reports the number; none of them
+# say whether it is big for this market this month. That comparison is the one
+# thing here a viewer cannot get from the news, so it leads the tape.
+SCALE_QUIET = [
+    "Which sounds like something. [pause] It isn't. [pause] This market moves "
+    "about that much on an ordinary day, just clearing its throat.",
+    "That is a nothing move. [pause] Smaller than a normal session. [exhales] "
+    "Nobody is going to report it that way.",
+    "Below average, for this month. [pause] A quiet day wearing a headline.",
+    "That is less than this market does on a typical day. [pause] Which makes "
+    "it, technically, not news. [starts laughing] And yet here I am.",
+]
+
+SCALE_ORDINARY = [
+    "Which is about a normal day for this market. [pause] Not a story. "
+    "[pause] Just the market being open.",
+    "About average. [exhales] The least reportable thing that can happen, "
+    "[pause] and the thing that happens most.",
+    "Ordinary. [pause] Genuinely, boringly ordinary. [pause] I checked.",
+]
+
+# ``{multiple}`` substitutes mid-sentence, ``{Multiple}`` at a sentence start.
+# Explicit rather than inferred: guessing from the preceding characters would
+# have to reason about audio tags, and getting it wrong reads as a typo.
+SCALE_NOTABLE = [
+    "That one is bigger than usual — {multiple} what this market does on a "
+    "normal day. [pause] Worth noticing, which is more than most sessions "
+    "manage.",
+    "Above average. [pause] {Multiple} a typical day. [pause] Not dramatic. "
+    "[pause] But real.",
+]
+
+SCALE_BIG = [
+    "That is a real move. [pause] {Multiple} what this market does on an "
+    "ordinary day.",
+    "That one counts. [pause] {Multiple} a normal session. [pause] Rare enough "
+    "to remember, [pause] and rare enough that everybody will over-explain it "
+    "by morning.",
+]
+
+SCALE_BANKS = {
+    "quiet": SCALE_QUIET,
+    "ordinary": SCALE_ORDINARY,
+    "notable": SCALE_NOTABLE,
+    "big": SCALE_BIG,
+}
+
 GAINER_JOKES = [
     "[pause] By tomorrow morning there will be nine explanations for that, "
     "[pause] all written by people who did not own it yesterday.",
@@ -341,6 +388,26 @@ def cold_open(facts: MarketFacts, options: ScriptOptions) -> str:
     )
 
 
+def scale_line(quote: Quote, session: date) -> str | None:
+    """Say whether today's move was large, measured against a normal day.
+
+    ``None`` when there was not enough history to compute a baseline — the one
+    line in this show that must never be a guess, since its whole value is that
+    it is the number nobody else reports.
+    """
+    scale = quote.move_scale
+    if scale is None:
+        return None
+
+    line = pick(SCALE_BANKS[scale], session, "scale")
+    multiple = spoken.say_multiple(quote.move_ratio)
+    # ``replace`` rather than ``format``: a stray brace in a bank line should
+    # never raise on a live run.
+    return line.replace("{multiple}", multiple).replace(
+        "{Multiple}", _capitalize(multiple)
+    )
+
+
 def tape(facts: MarketFacts) -> str | None:
     if not facts.indices:
         return None
@@ -349,6 +416,11 @@ def tape(facts: MarketFacts) -> str | None:
         _index_clause(quote, position) for position, quote in enumerate(facts.indices)
     ]
     body = ". ".join(_capitalize(clause) for clause in clauses) + "."
+
+    # Led by the first index: that one is "the market" for this purpose.
+    scale = scale_line(facts.indices[0], facts.session_date)
+    if scale:
+        body = f"{body}\n[pause] {scale}"
 
     state = facts.breadth_state
     if state is None:
