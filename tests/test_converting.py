@@ -275,13 +275,13 @@ def test_convert_maps_cross_helpers_to_their_direction():
 
 def test_convert_maps_entry_and_close_to_orders():
     next_body = convert(DUAL_MA).code.split("def next")[1]
-    assert "self.buy()" in next_body
+    assert "self._pine_entry(True)" in next_body
     assert "self.close()" in next_body
 
 
 def test_convert_maps_short_entry_to_sell():
     source = '//@version=5\nstrategy("S")\nif close > open\n    strategy.entry("s", strategy.short)\n'
-    assert "self.sell()" in convert(source).code
+    assert "self._pine_entry(False)" in convert(source).code
 
 
 def test_convert_passes_entry_quantity_as_size():
@@ -289,7 +289,7 @@ def test_convert_passes_entry_quantity_as_size():
         '//@version=5\nstrategy("S")\nif close > open\n'
         '    strategy.entry("l", strategy.long, qty=5)\n'
     )
-    assert "self.buy(size=5)" in convert(source).code
+    assert "self._pine_entry(True, size=5)" in convert(source).code
 
 
 def test_convert_reports_plot_as_ignored_not_unsupported():
@@ -1272,7 +1272,7 @@ def test_if_used_as_a_statement_is_untouched():
         'if close > ma\n    strategy.entry("l", strategy.long)\nelse\n    strategy.close()\n'
     )
     assert result.ok, result.unsupported
-    assert "self.buy()" in result.code and "self.close()" in result.code
+    assert "self._pine_entry(True)" in result.code and "self.close()" in result.code
 
 
 def test_generated_if_expression_strategy_trades_on_every_branch():
@@ -2348,3 +2348,282 @@ def test_generated_isfirst_and_islast_fire_on_exactly_one_bar_each():
     assert len(frame) > 1
     assert strategy.firstBars == 1
     assert strategy.lastBars == 1
+
+
+# --- strategy.entry: one entry per direction ---------------------------------
+
+
+def _run_strategy(source, bars=300, **params):
+    """Run a converted strategy and hand back the instance itself.
+
+    Some behaviour is only visible on the strategy -- counters it kept, the
+    position it held -- rather than in the value or trade count `_run` returns.
+    """
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=bars)))
+    cerebro.addstrategy(namespace[result.class_name], **params)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    return cerebro.run()[0]
+
+
+REPEAT_ENTRY = """//@version=6
+strategy("Repeat")
+ma = ta.sma(close, 10)
+if close > ma
+    strategy.entry("l", strategy.long)
+if close < ma
+    strategy.close()
+"""
+
+
+def test_a_repeated_entry_does_not_add_to_the_position():
+    """Pine's default `pyramiding=0` allows one entry per direction.
+
+    `self.buy()` has no such rule -- it adds every time -- so a condition
+    holding for twenty bars running built a twenty-unit position where Pine
+    holds one. On this feed the position reached **21 units** before this was
+    fixed.
+
+    Both halves are checked, because the two ways of getting this wrong show
+    up in different places. Adding to the position moves the *size* (21, not
+    1) and leaves the trade count alone. Closing and reopening instead moves
+    the *trade count* (146, not 26, each lasting a single bar) and leaves the
+    size alone. Only asserting one of them lets the other through.
+    """
+    result = convert(REPEAT_ENTRY)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    analysis = cerebro.run()[0].analyzers.trades.get_analysis()
+
+    assert set(seen) == {0, 1}, f"position reached {max(seen)}"
+    assert analysis["len"]["average"] > 1.0, "every trade lasted a single bar"
+
+
+def test_an_entry_against_the_position_reverses_it():
+    """Pine closes the old side and opens the new one; so does this."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ma = ta.sma(close, 10)\n"
+        "if close > ma\n"
+        '    strategy.entry("l", strategy.long)\n'
+        "if close < ma\n"
+        '    strategy.entry("s", strategy.short)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+
+    assert set(seen) <= {-1, 0, 1}, sorted(set(seen))
+    assert 1 in seen and -1 in seen
+
+
+def test_pyramiding_above_zero_is_reported():
+    """Above zero Pine and a netted position genuinely differ."""
+    source = (
+        '//@version=6\nstrategy("S", pyramiding=3)\n'
+        "if close > open\n"
+        '    strategy.entry("l", strategy.long)\n'
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("pyramiding" in item for item in result.unsupported)
+
+
+def test_pyramiding_of_zero_is_the_default_and_passes():
+    source = (
+        '//@version=6\nstrategy("S", pyramiding=0)\n'
+        "if close > open\n"
+        '    strategy.entry("l", strategy.long)\n'
+    )
+    assert convert(source).ok
+
+
+# --- strategy.*trades: the counters and the ledger ---------------------------
+
+COUNTER_STRATEGY = """//@version=6
+strategy("Counters")
+ma = ta.sma(close, 10)
+var int seenClosed = 0
+var int seenWins = 0
+var int seenLosses = 0
+var int newLossEvents = 0
+seenClosed := strategy.closedtrades
+seenWins := strategy.wintrades
+seenLosses := strategy.losstrades
+if strategy.losstrades > strategy.losstrades[1]
+    newLossEvents := newLossEvents + 1
+if close > ma
+    strategy.entry("l", strategy.long)
+if close < ma
+    strategy.close()
+"""
+
+
+def test_trade_counters_agree_with_backtraders_own_analyzer():
+    """The ledger is built by hand, so it is checked against something else.
+
+    `TradeAnalyzer` counts the same trades from the same notifications by a
+    different route. If the two agree there is no plausible way the counters
+    are wrong.
+    """
+    strategy = _run_strategy(COUNTER_STRATEGY)
+    analysis = strategy.analyzers.trades.get_analysis()
+
+    assert analysis["total"]["closed"] > 0
+    assert strategy.seenClosed == analysis["total"]["closed"]
+    assert strategy.seenWins == analysis["won"]["total"]
+    assert strategy.seenLosses == analysis["lost"]["total"]
+    assert strategy.seenWins + strategy.seenLosses <= strategy.seenClosed
+
+
+def test_a_counter_history_fires_once_per_trade():
+    """`strategy.losstrades > strategy.losstrades[1]` is 'did a loss book'."""
+    strategy = _run_strategy(COUNTER_STRATEGY)
+    assert strategy.newLossEvents == strategy.seenLosses
+    assert strategy.newLossEvents > 0
+
+
+def test_the_counter_snapshot_is_taken_at_the_end_of_the_bar():
+    """That is what makes `[1]` the previous bar rather than this one.
+
+    A trade closing on bar N is notified before `next()` runs, so by the time
+    the body reads the counter it has already moved. Only the snapshot holds
+    what it was.
+    """
+    result = convert(COUNTER_STRATEGY)
+    assert result.ok, result.unsupported
+    body = result.code.split("def next(self):")[1].rstrip().splitlines()
+    assert body[-1].strip().startswith("self._pine_prev = (")
+
+
+def test_trade_accessors_read_the_ledger():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ma = ta.sma(close, 10)\n"
+        "var float lastEntry = 0.0\n"
+        "var float lastExit = 0.0\n"
+        "var float lastProfit = 0.0\n"
+        "var int heldBars = 0\n"
+        "if strategy.closedtrades > 0\n"
+        "    lastEntry := strategy.closedtrades.entry_price(strategy.closedtrades - 1)\n"
+        "    lastExit := strategy.closedtrades.exit_price(strategy.closedtrades - 1)\n"
+        "    lastProfit := strategy.closedtrades.profit(strategy.closedtrades - 1)\n"
+        "    heldBars := strategy.closedtrades.exit_bar_index(strategy.closedtrades - 1)"
+        " - strategy.closedtrades.entry_bar_index(strategy.closedtrades - 1)\n"
+        "if close > ma\n"
+        '    strategy.entry("l", strategy.long)\n'
+        "if close < ma\n"
+        "    strategy.close()\n"
+    )
+    strategy = _run_strategy(source)
+    record = strategy._pine_closed[-1]
+
+    assert strategy.lastEntry == record["entry_price"]
+    assert strategy.lastExit == record["exit_price"]
+    assert strategy.lastProfit == record["profit"]
+    assert strategy.heldBars == record["exit_bar"] - record["entry_bar"]
+    # The exit price comes from the fill, not from arithmetic on the P&L.
+    assert record["exit_price"] is not None
+    assert record["exit_bar"] > record["entry_bar"]
+
+
+def test_an_out_of_range_trade_index_is_na_rather_than_a_crash():
+    """Pine answers `na`; Python would either raise or count from the end."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float missing = 0.0\n"
+        "var float negative = 0.0\n"
+        "missing := strategy.closedtrades.entry_price(9999)\n"
+        "negative := strategy.closedtrades.entry_price(-1)\n"
+        "if close > open\n    strategy.close()\n"
+    )
+    strategy = _run_strategy(source)
+    assert strategy.missing != strategy.missing
+    assert strategy.negative != strategy.negative
+
+
+def test_the_trade_ledger_is_only_emitted_when_it_is_used():
+    plain = convert(REPEAT_ENTRY)
+    using = convert(COUNTER_STRATEGY)
+    assert "_pine_closed" not in plain.code
+    assert "def notify_trade" not in plain.code
+    assert "_pine_closed" in using.code
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["max_runup", "max_drawdown", "commission", "exit_comment", "entry_id"],
+)
+def test_untracked_trade_fields_are_named_individually(field):
+    """ "unknown identifier" would not tell the caller what to go and add."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"v = strategy.closedtrades.{field}(0)\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any(f"strategy.closedtrades.{field}()" in i for i in result.unsupported)
+
+
+def test_more_than_one_bar_of_counter_history_is_reported():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "v = strategy.closedtrades[2]\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("only the previous bar's value" in i for i in result.unsupported)
+
+
+def test_open_trade_accessors_read_the_live_position():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ma = ta.sma(close, 10)\n"
+        "var int barsIn = 0\n"
+        "if strategy.opentrades > 0\n"
+        "    barsIn := bar_index - strategy.opentrades.entry_bar_index(0)\n"
+        "if close > ma\n"
+        '    strategy.entry("l", strategy.long)\n'
+        "if barsIn > 3\n"
+        "    strategy.close()\n"
+    )
+    strategy = _run_strategy(source)
+    assert strategy.barsIn > 0
+    assert strategy.analyzers.trades.get_analysis()["total"]["closed"] > 0
