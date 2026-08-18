@@ -635,7 +635,7 @@ def test_cli_demo_writes_a_script(tmp_path, capsys):
     assert main(["--demo", "--out", str(out)]) == 0
     text = out.read_text(encoding="utf-8")
     assert "[COLD OPEN]" in text
-    assert "Toadchu Yall" in text
+    assert "Toadchu Y'all" in text
 
 
 def test_cli_demo_prints_to_stdout(capsys):
@@ -833,7 +833,7 @@ def test_cli_intro_is_fixed_copy_regardless_of_anchor_and_show(capsys):
     argv = ["--intro", "--anchor", "Robin Vale", "--show", "the Closing Bell"]
     assert main(argv) == 0
     out = capsys.readouterr().out
-    assert "Toadchu Yall" in out
+    assert "Toadchu Y'all" in out
     assert "This is the Market Close." in out
     assert "Robin Vale" not in out
     assert "the Closing Bell" not in out
