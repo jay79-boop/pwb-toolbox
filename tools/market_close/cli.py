@@ -20,7 +20,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
-from . import market, script
+from . import free, market, script
 from .script import ScriptOptions
 
 
@@ -86,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--anchor", default="Max Brennan", help="anchor name")
     parser.add_argument("--show", default="the Market Close", help="programme name")
     parser.add_argument(
+        "--free",
+        action="store_true",
+        help="pull from Yahoo instead of the PWB datasets — no API key or login needed",
+    )
+    parser.add_argument(
         "--preview",
         action="store_true",
         help="show only the tape and movers, for checking the numbers",
@@ -112,7 +117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.demo:
         facts = market.demo_facts(args.date)
     else:
-        facts = market.collect(names=names)
+        collect = free.collect_free if args.free else market.collect
+        facts = collect(names=names)
         if args.date is not None:
             facts.session_date = args.date
 

@@ -10,7 +10,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from tools.market_close import market, script, spoken
+from tools.market_close import free, market, script, spoken
 from tools.market_close.cli import main, warn_on_digits
 from tools.market_close.market import MarketFacts, Quote
 from tools.market_close.script import ScriptOptions
@@ -300,6 +300,51 @@ def test_narrow_breadth_needs_a_real_sample():
     assert MarketFacts(DAY_TWO, advancers=1, decliners=4).is_narrow is False
     assert MarketFacts(DAY_TWO, advancers=181, decliners=319).is_narrow is True
     assert MarketFacts(DAY_TWO, advancers=300, decliners=200).is_narrow is False
+
+
+@pytest.mark.parametrize(
+    "advancers,decliners,expected",
+    [
+        (1, 4, None),  # too small a sample to characterise
+        (19, 0, None),
+        (181, 319, "narrow"),
+        (20, 20, "even"),  # neither claim is true at a coin flip
+        (24, 20, "even"),
+        (300, 200, "broad"),
+    ],
+)
+def test_breadth_state(advancers, decliners, expected):
+    facts = MarketFacts(DAY_TWO, advancers=advancers, decliners=decliners)
+    assert facts.breadth_state == expected
+
+
+def test_an_even_split_is_not_called_broad_based():
+    """20 up / 20 down must not claim "most names participated"."""
+    facts = MarketFacts(
+        session_date=DAY_TWO,
+        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.6, 100.0)],
+        advancers=20,
+        decliners=20,
+    )
+    text = script.tape(facts)
+    assert any(joke in text for joke in script.BREADTH_EVEN)
+    assert not any(joke in text for joke in script.BREADTH_BROAD)
+    assert not any(joke in text for joke in script.BREADTH_NARROW)
+
+
+def test_thin_breadth_drops_the_line_rather_than_guessing():
+    facts = MarketFacts(
+        session_date=DAY_TWO,
+        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.6, 100.0)],
+        advancers=3,
+        decliners=2,
+    )
+    text = script.tape(facts)
+    assert "names\nrose" not in text and "names rose" not in text
+    for bank in (script.BREADTH_NARROW, script.BREADTH_EVEN, script.BREADTH_BROAD):
+        assert not any(joke in text for joke in bank)
+    # The index clauses still stand.
+    assert "S and P five hundred" in text
 
 
 # --------------------------------------------------------------------------
@@ -633,3 +678,176 @@ def test_cli_preview_reports_when_there_is_nothing_to_show(monkeypatch, capsys):
     monkeypatch.setattr(market, "demo_facts", lambda session=None: MarketFacts(DAY_TWO))
     assert main(["--demo", "--preview"]) == 1
     assert "no tape or movers data to preview" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# free mode (yfinance)
+# --------------------------------------------------------------------------
+
+# Values the fake Yahoo returns, as (previous_close, close).
+FAKE_QUOTES = {
+    "SPY": (540.0, 543.24),
+    "QQQ": (470.0, 474.23),
+    "DIA": (390.0, 391.40),
+    "^TNX": (4.12, 4.09),
+    "CL=F": (72.05, 71.40),
+    "BTC-USD": (65_100.0, 68_400.0),
+}
+
+
+def fake_download(symbols, period):
+    """Stand in for ``yfinance.download``, matching its column shape."""
+    index = pd.to_datetime(["2026-08-12", "2026-08-13"])
+    columns, data = [], []
+    for position, symbol in enumerate(symbols):
+        # Universe names get a spread of moves straddling zero without ever
+        # landing exactly flat — an unchanged close counts as neither an
+        # advancer nor a decliner, which would skew the breadth assertions.
+        default = (100.0, 100.0 + (position - 19.5))
+        previous, close = FAKE_QUOTES.get(symbol, default)
+        for field, values in (
+            ("Close", [previous, close]),
+            ("Open", [previous, previous]),
+        ):
+            columns.append((field, symbol))
+            data.append(values)
+    frame = pd.DataFrame(
+        dict(zip(range(len(columns)), data)),
+        index=index,
+    )
+    frame.columns = pd.MultiIndex.from_tuples(columns)
+    frame.index.name = "Date"
+    return frame
+
+
+def test_to_long_frame_handles_multi_symbol_downloads():
+    raw = fake_download(["SPY", "QQQ"], "1mo")
+    frame = free.to_long_frame(raw, ["SPY", "QQQ"])
+    assert list(frame.columns) == ["date", "symbol", "close"]
+    assert set(frame["symbol"]) == {"SPY", "QQQ"}
+    assert len(frame) == 4
+
+
+def test_to_long_frame_handles_a_single_symbol_flat_download():
+    """One ticker comes back with flat columns, not a MultiIndex."""
+    index = pd.to_datetime(["2026-08-12", "2026-08-13"])
+    raw = pd.DataFrame({"Close": [540.0, 543.24], "Open": [1.0, 2.0]}, index=index)
+    raw.index.name = "Date"
+    frame = free.to_long_frame(raw, ["SPY"])
+    assert set(frame["symbol"]) == {"SPY"}
+    assert frame["close"].tolist() == [540.0, 543.24]
+
+
+def test_to_long_frame_survives_an_unnamed_index():
+    raw = pd.DataFrame(
+        {"Close": [1.0, 2.0]}, index=pd.to_datetime(["2026-08-12", "2026-08-13"])
+    )
+    assert len(free.to_long_frame(raw, ["SPY"])) == 2
+
+
+def test_to_long_frame_on_empty_and_malformed_downloads():
+    assert free.to_long_frame(pd.DataFrame(), ["SPY"]).empty
+    assert free.to_long_frame(None, ["SPY"]).empty
+    no_close = pd.DataFrame({"Open": [1.0]}, index=pd.to_datetime(["2026-08-13"]))
+    assert free.to_long_frame(no_close, ["SPY"]).empty
+
+
+def test_to_long_frame_drops_missing_observations():
+    index = pd.to_datetime(["2026-08-12", "2026-08-13"])
+    raw = pd.DataFrame({"Close": [None, 543.24]}, index=index)
+    raw.index.name = "Date"
+    assert len(free.to_long_frame(raw, ["SPY"])) == 1
+
+
+def test_fetch_uses_the_injected_downloader():
+    frame = free.fetch(["SPY"], downloader=fake_download)
+    assert set(frame["symbol"]) == {"SPY"}
+
+
+def test_fetch_on_an_empty_symbol_list_makes_no_request():
+    def explode(symbols, period):  # pragma: no cover - must never be called
+        raise AssertionError("downloader should not run for an empty list")
+
+    assert free.fetch([], downloader=explode).empty
+
+
+@pytest.mark.parametrize(
+    "close,previous,expected_close",
+    [
+        (4.09, 4.12, 4.09),  # already a percentage
+        (40.9, 41.2, 4.09),  # the older tenths convention
+    ],
+)
+def test_normalize_tnx_handles_both_yahoo_conventions(close, previous, expected_close):
+    quote = free.normalize_tnx(Quote("^TNX", "the ten-year", close, previous))
+    assert quote.close == pytest.approx(expected_close)
+
+
+def test_normalize_tnx_passes_through_none():
+    assert free.normalize_tnx(None) is None
+
+
+def test_collect_free_builds_every_segment():
+    facts = free.collect_free(downloader=fake_download)
+    assert [q.symbol for q in facts.indices] == ["SPY", "QQQ", "DIA"]
+    assert facts.rate is not None and facts.rate.close == pytest.approx(4.09)
+    assert facts.crude is not None and facts.crude.close == pytest.approx(71.40)
+    assert facts.crypto is not None
+    assert facts.gainer is not None and facts.loser is not None
+    assert facts.breadth_total == len(free.FREE_UNIVERSE)
+    assert facts.session_date == date(2026, 8, 13)
+
+
+def test_free_mode_names_the_proxies_honestly():
+    """SPY tracks the index; it is not the index. See the module docstring."""
+    facts = free.collect_free(downloader=fake_download)
+    names = [quote.name for quote in facts.indices]
+    assert names == [
+        "the S and P five hundred E T F",
+        "the Nasdaq one hundred E T F",
+        "the Dow E T F",
+    ]
+    assert all("E T F" in name for name in names)
+
+
+def test_free_mode_renders_a_script_with_no_digits():
+    text = script.render(free.collect_free(downloader=fake_download))
+    assert not any(c.isdigit() for c in text)
+    assert "[THE TAPE]" in text
+    assert "[RATES]" in text
+
+
+def test_free_mode_universe_is_all_pronounceable():
+    """Every free-mode ticker needs a spoken name, or movers reads as letters."""
+    missing = [s for s in free.FREE_UNIVERSE if s not in market.COMPANY_NAMES]
+    assert missing == []
+
+
+def test_free_mode_universe_supports_breadth():
+    """is_narrow needs twenty-plus names to say anything."""
+    assert len(free.FREE_UNIVERSE) >= 20
+
+
+def test_collect_free_survives_a_dead_feed(capsys):
+    def dead(symbols, period):
+        raise ConnectionError("Yahoo said no")
+
+    facts = free.collect_free(downloader=dead)
+    assert facts.indices == []
+    assert facts.gainer is None
+    assert "warning" in capsys.readouterr().out
+    # The script still renders; the data segments just drop.
+    text = script.render(facts)
+    assert "[THE STRAIGHT BEAT]" in text
+    assert "[THE TAPE]" not in text
+
+
+def test_cli_free_flag_routes_to_yahoo(monkeypatch, capsys):
+    real = free.collect_free
+    monkeypatch.setattr(
+        free, "collect_free", lambda **kw: real(downloader=fake_download)
+    )
+    assert main(["--free", "--preview"]) == 0
+    out = capsys.readouterr().out
+    assert "S and P five hundred E T F" in out
+    assert not any(c.isdigit() for c in out)
