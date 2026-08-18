@@ -164,12 +164,21 @@ SCALE_QUIET = [
     "it, technically, not news. [starts laughing] And yet here I am.",
 ]
 
+# These say "typical", never "nothing". The band means today matched what this
+# market has been doing lately — which in a calm month is the same as "no
+# story" and in a violent one is the opposite. A one percent drop can be
+# perfectly average and still be the most interesting fact available, so none
+# of these are allowed to wave it away. ``{typical}`` is the measured baseline.
 SCALE_ORDINARY = [
-    "Which is about a normal day for this market. [pause] Not a story. "
-    "[pause] Just the market being open.",
-    "About average. [exhales] The least reportable thing that can happen, "
-    "[pause] and the thing that happens most.",
-    "Ordinary. [pause] Genuinely, boringly ordinary. [pause] I checked.",
+    "Which is a normal day for this market right now. [pause] Not calm. "
+    "[pause] Normal. [exhales] Those two have drifted apart lately.",
+    "About average — [pause] and average around here is {typical} a day, at the "
+    "moment. [pause] Make of that what you like. [starts laughing] I've stopped.",
+    "Which is about what this market has been doing every day for a month. "
+    "[pause] {Typical} a session, over and over. [exhales] At some point that "
+    "stops being a move and starts being the weather.",
+    "Ordinary, for this market, this month. [pause] Both halves of that matter, "
+    "[pause] and only one of them makes the headline.",
 ]
 
 # ``{multiple}`` substitutes mid-sentence, ``{Multiple}`` at a sentence start.
@@ -390,11 +399,17 @@ def scale_line(quote: Quote, session: date) -> str | None:
 
     line = pick(SCALE_BANKS[scale], session, "scale")
     multiple = spoken.say_multiple(quote.move_ratio)
+    typical = spoken.say_percent(quote.typical_move)
     # ``replace`` rather than ``format``: a stray brace in a bank line should
     # never raise on a live run.
-    return line.replace("{multiple}", multiple).replace(
-        "{Multiple}", _capitalize(multiple)
-    )
+    for token, value in (
+        ("{multiple}", multiple),
+        ("{Multiple}", _capitalize(multiple)),
+        ("{typical}", typical),
+        ("{Typical}", _capitalize(typical)),
+    ):
+        line = line.replace(token, value)
+    return line
 
 
 def tape(facts: MarketFacts, counts: bool = False) -> str | None:

@@ -537,6 +537,40 @@ def test_scale_lines_keep_the_no_digits_invariant():
             assert not any(c.isdigit() for c in line), line
 
 
+def test_the_ordinary_band_never_waves_the_move_away():
+    """ "Typical" and "nothing" are the same only in a calm month.
+
+    A one percent drop can be perfectly average for a volatile market and still
+    be the most interesting fact available. The band means "matched what this
+    market has been doing lately" — it must not be read as "no story".
+    """
+    for line in script.SCALE_ORDINARY:
+        for dismissal in (
+            "Not a story",
+            "least reportable",
+            "boringly ordinary",
+            "nothing",
+        ):
+            assert dismissal not in line, line
+
+
+def test_the_ordinary_band_can_state_the_measured_baseline():
+    """At least one line reports what average actually is right now."""
+    assert any(
+        "{typical}" in line or "{Typical}" in line for line in script.SCALE_ORDINARY
+    )
+
+
+def test_the_baseline_substitutes_into_the_ordinary_lines():
+    quote = market.index_quotes(history(daily_pct=0.9, today_pct=-1.0), ["SPY"])[0]
+    assert quote.move_scale == "ordinary"
+    seen = {script.scale_line(quote, date(2026, 8, day)) for day in range(1, 20)}
+    assert any("nine tenths of a percent" in line for line in seen)
+    for line in seen:
+        assert "{" not in line and "}" not in line, line
+        assert not any(c.isdigit() for c in line), line
+
+
 def test_every_scale_band_has_a_bank():
     assert set(script.SCALE_BANKS) == {"quiet", "ordinary", "notable", "big"}
     assert all(script.SCALE_BANKS[band] for band in script.SCALE_BANKS)
