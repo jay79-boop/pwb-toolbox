@@ -5,7 +5,7 @@ built in-process and the renderer against ``demo_facts``, so nothing needs
 ``PWB_API_KEY``, a Hugging Face login, or a live session.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -610,6 +610,92 @@ def test_tape_omits_the_scale_line_without_a_baseline():
         "what this market does on",
     ):
         assert marker not in script.tape(facts)
+
+
+# --------------------------------------------------------------------------
+# open sessions
+# --------------------------------------------------------------------------
+
+
+def eastern(y, m, d, hour):
+    from zoneinfo import ZoneInfo
+
+    return datetime(y, m, d, hour, tzinfo=ZoneInfo(market.MARKET_TIMEZONE))
+
+
+@pytest.mark.parametrize(
+    "latest,now,expected",
+    [
+        (date(2026, 8, 18), eastern(2026, 8, 18, 11), True),  # mid-session
+        (date(2026, 8, 18), eastern(2026, 8, 18, 9), True),  # just after the open
+        (date(2026, 8, 18), eastern(2026, 8, 18, 16), False),  # the bell
+        (date(2026, 8, 18), eastern(2026, 8, 18, 21), False),  # evening
+        (date(2026, 8, 17), eastern(2026, 8, 18, 11), False),  # yesterday's bar
+        (date(2026, 8, 14), eastern(2026, 8, 17, 11), False),  # over a weekend
+    ],
+)
+def test_session_is_open(latest, now, expected):
+    assert market.session_is_open(latest, now) is expected
+
+
+def test_an_open_session_never_claims_a_close():
+    """ "Closed down one percent" is false at eleven in the morning."""
+    facts = market.demo_facts()
+    facts.session_open = True
+    text = script.render(facts, full=True)
+    for claim in ("closed up", "closed down", "settled at", "closing at", "finished"):
+        assert claim not in text, claim
+
+
+def test_a_finished_session_still_speaks_in_the_past():
+    text = script.render(market.demo_facts(), full=True)
+    assert "closed up" in text
+    assert "is up six tenths" not in text
+
+
+@pytest.mark.parametrize(
+    "segment,live_marker,past_marker",
+    [
+        ("tape", "is up six tenths", "closed up six tenths"),
+        ("movers", "is down twenty-two", "finished down twenty-two"),
+        ("rates", "has eased three basis points", "eased three basis points"),
+        ("commodities", "Crude is at", "Crude settled at"),
+    ],
+)
+def test_each_segment_switches_tense(segment, live_marker, past_marker):
+    closed, live = market.demo_facts(), market.demo_facts()
+    live.session_open = True
+    render = getattr(script, segment)
+    assert past_marker in render(closed)
+    assert live_marker in render(live)
+
+
+def test_a_flat_index_switches_tense_too():
+    facts = MarketFacts(
+        session_date=DAY_TWO,
+        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.001, 100.0)],
+        session_open=True,
+    )
+    assert "is essentially flat" in script.tape(facts)
+
+
+def test_an_open_session_keeps_the_no_digits_invariant():
+    facts = market.demo_facts()
+    facts.session_open = True
+    assert not any(c.isdigit() for c in script.render(facts, full=True))
+
+
+def test_cli_notes_an_open_session(monkeypatch, capsys):
+    real = market.demo_facts
+
+    def open_facts(session=None):
+        facts = real(session)
+        facts.session_open = True
+        return facts
+
+    monkeypatch.setattr(market, "demo_facts", open_facts)
+    assert main(["--demo"]) == 0
+    assert "the market is still open" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------

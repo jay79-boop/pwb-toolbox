@@ -13,7 +13,7 @@ Nothing here formats anything for speech. The facts come out as numbers and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -174,6 +174,10 @@ class MarketFacts:
     """
 
     session_date: date
+    # True when the bell has not rung yet, so every figure below is still
+    # moving. The renderer switches to the present tense rather than claiming
+    # a close that has not happened.
+    session_open: bool = False
     indices: list[Quote] = field(default_factory=list)
     gainer: Quote | None = None
     loser: Quote | None = None
@@ -234,6 +238,49 @@ class MarketFacts:
         if downs and not ups:
             return "down"
         return "mixed"
+
+
+# US equities close at four in the afternoon, New York time. Half-days close
+# early, which this does not model: on one of those the script keeps the
+# present tense for a few extra hours, which reads as cautious rather than
+# wrong.
+MARKET_CLOSE_HOUR = 16
+MARKET_TIMEZONE = "America/New_York"
+
+
+def _now_eastern() -> datetime | None:
+    """Local time in New York, or ``None`` when no zone database is installed.
+
+    Windows ships no IANA database; ``zoneinfo`` finds one only because pandas
+    pulls in ``tzdata``. If that ever stops being true this returns ``None``
+    rather than raising, and the caller falls back to the date alone.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(MARKET_TIMEZONE))
+    except Exception:  # noqa: BLE001 - a missing tz database is not fatal
+        return None
+
+
+def session_is_open(latest: date, now_eastern: datetime | None = None) -> bool:
+    """True when ``latest`` is today's session and the bell has not rung.
+
+    The script says "closed down one percent" — which is false at eleven in the
+    morning, and it is the one claim a viewer could catch. Running before the
+    close is normal (you write the script, then record it), so the tense has to
+    follow the clock rather than assume the day is over.
+
+    ``now_eastern`` is injectable so the tests do not depend on when they run.
+    """
+    now = now_eastern or _now_eastern()
+    if now is None:
+        # No zone database: fall back to the date alone. A bar stamped today
+        # means the session at least started today.
+        return latest >= date.today()
+    if latest < now.date():
+        return False
+    return now.hour < MARKET_CLOSE_HOUR
 
 
 def latest_changes(df: pd.DataFrame) -> pd.DataFrame:
@@ -465,6 +512,7 @@ def collect(
         found = session_date(df_indices)
         if found is not None:
             facts.session_date = found
+            facts.session_open = session_is_open(found)
 
     if df_stocks is not None and not df_stocks.empty:
         facts.gainer, facts.loser = movers(df_stocks, names)

@@ -135,6 +135,36 @@ instead of waving the day away:
 A test forbids "not a story", "least reportable" and "nothing" from ever appearing in
 that bank.
 
+## Writing before the bell
+
+Writing the script and recording it both happen before the close — you need the words
+in hand to render them. So "the S and P five hundred **closed** down one percent" is
+false at eleven in the morning, and it is the one claim in the show a viewer could
+catch outright.
+
+`session_is_open()` compares the latest bar's date against the clock in New York. When
+the session is still running, every verb switches to the present:
+
+| after the bell | still open |
+|---|---|
+| "closed up six tenths of a percent" | "is up six tenths of a percent" |
+| "led the tape, up fourteen percent, closing at…" | "are leading the tape, up fourteen percent, at…" |
+| "The biggest move today went the wrong way" | "The biggest move so far has gone the wrong way" |
+| "the ten-year yield eased three basis points" | "the ten-year yield has eased three basis points" |
+| "Crude settled at seventy-one dollars" | "Crude is at seventy-one dollars" |
+
+The CLI also says so on stderr, because the figures will all have moved by the close.
+
+Timezone detection needs an IANA database, which Windows does not ship; `zoneinfo`
+finds one there only because pandas pulls in `tzdata`. If that ever stops being true,
+`_now_eastern()` returns `None` and the check falls back to comparing dates alone
+rather than raising.
+
+Two smaller things still read as past tense mid-session: the breadth banks ("the
+advance was narrow") and the fallback cold open used when no story is supplied. Both
+describe what has happened so far, which is true either way — unlike "closed", which
+names an event.
+
 ## Why there are no digits in the output
 
 ElevenLabs reads numerals by its own rules, and on a markets script that is most of
