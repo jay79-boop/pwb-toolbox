@@ -100,6 +100,9 @@ duplicate is pure waste.
 | `strategy.position_avg_price` | `self.position.price` |
 | `strategy.position_size` | `self.position.size` |
 | `bar_index` | `len(self)` |
+| `barstate.isconfirmed/isnew/ishistory` | `True` — see below |
+| `barstate.isrealtime` | `False` |
+| `barstate.isfirst`, `barstate.islast` | a position in the feed, so still live |
 | `var x = <literal>` | an attribute set once in `__init__` |
 | `x := value` | assignment, writing through to the attribute for a `var` |
 | `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
@@ -346,6 +349,45 @@ other way — which is what happened before this rule existed — an `if` branch
 
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## `barstate`, and the repaint guard that stops mattering
+
+`barstate.*` asks where the script is in the chart's history, and a bar-close
+backtest already knows: `next()` runs once per completed historical bar. So
+most of it is a constant.
+
+The one that matters is `barstate.isconfirmed`, which shows up all over
+published strategies as a repaint guard:
+
+```pinescript
+longSignal  = rawLongSignal and cooldownOk and barstate.isconfirmed
+_canEntry   = not _inCooldown and (not confirmClose or barstate.isconfirmed)
+```
+
+On a live chart that guard is doing real work — it stops the script acting on a
+bar that is still forming and may yet change. On a **historical** bar there is
+nothing to guard against, because the script calculates once, on the close.
+TradingView's own backtest answers `true` there. So do we, and the guard
+correctly collapses to nothing:
+
+```python
+signal = ((self.data.close[0] > self._sma_1[0]) and True)
+```
+
+That is a translation, not an approximation. The same reasoning fixes
+`isnew` (the single calculation is also the first), `ishistory` (every bar is)
+and `isrealtime` (no bar is).
+
+`isfirst` and `islast` are different: they are positions in the feed, not
+properties of how it is being replayed, so they stay live — `len(self) == 1`
+and `len(self) == self.data.buflen()`. Both are parenthesised, because `==`
+binds looser than arithmetic and a bare comparison dropped into a larger
+expression would quietly mean something else.
+
+The caveat worth stating: if a strategy is *designed* to behave differently
+live than in backtest, this collapses that difference. Everything in this
+module targets backtesting, so that is the intended reading — but it is the one
+place where a converted script is deliberately simpler than the original.
 
 ## Functions, and why they are inlined
 
