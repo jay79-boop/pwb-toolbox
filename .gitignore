@@ -13,6 +13,7 @@ pwb_toolbox/datasets/logfile.log
 server/airflow/airflow.db
 server/airflow/logs/
 server/airflow/simple_auth_manager_passwords.json.generated
+trade_log.csv
 
 # graphify - machine-specific sidecars (absolute paths / local cache)
 graphify-out/.graphify_python

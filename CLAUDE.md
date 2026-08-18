@@ -42,7 +42,7 @@ A worked example, for this repo's 21st MCP key:
 
 ## Layout
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -88,8 +88,10 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (566 tests, ~28s cold / ~9s warm)
+pytest tests/ -v                  # full suite (669 tests, ~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
+python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
+python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
