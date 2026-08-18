@@ -4,6 +4,8 @@
 
 `BaseStrategy`: Convenience strategy parent class that keeps a progress bar, records NAV history, exposes `is_tradable`, and returns the latest portfolio sizing.
 
+`is_tradable(data)` filters out instruments whose price is stale. It requires the close to have moved on each of the last `tradable_lookback` bars, a parameter that defaults to `1` — a single comparison against the previous bar. At that default an instrument that has been flat for weeks becomes tradable again on its first differing close; raise `tradable_lookback` to require sustained movement instead, keeping in mind that a wider window also rejects live instruments that print an unchanged close. Pass `lookback=` to override the parameter for one call.
+
 `run_strategy`: High-level helper that pulls price data, wires a backesting engine, attaches the broker and strategy, and executes the backtest in one call.
 
 ```python
