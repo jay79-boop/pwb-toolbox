@@ -2627,3 +2627,196 @@ def test_open_trade_accessors_read_the_live_position():
     strategy = _run_strategy(source)
     assert strategy.barsIn > 0
     assert strategy.analyzers.trades.get_analysis()["total"]["closed"] > 0
+
+
+# --- ta.pivothigh / ta.pivotlow ----------------------------------------------
+
+PIVOT_STRATEGY = """//@version=6
+strategy("Pivots")
+leftBars = input.int(5, "Left")
+rightBars = input.int(5, "Right")
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+if not na(pl)
+    strategy.entry("l", strategy.long)
+if not na(ph)
+    strategy.close()
+"""
+
+
+def _pivot_reference(values, index, left, right, is_high):
+    """Brute force, over the raw list: is ``values[index]`` a pivot?"""
+    if index - left < 0 or index + right >= len(values):
+        return None
+    candidate = values[index]
+    window = values[index - left : index] + values[index + 1 : index + 1 + right]
+    if is_high:
+        found = all(candidate > value for value in window)
+    else:
+        found = all(candidate < value for value in window)
+    return candidate if found else None
+
+
+def _coarse_frame(bars=200, seed=11):
+    """Integer prices, so ties are common and strictness gets exercised."""
+    rng = random.Random(seed)
+    closes = [float(rng.randint(90, 110)) for _ in range(bars)]
+    start = datetime.datetime(2022, 1, 1)
+    frame = pd.DataFrame(
+        [
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 100,
+            }
+            for i, close in enumerate(closes)
+        ]
+    ).set_index("datetime")
+    return closes, frame
+
+
+def _pivot_values(frame, left, right, is_high):
+    """Every bar's pivot reading from the generated indicator."""
+    source = "high" if is_high else "low"
+    call = "ta.pivothigh" if is_high else "ta.pivotlow"
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        f"v = {call}({source}, {left}, {right})\n"
+        "if not na(v)\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = {}
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen[len(self) - 1] = self._pivot_1[0]
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(Watched)
+    cerebro.run()
+    return seen
+
+
+@pytest.mark.parametrize(
+    "left,right,is_high",
+    [(5, 5, True), (5, 5, False), (2, 3, True), (3, 1, False), (1, 1, True)],
+)
+def test_pivots_match_a_brute_force_reference(left, right, is_high):
+    """Checked against a definition written out longhand, not against itself.
+
+    Pine's rule is strict on both sides -- a flat top, two equal highs side by
+    side, is not a pivot -- so the prices here are integers, which makes ties
+    common enough that a `>=` would show up immediately.
+    """
+    closes, frame = _coarse_frame()
+    seen = _pivot_values(frame, left, right, is_high)
+
+    hits = 0
+    for bar, got in seen.items():
+        expected = _pivot_reference(closes, bar - right, left, right, is_high)
+        if expected is None:
+            assert got != got, f"bar {bar}: expected na, got {got}"
+        else:
+            assert got == expected, f"bar {bar}: expected {expected}, got {got}"
+            hits += 1
+    assert hits > 0, "no pivots found at all, so nothing was really checked"
+
+
+def test_a_pivot_never_reads_a_bar_that_has_not_closed():
+    """The `right` offset is what makes it causal, so that is what is tested.
+
+    A pivot is reported only once `right` further bars have closed and
+    confirmed it. If any future bar leaked in, adding more data to the end of
+    the feed would change readings already taken.
+    """
+    _, long_frame = _coarse_frame(bars=200)
+    _, short_frame = _coarse_frame(bars=150)
+    assert long_frame.index[:150].equals(short_frame.index)
+
+    full = _pivot_values(long_frame, 5, 5, True)
+    truncated = _pivot_values(short_frame, 5, 5, True)
+
+    for bar, value in truncated.items():
+        other = full[bar]
+        same = (value != value and other != other) or value == other
+        assert same, f"bar {bar} changed from {value} to {other} when the feed grew"
+
+
+@pytest.mark.parametrize(
+    "call,expected",
+    [
+        ("ta.pivothigh(close, 4, 2)", "PinePivot(self.data.close, left=4, right=2"),
+        ("ta.pivothigh(5, 3)", "PinePivot(self.data.high, left=5, right=3"),
+        ("ta.pivotlow(5, 3)", "PinePivot(self.data.low, left=5, right=3"),
+        (
+            "ta.pivothigh(high, leftbars=4, rightbars=2)",
+            "PinePivot(self.data.high, left=4, right=2",
+        ),
+        (
+            "ta.pivothigh(high, 4, rightbars=2)",
+            "PinePivot(self.data.high, left=4, right=2",
+        ),
+        (
+            "ta.pivotlow(leftbars=4, rightbars=2)",
+            "PinePivot(self.data.low, left=4, right=2",
+        ),
+    ],
+)
+def test_pivot_argument_forms(call, expected):
+    """Pine writes these six ways, and the short form is not `close`."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        f"v = {call}\n"
+        "if not na(v)\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert expected in result.code
+
+
+@pytest.mark.parametrize(
+    "call,reason",
+    [
+        ("ta.pivothigh(osc, 5, 5)", "source argument is not a plain series"),
+        ("ta.pivothigh(high, n, n)", "could not resolve its left/right bar counts"),
+        ("ta.pivothigh(high, 1, 2, 3)", "expects (source, left, right)"),
+        ("ta.pivothigh(high)", "expects (source, left, right)"),
+    ],
+)
+def test_pivot_calls_outside_the_subset_are_reported(call, reason):
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "osc = close - open\n"
+        "n = 3 + 2\n"
+        f"v = {call}\n"
+        "if not na(v)\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any(reason in item for item in result.unsupported)
+
+
+def test_the_pivot_indicator_is_only_emitted_when_it_is_used():
+    assert "class PinePivot" not in convert(DUAL_MA).code
+    assert "class PinePivot" in convert(PIVOT_STRATEGY).code
+
+
+def test_generated_pivot_strategy_runs_and_trades():
+    value, closed = _run(PIVOT_STRATEGY)
+    assert closed > 0
+    assert value != 10_000.0
+
+
+def test_generated_pivot_strategy_responds_to_its_bar_counts():
+    """The window has to reach the params, or the knobs are decoration."""
+    _, tight = _run(PIVOT_STRATEGY, leftBars=2, rightBars=2)
+    _, wide = _run(PIVOT_STRATEGY, leftBars=15, rightBars=15)
+    assert tight != wide
