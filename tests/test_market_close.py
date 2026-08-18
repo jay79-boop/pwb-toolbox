@@ -1042,3 +1042,44 @@ def test_cli_free_flag_routes_to_yahoo(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "S and P five hundred E T F" in out
     assert not any(c.isdigit() for c in out)
+
+
+def test_cli_reports_a_missing_kicker_file_without_a_traceback(tmp_path, capsys):
+    """A mistyped --kicker-file should be one sentence, not a stack trace."""
+    missing = tmp_path / "nope.txt"
+
+    assert main(["--demo", "--kicker-file", str(missing)]) == 2
+
+    err = capsys.readouterr().err
+    assert "cannot read kicker file" in err
+    assert str(missing) in err
+    assert "Traceback" not in err
+
+
+def test_cli_reports_a_missing_names_file_without_a_traceback(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+
+    assert main(["--demo", "--names", str(missing)]) == 2
+
+    err = capsys.readouterr().err
+    assert "cannot read names file" in err
+    assert "Traceback" not in err
+
+
+def test_cli_checks_the_kicker_before_collecting_quotes(tmp_path, capsys, monkeypatch):
+    """The expensive part must not run when a local input is already unreadable.
+
+    The kicker used to be read after collection, so a mistyped path cost a full
+    download of every quote before the command failed.
+    """
+    called = []
+
+    def explode(*args, **kwargs):
+        called.append(True)
+        raise AssertionError("collected quotes despite an unreadable kicker file")
+
+    monkeypatch.setattr(free, "collect_free", explode)
+    monkeypatch.setattr(market, "collect", explode)
+
+    assert main(["--free", "--kicker-file", str(tmp_path / "nope.txt")]) == 2
+    assert called == []
