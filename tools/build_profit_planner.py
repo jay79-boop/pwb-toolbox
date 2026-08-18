@@ -150,6 +150,7 @@ class Position:
     manual_price: float
     ath: float | None
     note: str = ""
+    asset_class: str = "Crypto"
 
 
 @dataclass
@@ -272,6 +273,14 @@ LADDERS: list[Ladder] = [
     ),
 ]
 
+# The workbook is one book for everything, not one per asset type: a stock and
+# a coin differ only in which ticker the price feed wants.
+CLASSES = ["Crypto", "Stock", "ETF", "Option", "Cash", "Other"]
+
+# Closed keeps a finished round on the register with its realised result and
+# out of every portfolio total; Watchlist is a position sized at zero.
+STATUSES = ["Active", "Closed", "Watchlist"]
+
 SECTORS = [
     "Store of value",
     "L1 / Smart contract",
@@ -371,15 +380,20 @@ def pos_lookup(column: str, key_cell: str) -> str:
 def build_lists(wb: Workbook):
     ws = wb.create_sheet("Lists")
     ws.sheet_state = "hidden"
-    ws["A1"] = "Sector"
-    ws["B1"] = "Price mode"
-    ws["C1"] = "Side"
-    ws["D1"] = "Yes/No"
-    for i, sector in enumerate(SECTORS, start=2):
-        ws.cell(row=i, column=1, value=sector)
-    ws["B2"], ws["B3"] = "Auto", "Manual"
-    ws["C2"], ws["C3"] = "Buy", "Sell"
-    ws["D2"], ws["D3"] = "Yes", "No"
+    for col, (header, values) in enumerate(
+        [
+            ("Sector", SECTORS),
+            ("Price mode", ["Auto", "Manual"]),
+            ("Side", ["Buy", "Sell"]),
+            ("Yes/No", ["Yes", "No"]),
+            ("Class", CLASSES),
+            ("Status", STATUSES),
+        ],
+        start=1,
+    ):
+        ws.cell(row=1, column=col, value=header)
+        for offset, value in enumerate(values, start=2):
+            ws.cell(row=offset, column=col, value=value)
     return ws
 
 
@@ -472,14 +486,18 @@ def build_positions(wb: Workbook):
     sheet_title(
         ws,
         "Positions",
-        "One row per holding. Type the four amber columns; the other fifteen "
-        "compute themselves.",
-        19,
+        "The register: everything you hold, everything you used to hold, and "
+        "anything you are watching. Closed rows keep their realised result and "
+        "stop counting toward the portfolio.",
+        24,
     )
     headers = [
         "Asset",
         "Ticker",
+        "Class",
         "Sector",
+        "Status",
+        "Round",
         "Quantity",
         "Avg cost",
         "Cost basis",
@@ -491,177 +509,240 @@ def build_positions(wb: Workbook):
         "Unrealised $",
         "Unrealised %",
         "Weight",
+        "Realised $",
+        "Total result",
         "All-time high",
         "% of ATH",
         "X to ATH",
         "If ATH returns",
         "Note",
     ]
-    widths = [30, 20, 19, 15, 13, 13, 11, 13, 13, 14, 14, 13, 12, 9, 13, 9, 9, 14, 62]
+    widths = [
+        28,
+        19,
+        10,
+        18,
+        10,
+        8,
+        14,
+        13,
+        13,
+        11,
+        13,
+        13,
+        12,
+        14,
+        13,
+        12,
+        9,
+        13,
+        13,
+        13,
+        9,
+        9,
+        14,
+        58,
+    ]
     header_row(ws, 3, headers, widths)
-    ws.freeze_panes = "D4"
+    ws.freeze_panes = "C4"
 
-    sector_dv = DataValidation(
-        type="list", formula1="=Lists!$A$2:$A$14", allow_blank=True
-    )
-    mode_dv = DataValidation(type="list", formula1="=Lists!$B$2:$B$3", allow_blank=True)
-    ws.add_data_validation(sector_dv)
-    ws.add_data_validation(mode_dv)
+    dropdowns = {
+        3: "=Lists!$E$2:$E$7",
+        4: "=Lists!$A$2:$A$14",
+        5: "=Lists!$F$2:$F$4",
+        10: "=Lists!$B$2:$B$3",
+    }
+    validators = {}
+    for col, source in dropdowns.items():
+        dv = DataValidation(type="list", formula1=source, allow_blank=True)
+        ws.add_data_validation(dv)
+        validators[col] = dv
 
     for row in range(POS_FIRST, POS_LAST + 1):
         seed = POSITIONS[row - POS_FIRST] if row - POS_FIRST < len(POSITIONS) else None
         banded = (row - POS_FIRST) % 2 == 1
 
-        for col in range(1, 20):
+        for col in range(1, 25):
             cell = ws.cell(row=row, column=col)
             style_body(cell)
             if banded:
                 cell.fill = BAND_FILL
-
-        for col in (1, 2, 3, 4, 5, 7, 8, 15, 19):
+        for col in (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 24):
             style_input(ws.cell(row=row, column=col))
 
+        fine = seed is not None and seed.manual_price < 0.01
         ws.cell(row=row, column=1, value=seed.asset if seed else None)
         ws.cell(row=row, column=2, value=seed.ticker if seed else None)
-        ws.cell(row=row, column=3, value=seed.sector if seed else None)
-        qty = ws.cell(row=row, column=4, value=seed.qty if seed else None)
+        ws.cell(row=row, column=3, value=seed.asset_class if seed else None)
+        ws.cell(row=row, column=4, value=seed.sector if seed else None)
+        ws.cell(row=row, column=5, value="Active" if seed else None)
+        ws.cell(row=row, column=6, value=1 if seed else None).alignment = Alignment(
+            horizontal="center"
+        )
+        qty = ws.cell(row=row, column=7, value=seed.qty if seed else None)
         qty.number_format = QTY
-        avg = ws.cell(row=row, column=5, value=seed.avg_cost if seed else None)
-        avg.number_format = MONEY_FINE if seed and seed.avg_cost < 0.01 else MONEY
-        mode = ws.cell(row=row, column=7, value="Auto" if seed else None)
-        manual = ws.cell(row=row, column=8, value=seed.manual_price if seed else None)
-        manual.number_format = (
-            MONEY_FINE if seed and seed.manual_price < 0.01 else MONEY
-        )
-        ath = ws.cell(row=row, column=15, value=seed.ath if seed else None)
-        ath.number_format = (
-            MONEY_FINE if seed and seed.ath and seed.ath < 0.01 else MONEY
-        )
-        note = ws.cell(row=row, column=19, value=seed.note if seed else None)
+        avg = ws.cell(row=row, column=8, value=seed.avg_cost if seed else None)
+        avg.number_format = MONEY_FINE if fine else MONEY
+        ws.cell(row=row, column=10, value="Auto" if seed else None)
+        manual = ws.cell(row=row, column=11, value=seed.manual_price if seed else None)
+        manual.number_format = MONEY_FINE if fine else MONEY
+        ath = ws.cell(row=row, column=20, value=seed.ath if seed else None)
+        ath.number_format = MONEY_FINE if fine else MONEY
+        note = ws.cell(row=row, column=24, value=seed.note if seed else None)
         note.font = SMALL_F
         note.alignment = Alignment(vertical="top", wrap_text=True)
 
-        sector_dv.add(ws.cell(row=row, column=3))
-        mode_dv.add(mode)
+        for col, dv in validators.items():
+            dv.add(ws.cell(row=row, column=col))
 
-        blank = f'$D{row}=""'
+        # Guarded on the name, not the quantity: a closed position keeps its
+        # quantity as a record of what it was, and still has to compute a
+        # realised result.
+        blank = f'$A{row}=""'
+        inactive = f'OR($A{row}="",$E{row}<>"Active")'
         ws.cell(
-            row=row, column=6, value=f'=IF({blank},"",$D{row}*$E{row})'
+            row=row, column=9, value=f'=IF({blank},"",$G{row}*$H{row})'
         ).number_format = MONEY
-        # Manual price is both an override and a safety net: GOOGLEFINANCE does
-        # not carry every altcoin, and an unpriced row would otherwise poison
-        # every total on the Dashboard.
         ws.cell(
             row=row,
-            column=9,
+            column=12,
             value=(
-                f'=IF({blank},"",IFERROR(IF($G{row}="Manual",$H{row},'
-                f"GOOGLEFINANCE($B{row})),$H{row}))"
+                f'=IF({blank},"",IFERROR(IF($J{row}="Manual",$K{row},'
+                f"GOOGLEFINANCE($B{row})),$K{row}))"
             ),
         ).number_format = (
-            MONEY_FINE if seed and seed.manual_price < 0.01 else MONEY
+            MONEY_FINE if fine else MONEY
         )
         ws.cell(
             row=row,
-            column=10,
+            column=13,
             value=(
-                f'=IF({blank},"",IF($G{row}="Manual","manual",'
+                f'=IF({blank},"",IF($J{row}="Manual","manual",'
                 f'IF(ISERROR(GOOGLEFINANCE($B{row})),"no feed","live")))'
             ),
         ).font = SMALL_F
+        # Everything from here to Weight is deliberately blank unless the
+        # position is Active, which is what keeps a closed round out of the
+        # portfolio totals without deleting it.
         ws.cell(
-            row=row, column=11, value=f'=IF({blank},"",$D{row}*$I{row})'
+            row=row, column=14, value=f'=IF({inactive},"",$G{row}*$L{row})'
         ).number_format = MONEY
         ws.cell(
-            row=row, column=12, value=f'=IF({blank},"",$K{row}-$F{row})'
+            row=row, column=15, value=f'=IF($N{row}="","",$N{row}-$I{row})'
         ).number_format = MONEY
-        ws.cell(
-            row=row,
-            column=13,
-            value=f'=IF(OR({blank},$F{row}=0),"",$L{row}/$F{row})',
-        ).number_format = PCT
-        ws.cell(
-            row=row,
-            column=14,
-            value=f'=IF(OR({blank},$K${POS_TOTAL}=0),"",$K{row}/$K${POS_TOTAL})',
-        ).number_format = PCT
         ws.cell(
             row=row,
             column=16,
-            value=f'=IF(OR({blank},$O{row}=""),"",$I{row}/$O{row})',
+            value=f'=IF(OR($O{row}="",$I{row}=0),"",$O{row}/$I{row})',
         ).number_format = PCT
         ws.cell(
             row=row,
             column=17,
-            value=f'=IF(OR({blank},$O{row}="",$I{row}=0),"",$O{row}/$I{row})',
-        ).number_format = MULT
+            value=f'=IF(OR($N{row}="",$N${POS_TOTAL}=0),"",$N{row}/$N${POS_TOTAL})',
+        ).number_format = PCT
         ws.cell(
             row=row,
             column=18,
-            value=f'=IF(OR({blank},$O{row}=""),"",$D{row}*$O{row})',
+            value=(
+                f"=IF({blank},\"\",SUMIFS('Trade Log'!$L${LOG_FIRST}:$L${LOG_LAST},"
+                f"'Trade Log'!$B${LOG_FIRST}:$B${LOG_LAST},$A{row},"
+                f"'Trade Log'!$C${LOG_FIRST}:$C${LOG_LAST},$F{row}))"
+            ),
+        ).number_format = MONEY
+        ws.cell(
+            row=row, column=19, value=f'=IF({blank},"",N($O{row})+N($R{row}))'
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=21,
+            value=f'=IF(OR({blank},$T{row}=""),"",$L{row}/$T{row})',
+        ).number_format = PCT
+        ws.cell(
+            row=row,
+            column=22,
+            value=f'=IF(OR({blank},$T{row}="",$L{row}=0),"",$T{row}/$L{row})',
+        ).number_format = MULT
+        ws.cell(
+            row=row,
+            column=23,
+            value=f'=IF(OR({inactive},$T{row}=""),"",$G{row}*$T{row})',
         ).number_format = MONEY
 
-    total = ws.cell(row=POS_TOTAL, column=1, value="TOTAL")
-    for col in range(1, 20):
+    for col in range(1, 25):
         cell = ws.cell(row=POS_TOTAL, column=col)
         cell.fill = PatternFill("solid", fgColor=INK)
         cell.font = Font(name="Calibri", size=11, bold=True, color=WHITE)
         cell.border = BOX
+    total = ws.cell(
+        row=POS_TOTAL, column=1, value="TOTAL — active only, except realised"
+    )
     total.alignment = Alignment(indent=1)
-    ws.cell(
-        row=POS_TOTAL, column=6, value=f"=SUM(F{POS_FIRST}:F{POS_LAST})"
-    ).number_format = MONEY
-    ws.cell(
-        row=POS_TOTAL, column=11, value=f"=SUM(K{POS_FIRST}:K{POS_LAST})"
-    ).number_format = MONEY
-    ws.cell(
-        row=POS_TOTAL, column=12, value=f"=SUM(L{POS_FIRST}:L{POS_LAST})"
-    ).number_format = MONEY
+    ws.merge_cells(start_row=POS_TOTAL, start_column=1, end_row=POS_TOTAL, end_column=6)
     ws.cell(
         row=POS_TOTAL,
-        column=13,
-        value=f'=IF($F${POS_TOTAL}=0,"",$L${POS_TOTAL}/$F${POS_TOTAL})',
-    ).number_format = PCT
-    ws.cell(
-        row=POS_TOTAL, column=18, value=f"=SUM(R{POS_FIRST}:R{POS_LAST})"
+        column=9,
+        value=f'=SUMIFS(I{POS_FIRST}:I{POS_LAST},E{POS_FIRST}:E{POS_LAST},"Active")',
     ).number_format = MONEY
+    for col, letter in ((14, "N"), (15, "O"), (18, "R"), (19, "S"), (23, "W")):
+        ws.cell(
+            row=POS_TOTAL,
+            column=col,
+            value=f"=SUM({letter}{POS_FIRST}:{letter}{POS_LAST})",
+        ).number_format = MONEY
+    ws.cell(
+        row=POS_TOTAL,
+        column=16,
+        value=f'=IF($I${POS_TOTAL}=0,"",$O${POS_TOTAL}/$I${POS_TOTAL})',
+    ).number_format = PCT
 
-    body = f"L{POS_FIRST}:M{POS_LAST}"
+    for span in (f"O{POS_FIRST}:P{POS_LAST}", f"R{POS_FIRST}:S{POS_LAST}"):
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="lessThan",
+                formula=["0"],
+                font=Font(color=BAD),
+                fill=PatternFill("solid", fgColor=BAD_SOFT),
+            ),
+        )
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="greaterThan",
+                formula=["0"],
+                font=Font(color=GOOD),
+                fill=PatternFill("solid", fgColor=GOOD_SOFT),
+            ),
+        )
     ws.conditional_formatting.add(
-        body,
-        CellIsRule(
-            operator="lessThan",
-            formula=["0"],
-            font=Font(color=BAD),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
-        ),
-    )
-    ws.conditional_formatting.add(
-        body,
-        CellIsRule(
-            operator="greaterThan",
-            formula=["0"],
-            font=Font(color=GOOD),
-            fill=PatternFill("solid", fgColor=GOOD_SOFT),
-        ),
-    )
-    ws.conditional_formatting.add(
-        f"N{POS_FIRST}:N{POS_LAST}",
+        f"Q{POS_FIRST}:Q{POS_LAST}",
         DataBarRule(
             start_type="num", start_value=0, end_type="num", end_value=1, color=ACCENT
         ),
     )
     ws.conditional_formatting.add(
-        f"N{POS_FIRST}:N{POS_LAST}",
+        f"Q{POS_FIRST}:Q{POS_LAST}",
         FormulaRule(
-            formula=[f'AND($N{POS_FIRST}<>"",$N{POS_FIRST}>MaxWeight)'],
+            formula=[f'AND($Q{POS_FIRST}<>"",$Q{POS_FIRST}>MaxWeight)'],
             fill=PatternFill("solid", fgColor=WARN_SOFT),
         ),
     )
     ws.conditional_formatting.add(
-        f"J{POS_FIRST}:J{POS_LAST}",
+        f"M{POS_FIRST}:M{POS_LAST}",
         CellIsRule(
             operator="equal", formula=['"no feed"'], font=Font(color=BAD, size=9)
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"A{POS_FIRST}:X{POS_LAST}",
+        FormulaRule(formula=[f'$E{POS_FIRST}="Closed"'], font=Font(color=MUTED)),
+    )
+    ws.conditional_formatting.add(
+        f"E{POS_FIRST}:E{POS_LAST}",
+        CellIsRule(
+            operator="equal",
+            formula=['"Watchlist"'],
+            font=Font(color="1D4ED8", bold=True),
         ),
     )
     return ws
@@ -734,13 +815,13 @@ def build_ladder(wb: Workbook):
 
         blank = f'$A{row}=""'
         ws.cell(
-            row=row, column=2, value=f'=IF({blank},"",{pos_lookup("D", f"$A{row}")})'
+            row=row, column=2, value=f'=IF({blank},"",{pos_lookup("G", f"$A{row}")})'
         ).number_format = QTY
         ws.cell(
-            row=row, column=3, value=f'=IF({blank},"",{pos_lookup("E", f"$A{row}")})'
+            row=row, column=3, value=f'=IF({blank},"",{pos_lookup("H", f"$A{row}")})'
         ).number_format = MONEY
         ws.cell(
-            row=row, column=4, value=f'=IF({blank},"",{pos_lookup("F", f"$A{row}")})'
+            row=row, column=4, value=f'=IF({blank},"",{pos_lookup("I", f"$A{row}")})'
         ).number_format = MONEY
 
         empty = f'OR({blank},$F{row}="",$H{row}="")'
@@ -1241,73 +1322,144 @@ def build_ticker_plan(wb: Workbook):
 
 def build_trade_log(wb: Workbook):
     ws = wb.create_sheet("Trade Log")
-    ws.sheet_properties.tabColor = "334155"
+    ws.sheet_properties.tabColor = "1D4ED8"
     sheet_title(
         ws,
         "Trade Log",
-        "One row per fill, and the two columns nobody wants to fill in: what "
-        "you believed, and what would prove you wrong.",
-        12,
+        "Every fill you actually made. Pick the position, give it a round "
+        "number, and each sell works out what it realised against what that "
+        "round's buys averaged.",
+        17,
     )
     headers = [
         "Date",
-        "Ticker",
+        "Position",
+        "Round",
         "Side",
-        "Quantity",
+        "Units",
         "Price",
         "Fees",
         "Cash flow",
+        "Buy cost",
+        "Buy units",
+        "Round avg cost",
+        "Realised $",
+        "Realised %",
         "Thesis at entry",
         "What would prove me wrong",
         "Exit reason",
         "Followed the plan?",
-        "Tags",
     ]
-    widths = [13, 14, 9, 14, 13, 10, 14, 46, 40, 30, 15, 18]
+    widths = [12, 26, 8, 9, 14, 13, 10, 14, 12, 11, 15, 13, 12, 40, 36, 28, 15]
     header_row(ws, 4, headers, widths)
     ws.freeze_panes = "C5"
 
+    asset_dv = DataValidation(
+        type="list",
+        formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
+        allow_blank=True,
+    )
     side_dv = DataValidation(type="list", formula1="=Lists!$C$2:$C$3", allow_blank=True)
     yesno_dv = DataValidation(
         type="list", formula1="=Lists!$D$2:$D$3", allow_blank=True
     )
-    ws.add_data_validation(side_dv)
-    ws.add_data_validation(yesno_dv)
+    for dv in (asset_dv, side_dv, yesno_dv):
+        ws.add_data_validation(dv)
 
     for row in range(LOG_FIRST, LOG_LAST + 1):
-        for col in range(1, 13):
+        for col in range(1, 18):
             cell = ws.cell(row=row, column=col)
             style_body(cell)
             if (row - LOG_FIRST) % 2 == 1:
                 cell.fill = BAND_FILL
-        for col in (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12):
+        for col in (1, 2, 3, 4, 5, 6, 7, 14, 15, 16, 17):
             style_input(ws.cell(row=row, column=col))
+        for col in (9, 10, 11):
+            style_derived(ws.cell(row=row, column=col))
+
         ws.cell(row=row, column=1).number_format = "yyyy-mm-dd"
-        ws.cell(row=row, column=4).number_format = QTY
-        ws.cell(row=row, column=5).number_format = MONEY
-        ws.cell(row=row, column=6).number_format = MONEY
+        ws.cell(row=row, column=3).alignment = Alignment(horizontal="center")
+        ws.cell(row=row, column=5).number_format = QTY
+        for col in (6, 7):
+            ws.cell(row=row, column=col).number_format = MONEY
+        asset_dv.add(ws.cell(row=row, column=2))
+        side_dv.add(ws.cell(row=row, column=4))
+        yesno_dv.add(ws.cell(row=row, column=17))
+
+        empty = f'OR($E{row}="",$F{row}="")'
         ws.cell(
             row=row,
-            column=7,
+            column=8,
             value=(
-                f'=IF(OR($D{row}="",$E{row}=""),"",'
-                f'IF($C{row}="Buy",-($D{row}*$E{row})-N($F{row}),'
-                f"($D{row}*$E{row})-N($F{row})))"
+                f'=IF({empty},"",IF($D{row}="Buy",-($E{row}*$F{row})-N($G{row}),'
+                f"($E{row}*$F{row})-N($G{row})))"
             ),
         ).number_format = MONEY
-        for col in (8, 9, 10):
+        # These two exist so the round average below can be a SUMIFS rather
+        # than an array formula. Nothing else reads them.
+        ws.cell(
+            row=row,
+            column=9,
+            value=f'=IF(OR($D{row}<>"Buy",{empty}),"",$E{row}*$F{row}+N($G{row}))',
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=10,
+            value=f'=IF(OR($D{row}<>"Buy",{empty}),"",$E{row})',
+        ).number_format = QTY
+        # Average cost of this position's buys in this round only, which is
+        # what makes re-entering a closed position safe: round 2 never sees
+        # round 1's prices.
+        ws.cell(
+            row=row,
+            column=11,
+            value=(
+                f'=IF($B{row}="","",IFERROR('
+                f"SUMIFS($I${LOG_FIRST}:$I${LOG_LAST},$B${LOG_FIRST}:$B${LOG_LAST},$B{row},"
+                f"$C${LOG_FIRST}:$C${LOG_LAST},$C{row})/"
+                f"SUMIFS($J${LOG_FIRST}:$J${LOG_LAST},$B${LOG_FIRST}:$B${LOG_LAST},$B{row},"
+                f'$C${LOG_FIRST}:$C${LOG_LAST},$C{row}),""))'
+            ),
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=12,
+            value=(
+                f'=IF(OR($D{row}<>"Sell",{empty},$K{row}=""),"",'
+                f"$E{row}*$F{row}-N($G{row})-$E{row}*$K{row})"
+            ),
+        ).number_format = MONEY
+        ws.cell(
+            row=row,
+            column=13,
+            value=f'=IF(OR($L{row}="",$K{row}=0),"",$L{row}/($E{row}*$K{row}))',
+        ).number_format = PCT
+        for col in (14, 15, 16):
             ws.cell(row=row, column=col).alignment = Alignment(
                 vertical="top", wrap_text=True
             )
-        side_dv.add(ws.cell(row=row, column=3))
-        yesno_dv.add(ws.cell(row=row, column=11))
 
+    for span in (f"L{LOG_FIRST}:M{LOG_LAST}",):
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="greaterThan",
+                formula=["0"],
+                font=Font(color=GOOD, bold=True),
+                fill=PatternFill("solid", fgColor=GOOD_SOFT),
+            ),
+        )
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="lessThan",
+                formula=["0"],
+                font=Font(color=BAD, bold=True),
+                fill=PatternFill("solid", fgColor=BAD_SOFT),
+            ),
+        )
     ws.conditional_formatting.add(
-        f"G{LOG_FIRST}:G{LOG_LAST}",
-        CellIsRule(operator="greaterThan", formula=["0"], font=Font(color=GOOD)),
-    )
-    ws.conditional_formatting.add(
-        f"K{LOG_FIRST}:K{LOG_LAST}",
+        f"Q{LOG_FIRST}:Q{LOG_LAST}",
         CellIsRule(
             operator="equal",
             formula=['"No"'],
@@ -1323,12 +1475,12 @@ def build_dashboard(wb: Workbook):
     ws.sheet_properties.tabColor = INK
     ws.sheet_view.showGridLines = False
     sheet_title(
-        ws, "Dashboard", "Everything below is calculated. Nothing here is typed.", 17
+        ws, "Dashboard", "Everything here is calculated. Nothing here is typed.", 18
     )
     ws.cell(
         row=2,
         column=1,
-        value='=Settings!$C$7&" — everything below is calculated, nothing here is typed."',
+        value='=Settings!$C$7&" — everything here is calculated, nothing here is typed."',
     ).font = SUB_F
 
     ws.column_dimensions["A"].width = 3
@@ -1337,177 +1489,221 @@ def build_dashboard(wb: Workbook):
     for col in "EIM":
         ws.column_dimensions[col].width = 2
 
-    tiles = [
-        ("B", "Portfolio value", f"=Positions!$K${POS_TOTAL}", MONEY0),
-        ("F", "Cost basis", f"=Positions!$F${POS_TOTAL}", MONEY0),
-        ("J", "Unrealised P/L", f"=Positions!$L${POS_TOTAL}", MONEY0),
-        (
-            "N",
-            "Unrealised %",
-            f"=IFERROR(Positions!$L${POS_TOTAL}/Positions!$F${POS_TOTAL},0)",
-            PCT,
-        ),
-    ]
-    for start_col, label, formula, fmt in tiles:
-        col = ws[f"{start_col}1"].column
-        ws.merge_cells(start_row=4, start_column=col, end_row=4, end_column=col + 2)
-        head = ws.cell(row=4, column=col, value=label.upper())
-        head.font = KPI_LABEL_F
-        head.alignment = Alignment(vertical="center", indent=1)
-        head.fill = PatternFill("solid", fgColor=DERIVED)
-        ws.merge_cells(start_row=5, start_column=col, end_row=6, end_column=col + 2)
-        val = ws.cell(row=5, column=col, value=formula)
-        val.font = KPI_F
-        val.number_format = fmt
-        val.alignment = Alignment(vertical="center", indent=1)
-        for offset in range(3):
-            for r in (4, 5, 6):
-                ws.cell(row=r, column=col + offset).border = BOX
-    ws.row_dimensions[5].height = 22
-    ws.row_dimensions[6].height = 16
-    ws.conditional_formatting.add(
-        "J5:P6",
-        CellIsRule(
-            operator="lessThan", formula=["0"], font=Font(size=20, bold=True, color=BAD)
-        ),
-    )
-    ws.conditional_formatting.add(
-        "J5:P6",
-        CellIsRule(
-            operator="greaterThan",
-            formula=["0"],
-            font=Font(size=20, bold=True, color=GOOD),
-        ),
-    )
+    status = f"Positions!$E${POS_FIRST}:$E${POS_LAST}"
+    realised = f"Positions!$R${POS_FIRST}:$R${POS_LAST}"
 
-    second = [
-        (
-            "B",
-            "Positions held",
-            f"=COUNTA(Positions!$A${POS_FIRST}:$A${POS_LAST})",
-            "0",
-        ),
-        (
-            "F",
-            "Largest weight",
-            f"=IFERROR(MAX(Positions!$N${POS_FIRST}:$N${POS_LAST}),0)",
-            PCT,
-        ),
-        (
-            "J",
-            "Over the weight limit",
-            f'=COUNTIF(Positions!$N${POS_FIRST}:$N${POS_LAST},">"&MaxWeight)',
-            "0",
-        ),
-        (
-            "N",
-            "Net cash from the log",
-            f"=IFERROR(SUM('Trade Log'!$G${LOG_FIRST}:$G${LOG_LAST}),0)",
-            MONEY0,
-        ),
-    ]
-    for start_col, label, formula, fmt in second:
-        col = ws[f"{start_col}1"].column
-        ws.merge_cells(start_row=8, start_column=col, end_row=8, end_column=col + 2)
-        head = ws.cell(row=8, column=col, value=label.upper())
-        head.font = KPI_LABEL_F
-        head.alignment = Alignment(vertical="center", indent=1)
-        head.fill = PatternFill("solid", fgColor=DERIVED)
-        ws.merge_cells(start_row=9, start_column=col, end_row=10, end_column=col + 2)
-        val = ws.cell(row=9, column=col, value=formula)
-        val.font = Font(name="Calibri", size=16, bold=True, color=SLATE)
-        val.number_format = fmt
-        val.alignment = Alignment(vertical="center", indent=1)
-        for offset in range(3):
-            for r in (8, 9, 10):
-                ws.cell(row=r, column=col + offset).border = BOX
+    def tiles(label_row: int, entries):
+        for start_col, label, formula, fmt, size in entries:
+            col = ws[f"{start_col}1"].column
+            ws.merge_cells(
+                start_row=label_row,
+                start_column=col,
+                end_row=label_row,
+                end_column=col + 2,
+            )
+            head = ws.cell(row=label_row, column=col, value=label.upper())
+            head.font = KPI_LABEL_F
+            head.alignment = Alignment(vertical="center", indent=1)
+            head.fill = PatternFill("solid", fgColor=DERIVED)
+            ws.merge_cells(
+                start_row=label_row + 1,
+                start_column=col,
+                end_row=label_row + 2,
+                end_column=col + 2,
+            )
+            val = ws.cell(row=label_row + 1, column=col, value=formula)
+            val.font = Font(name="Calibri", size=size, bold=True, color=INK)
+            val.number_format = fmt or "General"
+            val.alignment = Alignment(vertical="center", indent=1)
+            for offset in range(3):
+                for r in (label_row, label_row + 1, label_row + 2):
+                    ws.cell(row=r, column=col + offset).border = BOX
+        ws.row_dimensions[label_row + 1].height = 22
+        ws.row_dimensions[label_row + 2].height = 16
 
-    ws.cell(row=12, column=2, value="Allocation by sector").font = BOLD_F
-    for col, (label, width) in enumerate(
-        [("Sector", 22), ("Market value", 15), ("Weight", 10)], start=2
-    ):
-        cell = ws.cell(row=13, column=col, value=label)
-        cell.font = HEAD_F
-        cell.fill = HEAD_FILL
-        cell.border = BOX
-        cell.alignment = Alignment(vertical="center", indent=1)
-        ws.column_dimensions[get_column_letter(col)].width = width
-    for offset, sector in enumerate(SECTORS):
-        row = 14 + offset
-        for col in range(2, 5):
-            cell = ws.cell(row=row, column=col)
-            style_body(cell)
-            if offset % 2 == 1:
-                cell.fill = BAND_FILL
-        ws.cell(row=row, column=2, value=sector)
-        ws.cell(
-            row=row,
-            column=3,
-            value=f"=SUMIF(Positions!$C${POS_FIRST}:$C${POS_LAST},$B{row},Positions!$K${POS_FIRST}:$K${POS_LAST})",
-        ).number_format = MONEY0
-        ws.cell(
-            row=row,
-            column=4,
-            value=f'=IFERROR($C{row}/Positions!$K${POS_TOTAL},"")',
-        ).number_format = PCT
-    last_sector = 14 + len(SECTORS) - 1
-    ws.conditional_formatting.add(
-        f"D14:D{last_sector}",
-        DataBarRule(
-            start_type="num", start_value=0, end_type="num", end_value=1, color=ACCENT
-        ),
+    tiles(
+        4,
+        [
+            ("B", "Portfolio value", f"=Positions!$N${POS_TOTAL}", MONEY0, 20),
+            ("F", "Cost at risk", f"=Positions!$I${POS_TOTAL}", MONEY0, 20),
+            ("J", "Unrealised", f"=Positions!$O${POS_TOTAL}", MONEY0, 20),
+            (
+                "N",
+                "Unrealised %",
+                f"=IFERROR(Positions!$O${POS_TOTAL}/Positions!$I${POS_TOTAL},0)",
+                PCT,
+                20,
+            ),
+        ],
+    )
+    # The second row is the half the old sheet never had: what you have
+    # actually banked, and what the two halves add up to.
+    tiles(
+        8,
+        [
+            ("B", "Realised, all time", f"=Positions!$R${POS_TOTAL}", MONEY0, 18),
+            ("F", "Total result", f"=Positions!$S${POS_TOTAL}", MONEY0, 18),
+            (
+                "J",
+                "Active / closed",
+                f'=COUNTIF({status},"Active")&" / "&COUNTIF({status},"Closed")',
+                None,
+                18,
+            ),
+            (
+                "N",
+                "Closed rounds in profit",
+                f'=IFERROR(COUNTIFS({status},"Closed",{realised},">0")'
+                f'/COUNTIF({status},"Closed"),"—")',
+                PCT0,
+                18,
+            ),
+        ],
+    )
+    for span in ("J5:P7", "B9:H11"):
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="lessThan",
+                formula=["0"],
+                font=Font(size=18, bold=True, color=BAD),
+            ),
+        )
+        ws.conditional_formatting.add(
+            span,
+            CellIsRule(
+                operator="greaterThan",
+                formula=["0"],
+                font=Font(size=18, bold=True, color=GOOD),
+            ),
+        )
+
+    def breakdown(col: int, heading: str, keys, key_range: str):
+        title = ws.cell(row=12, column=col, value=heading)
+        title.font = BOLD_F
+        for offset, (label, width) in enumerate(
+            [("", 22), ("Value", 14), ("Share", 10)]
+        ):
+            cell = ws.cell(
+                row=13, column=col + offset, value=label or heading.split()[-1]
+            )
+            cell.font = HEAD_F
+            cell.fill = HEAD_FILL
+            cell.border = BOX
+            cell.alignment = Alignment(vertical="center", indent=1)
+            ws.column_dimensions[get_column_letter(col + offset)].width = width
+        letter = get_column_letter(col)
+        value_letter = get_column_letter(col + 1)
+        for offset, key in enumerate(keys):
+            row = 14 + offset
+            for c in range(col, col + 3):
+                cell = ws.cell(row=row, column=c)
+                style_body(cell)
+                if offset % 2 == 1:
+                    cell.fill = BAND_FILL
+            ws.cell(row=row, column=col, value=key)
+            ws.cell(
+                row=row,
+                column=col + 1,
+                value=(
+                    f"=SUMIF({key_range},${letter}{row},"
+                    f"Positions!$N${POS_FIRST}:$N${POS_LAST})"
+                ),
+            ).number_format = MONEY0
+            ws.cell(
+                row=row,
+                column=col + 2,
+                value=f'=IFERROR(${value_letter}{row}/Positions!$N${POS_TOTAL},"")',
+            ).number_format = PCT
+        last = 14 + len(keys) - 1
+        ws.conditional_formatting.add(
+            f"{get_column_letter(col + 2)}14:{get_column_letter(col + 2)}{last}",
+            DataBarRule(
+                start_type="num",
+                start_value=0,
+                end_type="num",
+                end_value=1,
+                color=ACCENT,
+            ),
+        )
+        return last
+
+    class_last = breakdown(
+        2,
+        "Split by class",
+        CLASSES,
+        f"Positions!$C${POS_FIRST}:$C${POS_LAST}",
+    )
+    sector_last = breakdown(
+        6,
+        "Split by sector",
+        SECTORS,
+        f"Positions!$D${POS_FIRST}:$D${POS_LAST}",
     )
 
     chart = BarChart()
     chart.type = "bar"
     chart.title = "Where the money actually is"
-    chart.y_axis.title = None
-    chart.x_axis.title = None
     chart.height = 10
-    chart.width = 18
-    data = Reference(ws, min_col=3, min_row=13, max_row=last_sector)
-    cats = Reference(ws, min_col=2, min_row=14, max_row=last_sector)
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(cats)
+    chart.width = 16
+    chart.add_data(
+        Reference(ws, min_col=7, min_row=13, max_row=sector_last), titles_from_data=True
+    )
+    chart.set_categories(Reference(ws, min_col=6, min_row=14, max_row=sector_last))
     chart.legend = None
-    ws.add_chart(chart, "F13")
+    ws.add_chart(chart, "J13")
 
-    row = last_sector + 3
+    row = max(class_last, sector_last) + 3
     ws.cell(row=row, column=2, value="Checks").font = BOLD_F
     checks = [
         (
-            "Positions with no exit plan",
-            f'=SUMPRODUCT((Positions!$A${POS_FIRST}:$A${POS_LAST}<>"")'
-            f"*(COUNTIF('Exit Ladder'!$A${LADDER_FIRST}:$A${LADDER_LAST},"
+            "Active positions with no exit plan",
+            f'=SUMPRODUCT(({status}="Active")*'
+            f"(COUNTIF('Exit Ladder'!$A${LADDER_FIRST}:$A${LADDER_LAST},"
             f"Positions!$A${POS_FIRST}:$A${POS_LAST})=0))",
-            "Every holding should have rungs on the Exit Ladder before it needs them.",
+            "Every holding should have rungs before it needs them.",
         ),
         (
             "Positions priced by hand",
-            f'=COUNTIF(Positions!$J${POS_FIRST}:$J${POS_LAST},"manual")'
-            f'+COUNTIF(Positions!$J${POS_FIRST}:$J${POS_LAST},"no feed")',
+            f'=COUNTIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"manual")'
+            f'+COUNTIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"no feed")',
             "These do not update themselves. Everything about them is as stale as the day you typed it.",
         ),
         (
+            "Trades logged against nothing",
+            f"=SUMPRODUCT(('Trade Log'!$B${LOG_FIRST}:$B${LOG_LAST}<>\"\")*"
+            f"(COUNTIF(Positions!$A${POS_FIRST}:$A${POS_LAST},"
+            f"'Trade Log'!$B${LOG_FIRST}:$B${LOG_LAST})=0))",
+            "A logged trade whose position name does not match the register earns nothing — its realised profit lands nowhere.",
+        ),
+        (
+            "Names used twice on the register",
+            f'=SUMPRODUCT((Positions!$A${POS_FIRST}:$A${POS_LAST}<>"")*'
+            f"(COUNTIF(Positions!$A${POS_FIRST}:$A${POS_LAST},"
+            f"Positions!$A${POS_FIRST}:$A${POS_LAST})>1))",
+            "Names are the key everything else joins on. Re-entering a position needs a name you can tell apart — Cardano, round 2 — not a second row called Cardano.",
+        ),
+        (
             "Trades logged without a thesis",
-            f"=SUMPRODUCT((('Trade Log'!$B${LOG_FIRST}:$B${LOG_LAST}<>\"\")*('Trade Log'!$H${LOG_FIRST}:$H${LOG_LAST}=\"\")))",
+            f"=SUMPRODUCT(('Trade Log'!$B${LOG_FIRST}:$B${LOG_LAST}<>\"\")"
+            f"*('Trade Log'!$N${LOG_FIRST}:$N${LOG_LAST}=\"\"))",
             "A trade with no written reason cannot be reviewed later. It is just a number.",
         ),
     ]
     for offset, (label, formula, note) in enumerate(checks, start=1):
         r = row + offset
-        lab = ws.cell(row=r, column=2, value=label)
-        lab.font = BODY_F
-        val = ws.cell(row=r, column=3, value=formula)
+        ws.cell(row=r, column=2, value=label).font = BODY_F
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+        val = ws.cell(row=r, column=4, value=formula)
         val.font = BOLD_F
         val.number_format = "0"
         val.alignment = Alignment(horizontal="center")
         val.border = BOX
-        hint = ws.cell(row=r, column=4, value=note)
+        hint = ws.cell(row=r, column=6, value=note)
         hint.font = SMALL_F
-        ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=12)
+        ws.merge_cells(start_row=r, start_column=6, end_row=r, end_column=14)
         ws.conditional_formatting.add(
-            f"C{r}",
+            f"D{r}",
             CellIsRule(
                 operator="greaterThan",
                 formula=["0"],
@@ -1516,7 +1712,7 @@ def build_dashboard(wb: Workbook):
             ),
         )
         ws.conditional_formatting.add(
-            f"C{r}",
+            f"D{r}",
             CellIsRule(
                 operator="equal",
                 formula=["0"],
@@ -1612,6 +1808,52 @@ def build_start_here(wb: Workbook):
     )
     row += 1
 
+    row = section(row, "Adding to it as the portfolio grows")
+    row = line(
+        row,
+        "A new coin or stock",
+        "First empty row on Positions. Name, ticker, Class, Sector, Status = "
+        "Active, Round = 1, then quantity and average cost. Nothing else needs "
+        "touching.",
+    )
+    row = line(
+        row,
+        "A buy or a sell",
+        "One row on Trade Log. Pick the position from the dropdown and give it "
+        "the same Round number. A sell works out what it realised against what "
+        "that round's buys averaged — you do not enter the profit yourself.",
+    )
+    row = line(
+        row,
+        "Closing a position out",
+        "Set Status to Closed. The row stays where it is with the realised "
+        "profit the log worked out, and stops counting toward portfolio value, "
+        "weight and unrealised profit. Nothing is deleted and nothing is lost.",
+    )
+    row = line(
+        row,
+        "Buying it again later",
+        "Leave the closed row alone. Add a new row with a name you can tell "
+        "apart — Cardano, round 2 — and set Round to 2. The old round's result "
+        "is banked and does not move, and the new round starts from its own "
+        "average cost. Reusing the same name is the one thing that breaks this, "
+        "so the Dashboard counts names used twice.",
+    )
+    row = line(
+        row,
+        "Something you only watch",
+        "Same as a position, but Status = Watchlist. It shows a live price and "
+        "counts toward nothing.",
+    )
+    row = line(
+        row,
+        "Stocks and ETFs",
+        "Same table, same tabs. Set Class to Stock and use the plain symbol as "
+        "the ticker — NVDA, not CURRENCY:NVDA. The Dashboard splits the "
+        "portfolio by class so you can see crypto and equity apart.",
+    )
+    row += 1
+
     row = section(row, "How prices work")
     row = line(
         row,
@@ -1687,7 +1929,11 @@ def build_start_here(wb: Workbook):
         ),
         (
             "The trading log",
-            "Was 121 dated rows with four side-by-side ticker blocks and nothing filled in. Now one row per fill, with the thesis and the invalidation captured at entry.",
+            "Was 121 dated rows with four side-by-side ticker blocks and nothing filled in. Now one row per fill, with the thesis and the invalidation captured at entry, and each sell measured against what that round's buys averaged.",
+        ),
+        (
+            "Profit you have actually banked",
+            "The old sheet only ever showed what a position might be worth. Closing one out now leaves its realised result on the register, out of the portfolio totals but inside the lifetime figure — so selling something does not erase it from your record.",
         ),
         (
             "Credentials removed",

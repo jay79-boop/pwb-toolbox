@@ -21,8 +21,12 @@ from tools.build_profit_planner import (  # noqa: E402
     POS_FIRST,
     POS_LAST,
     POS_TOTAL,
+    CLASSES,
+    LOG_FIRST,
+    LOG_LAST,
     POSITIONS,
     SECTORS,
+    STATUSES,
     TP_RUNG_FIRST,
     TP_RUNG_LAST,
     TP_RUNGS,
@@ -80,6 +84,7 @@ def test_all_time_highs_are_not_rounded_away():
 def test_position_sectors_are_in_the_dropdown_list():
     for p in POSITIONS:
         assert p.sector in SECTORS, p.asset
+        assert p.asset_class in CLASSES, p.asset
 
 
 def test_ladders_never_sell_more_than_the_position():
@@ -109,9 +114,9 @@ def test_ladder_capacity_fits_the_seeded_rungs(wb):
 def test_positions_seed_fits_the_sheet(wb):
     assert len(POSITIONS) <= POS_LAST - POS_FIRST + 1
     ws = wb["Positions"]
-    assert ws.cell(row=POS_TOTAL, column=1).value == "TOTAL"
-    assert ws.cell(row=POS_TOTAL, column=6).value == f"=SUM(F{POS_FIRST}:F{POS_LAST})"
-    assert ws.cell(row=POS_TOTAL, column=11).value == f"=SUM(K{POS_FIRST}:K{POS_LAST})"
+    assert ws.cell(row=POS_TOTAL, column=1).value.startswith("TOTAL")
+    assert ws.cell(row=POS_TOTAL, column=14).value == f"=SUM(N{POS_FIRST}:N{POS_LAST})"
+    assert ws.cell(row=POS_TOTAL, column=15).value == f"=SUM(O{POS_FIRST}:O{POS_LAST})"
 
 
 def test_defined_names_point_at_settings(wb):
@@ -169,10 +174,10 @@ def test_price_falls_back_when_the_feed_is_missing(wb):
     poison every total on the Dashboard."""
     ws = wb["Positions"]
     for row in range(POS_FIRST, POS_LAST + 1):
-        formula = ws.cell(row=row, column=9).value
+        formula = ws.cell(row=row, column=12).value
         assert "GOOGLEFINANCE" in formula
-        assert formula.startswith(f'=IF($D{row}="","",IFERROR(')
-        assert formula.endswith(f"$H{row}))")
+        assert formula.startswith(f'=IF($A{row}="","",IFERROR(')
+        assert formula.endswith(f"$K{row}))")
 
 
 def test_workbook_saves(wb, tmp_path):
@@ -214,3 +219,58 @@ def test_ticker_plan_is_self_contained(wb):
                 assert (
                     f"{name}!" not in cell.value
                 ), f"Ticker Plan!{cell.coordinate} references {name}"
+
+
+def test_closed_positions_leave_the_portfolio_totals(wb):
+    """A closed round keeps its realised result and stops counting.
+
+    Market value, unrealised and weight blank out unless the row says Active,
+    and the cost total is a SUMIFS on Active — which is what lets a finished
+    position stay on the register without inflating what you appear to hold.
+    """
+    ws = wb["Positions"]
+    for row in range(POS_FIRST, POS_LAST + 1):
+        for col in (14, 23):  # market value, if-ATH-returns
+            assert f'$E{row}<>"Active"' in ws.cell(row=row, column=col).value
+    assert (
+        ws.cell(row=POS_TOTAL, column=9).value
+        == f'=SUMIFS(I{POS_FIRST}:I{POS_LAST},E{POS_FIRST}:E{POS_LAST},"Active")'
+    )
+    # Realised is summed across every status, closed rounds included.
+    assert ws.cell(row=POS_TOTAL, column=18).value == f"=SUM(R{POS_FIRST}:R{POS_LAST})"
+
+
+def test_realised_profit_is_scoped_to_the_round(wb):
+    """Re-entering a position must not disturb the round before it.
+
+    The realised figure joins the log on name *and* round, so buying a coin
+    again after closing it starts from its own average cost and leaves the
+    banked result alone.
+    """
+    ws = wb["Positions"]
+    for row in range(POS_FIRST, POS_LAST + 1):
+        formula = ws.cell(row=row, column=18).value
+        assert "SUMIFS('Trade Log'!" in formula
+        assert f"$A{row}" in formula, "must match on the position name"
+        assert f"$F{row}" in formula, "must match on the round as well"
+
+
+def test_trade_log_averages_only_that_round(wb):
+    ws = wb["Trade Log"]
+    for row in range(LOG_FIRST, LOG_LAST + 1):
+        formula = ws.cell(row=row, column=11).value
+        assert formula.count("SUMIFS(") == 2, "cost over units, both filtered"
+        assert f"$B{row}" in formula and f"$C{row}" in formula
+
+
+def test_statuses_and_classes_are_offered_as_dropdowns(wb):
+    ws = wb["Lists"]
+    assert [
+        ws.cell(row=r, column=5).value for r in range(2, 2 + len(CLASSES))
+    ] == CLASSES
+    assert [
+        ws.cell(row=r, column=6).value for r in range(2, 2 + len(STATUSES))
+    ] == STATUSES
+    sources = {dv.formula1 for dv in wb["Positions"].data_validations.dataValidation}
+    assert "=Lists!$E$2:$E$7" in sources, "Class column needs its dropdown"
+    assert "=Lists!$F$2:$F$4" in sources, "Status column needs its dropdown"
