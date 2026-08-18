@@ -90,6 +90,7 @@ duplicate is pure waste.
 | `cond ? a : b` | `a if cond else b` |
 | `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
+| an `if` read for its value | the conditional expression it means |
 | an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
@@ -138,6 +139,7 @@ Reported in `result.unsupported`, never approximated:
 - arrays, matrices, maps, user-defined functions and `type` blocks — all reported, so the rest of the script is still diagnosed
 - `for` / `while` loops
 - a `switch` used as a statement rather than for its value — that is a side-effecting block
+- an `if` read for its value whose branch carries more than one expression — see below
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
 - `strategy.exit` carrying `loss`, `profit` or `trail_*` — distances in ticks, and tick size belongs to the instrument, not the script
 - any identifier or call the converter does not know
@@ -319,6 +321,43 @@ of its own.
 
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## The two jobs of `if`
+
+Pine spells one keyword two ways. Read for its effect, `if` is a block that runs
+statements. Read for its value, the same keyword is a conditional expression
+whose arms happen to sit on their own lines:
+
+```pinescript
+float agreement = if priceSide != 0.0 and priceSide == maDirection
+    1.0
+else if priceSide == 0.0
+    0.25
+else
+    0.0
+```
+
+Which job it is doing is decided by where it appears: on the right of an `=` or
+`:=` it is an expression, anywhere else it is a block. So the block form is
+untouched, and the expression form folds into exactly the nesting a ternary or a
+`switch` already produces:
+
+```python
+agreement = (1.0 if (...) else (0.25 if (...) else 0.0))
+```
+
+An `else` is optional. Pine yields `na` when a value-carrying `if` falls off the
+end without one, and so does the conversion — `float('nan')`, which `na(x)`
+tests the same way it tests any other.
+
+A branch has to be a single expression, because that is all a conditional
+expression can hold. One that carries a block of statements is reported —
+*"an if used for its value needs one expression per branch"* — rather than
+having its first or last line guessed at.
+
+This was the last construct in the corpus that no amount of the rest could get
+past: with it, all 17 strategies under `tools/pine_sweep.py --strategies-only`
+parse.
 
 ## Source it cannot even parse
 
