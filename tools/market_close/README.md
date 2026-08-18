@@ -76,7 +76,7 @@ here that runs with no `PWB_API_KEY`, no Hugging Face login and no network at al
 shape — cold open, body, straight beat, sign-off — so it teaches the format by being
 the format, and it carries the same commitments as the daily straight beat.
 
-`--anchor` and `--show` do not reach it: the copy names Max Brennan and the Market
+`--anchor` and `--show` do not reach it: the copy names Toadchu Yall and the Market
 Close inside its own sentences, so there is nothing to substitute. `--kicker-file` is
 ignored. `--out`, `--segments` and the digit check work exactly as they do for a
 daily script.

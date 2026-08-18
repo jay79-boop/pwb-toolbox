@@ -235,7 +235,7 @@ contact with reality are position sizing and time horizon. Everything else,
 # reused, so nothing about it rotates. Its line breaks are beats too.
 INTRO = """[COLD OPEN]
 
-Good evening. My name is Max Brennan.
+Good evening. My name is Toadchu Yall.
 [pause] I read numbers off a screen for a living.
 
 [pause] Every weekday, after the closing bell, I'm going to tell you what the market did. [pause] Not what it means. [pause] Not what it's about to do next. [pause] What it DID.
@@ -267,7 +267,7 @@ Nothing on this channel is advice. I am not a financial advisor. I'm a face on a
 The market opens tomorrow. [pause] It'll do something.
 [pause] I'll be here afterward, [pause] explaining it. [pause] Confidently.
 
-[pause] I'm Max Brennan. [pause] This is the Market Close.
+[pause] I'm Toadchu Yall. [pause] This is the Market Close.
 [pause] Goodnight.
 """
 
@@ -287,7 +287,7 @@ QUIET_RATE_MOVE_BP = 5.0
 
 @dataclass
 class ScriptOptions:
-    anchor: str = "Max Brennan"
+    anchor: str = "Toadchu Yall"
     show: str = "the Market Close"
     kicker: str | None = None
 
@@ -459,7 +459,7 @@ def intro() -> str:
 
     ``ScriptOptions`` does not apply. ``--anchor`` and ``--show`` rename the
     anchor and the programme in a daily script by substituting them into the
-    template; the intro names Max Brennan and the Market Close inside its own
+    template; the intro names Toadchu Yall and the Market Close inside its own
     sentences, so there is nothing to substitute and renaming would leave the
     copy half-changed. It is written prose, not a template.
     """
