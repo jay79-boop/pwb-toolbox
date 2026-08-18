@@ -53,6 +53,18 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `static/journal-shots.js` — chart screenshots for the journal: downscale and
+  re-encode on the way in, then account the result against the ~5 MB localStorage
+  a `file://` page gets. The arithmetic is what is tested (`node
+  static/journal-shots.test.js`, run under pytest by `tests/test_journal_shots.py`);
+  `shrink()` needs a canvas and is verified in a browser instead
+- `static/option-lab.js` — Black-Scholes, greeks, decay and profit ladders in the
+  browser, with no dependencies. A port of `pwb_toolbox/options/{greeks,decay}.py`
+  kept deliberately faithful: `tests/test_option_lab.py` prices a spread of
+  contracts through the Python module and requires node to agree to 1e-9, so the
+  two cannot drift into disagreeing about the same contract. Adds what Python has
+  no counterpart for — rho, touch and finish probabilities, and the ladders —
+  tested against closed forms in `static/option-lab.test.js`
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
   `index.html` (the published landing page; see "Design tooling" below)
 
@@ -113,6 +125,8 @@ pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
+node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
@@ -178,6 +192,28 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## The trade journal is not in this repository
+
+`trade-journal.html` — the single-file journal that logs a trade against a locked
+thesis, closes it against that thesis, and runs the Position Lab — lives only on
+the user's machine, at `C:\Users\Gexio\OneDrive\trade-journal\`. It was briefly
+committed here so it could be edited, and removed at the user's request: it is a
+personal document and this fork is public.
+
+Two consequences worth knowing before working on it:
+
+- **Ask for the file, do not reconstruct it.** `git log --diff-filter=D --
+  static/trade-journal.html` finds the commit that removed it, and
+  `git show <sha>^:static/trade-journal.html` recovers that revision — but the
+  user's copy has moved on since, so treat the history as a reference and the
+  file they send as the truth.
+- **It inlines `static/option-lab.js` and `static/journal-shots.js` verbatim**, each
+  in its own `<script>` block behind a comment saying so. That is deliberate: the journal must stay one file that
+  opens from `file://` with no server and no build step, which is what makes it
+  usable straight out of a synced folder. Edit the module here, run the tests,
+  then re-inline the whole file — never patch the inlined copy, or the tested
+  version and the running version stop being the same code.
 
 ## The user's local checkout
 
