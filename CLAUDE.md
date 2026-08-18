@@ -64,6 +64,21 @@ CI (`.github/workflows/tests.yml`) runs two jobs on Python 3.11: `test`
 tests/`). They are separate jobs so a formatting nit cannot mask a real test
 failure, or the reverse.
 
+`.github/workflows/delete-merged-branch.yml` deletes a pull request's head branch
+once it merges. This exists because branch deletion is the one git operation a
+Claude Code container cannot perform — the session's git proxy returns **403** for
+any ref deletion — so merged branches otherwise pile up until someone clears them
+by hand from a local checkout. GitHub's runner is not behind that proxy. It skips
+fork branches and unmerged closures, and treats an already-deleted ref as success.
+It needs Settings → Actions → General → **Workflow permissions** set to "Read and
+write permissions"; without that the job fails with a message saying so. GitHub's
+built-in "Automatically delete head branches" checkbox does the same thing, and
+this is a file instead so the behaviour is reviewable rather than invisible
+repository state.
+
+A branch that is still in use simply comes back: the next `git push` from the
+session recreates it, which is what already happens when one is deleted by hand.
+
 In Claude Code on the web, `.claude/hooks/session-start.sh` does this setup
 automatically: it builds a `.venv/` (the system interpreter has Debian-managed
 packages such as `cryptography` that pip cannot upgrade), installs

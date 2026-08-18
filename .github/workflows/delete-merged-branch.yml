@@ -1,0 +1,64 @@
+name: Delete merged branch
+
+# Branch deletion is the one git operation a Claude Code container cannot
+# perform: the session's git proxy returns 403 for any ref deletion, so every
+# merged branch had to be cleaned up by hand. GitHub's own runner is not behind
+# that proxy, so it can do what the session cannot.
+#
+# This is deliberately the same job GitHub's built-in "Automatically delete head
+# branches" setting does. That setting is a repository checkbox rather than a
+# file, and would work just as well — it lives in Settings, General, Pull
+# Requests. This exists so the behaviour is version-controlled and reviewable
+# alongside the code, rather than being invisible repository state.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    # Three guards, each of which has to hold:
+    #   merged        — a PR closed without merging keeps its branch, since the
+    #                   work is unfinished rather than absorbed.
+    #   same repo     — a fork's head branch belongs to the contributor, not us.
+    #   not default   — belt and braces; main is never a head branch in practice.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the merged head branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            try {
+              await github.rest.git.deleteRef({
+                ...context.repo,
+                ref: `heads/${branch}`,
+              });
+              core.info(`deleted ${branch}`);
+            } catch (error) {
+              // 422 means the ref is already gone — someone deleted it by hand,
+              // or a re-run of this job got there first. That is the desired
+              // end state, so it is not a failure.
+              if (error.status === 422) {
+                core.info(`${branch} was already gone`);
+                return;
+              }
+              // 403 means the workflow token is not allowed to write contents.
+              // Repository Settings, Actions, General, Workflow permissions
+              // must be "Read and write permissions" for this to work.
+              if (error.status === 403) {
+                core.setFailed(
+                  `not permitted to delete ${branch} — set Settings > Actions > ` +
+                  `General > Workflow permissions to "Read and write permissions"`
+                );
+                return;
+              }
+              throw error;
+            }
