@@ -257,6 +257,25 @@ spell the OneDrive path out in a command rather than assuming the shell's
 working directory, and if a checkout does not have `OneDrive` in its path, stop
 before writing to it.
 
+If you end up in that second checkout anyway, know that **its `.venv` is nearly
+empty**: the suite reads as broken when it is merely uninstalled, which sends you
+hunting a bug that does not exist. Install first, then run tests through the venv's
+own interpreter rather than a bare `pytest`:
+
+```
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+If teardown throws `PermissionError` on `pytest-current`, add
+`--basetemp="$TEMP/pwbtest"`. That is Windows symlink cleanup, not a test failure —
+worth saying because the traceback looks exactly like one.
+
+Separately, `.claude/settings.local.json` regrows dead permission entries on its
+own, so cleaning it is never a one-time fix. That is Claude Code behaviour rather
+than a fact about this repository, so it lives in the `gexio-machine` skill along
+with the fix — not restated here, for the same reason the NEEDS YOU rules are not.
+
 **`origin` is `paperswithbacktest/pwb-toolbox`, the upstream project — not their
 fork.** Their fork is `jay79-boop/pwb-toolbox`, added as the remote `jay`.
 Telling them to `git pull origin main` pulls upstream and conflicts; branches
