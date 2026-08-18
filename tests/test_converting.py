@@ -6,6 +6,7 @@ never mistaken for "it works".
 """
 
 import datetime
+import math
 import random
 
 import backtrader as bt
@@ -3115,3 +3116,263 @@ def test_generated_wavetrend_responds_to_its_inputs():
     _, fast = _run(WAVETREND, chLen=4, avgLen=5)
     _, slow = _run(WAVETREND, chLen=30, avgLen=40)
     assert fast != slow
+
+
+# --- moving averages Backtrader lacks, or spells differently ----------------
+
+
+def _wma_reference(values, length):
+    weights = range(1, length + 1)
+    window = values[-length:]
+    return sum(v * w for v, w in zip(window, weights)) / sum(weights)
+
+
+def _hma_reference(values, length):
+    """Pine: wma(2*wma(src, len/2) - wma(src, len), round(sqrt(len)))."""
+    final = int(round(math.sqrt(length)))
+    inner = []
+    for back in range(final):
+        segment = values[: len(values) - back]
+        inner.append(
+            2 * _wma_reference(segment, length // 2) - _wma_reference(segment, length)
+        )
+    inner.reverse()
+    weights = range(1, final + 1)
+    return sum(v * w for v, w in zip(inner, weights)) / sum(weights)
+
+
+def _vwma_reference(values, volumes, length):
+    traded = sum(v * u for v, u in zip(values[-length:], volumes[-length:]))
+    return traded / sum(volumes[-length:])
+
+
+def _alma_reference(values, length, offset=0.85, sigma=6.0):
+    centre = offset * (length - 1)
+    spread = length / sigma
+    weights = [
+        math.exp(-((i - centre) ** 2) / (2 * spread * spread)) for i in range(length)
+    ]
+    window = values[-length:]
+    return sum(v * w for v, w in zip(window, weights)) / sum(weights)
+
+
+def _volume_frame(bars=80, seed=4):
+    rng = random.Random(seed)
+    price = 100.0
+    start = datetime.datetime(2022, 1, 1)
+    closes, volumes, rows = [], [], []
+    for i in range(bars):
+        price *= 1 + rng.gauss(0, 0.02)
+        volume = 1000 + rng.randint(0, 500)
+        closes.append(price)
+        volumes.append(float(volume))
+        rows.append(
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": price,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": volume,
+            }
+        )
+    return closes, volumes, pd.DataFrame(rows).set_index("datetime")
+
+
+def _last_value(source, attribute, frame, at):
+    """Run a converted strategy and read one attribute on a chosen bar."""
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    seen = {}
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen[len(self)] = getattr(self, attribute)[0]
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(Watched)
+    cerebro.run()
+    return seen[at]
+
+
+@pytest.mark.parametrize("length", [9, 13, 21, 30])
+def test_hma_matches_pines_definition_not_backtraders(length):
+    """Backtrader rounds the final window down where Pine rounds it off.
+
+    `int(sqrt(len))` and `round(sqrt(len))` disagree for 24 of the first 59
+    lengths -- 13 and 21 among them -- so `bt.indicators.HullMovingAverage`
+    would be quietly a different indicator. This is composed from the weighted
+    averages Pine says it is made of instead.
+    """
+    closes, _, frame = _volume_frame()
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"h = ta.hma(close, {length})\n"
+        "if close > h\n    strategy.close()\n"
+    )
+    got = _last_value(source, "_hma_3", frame, 75)
+    assert got == pytest.approx(_hma_reference(closes[:75], length), rel=1e-12)
+
+
+def test_hma_differs_from_backtraders_own_hull():
+    """Pinning the difference, so nobody later 'simplifies' this away."""
+    _, _, frame = _volume_frame()
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "h = ta.hma(close, 13)\n"
+        "if close > h\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert "HullMovingAverage" not in result.code
+
+    ours = _last_value(source, "_hma_3", frame, 75)
+
+    class Native(bt.Strategy):
+        def __init__(self):
+            self.hull = bt.indicators.HullMovingAverage(self.data.close, period=13)
+            self.seen = {}
+
+        def next(self):
+            self.seen[len(self)] = self.hull[0]
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(Native)
+    theirs = cerebro.run()[0].seen[75]
+
+    assert ours != pytest.approx(theirs, rel=1e-6)
+
+
+def test_vwma_matches_its_definition():
+    closes, volumes, frame = _volume_frame()
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "v = ta.vwma(close, 13)\n"
+        "if close > v\n    strategy.close()\n"
+    )
+    got = _last_value(source, "_vwma_3", frame, 75)
+    assert got == pytest.approx(
+        _vwma_reference(closes[:75], volumes[:75], 13), rel=1e-12
+    )
+
+
+def test_vwma_answers_na_rather_than_dividing_by_zero():
+    """A window with no volume at all is `na` in Pine, not an exception."""
+    start = datetime.datetime(2022, 1, 1)
+    rows = [
+        {
+            "datetime": start + datetime.timedelta(days=i),
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 0,
+        }
+        for i in range(40)
+    ]
+    frame = pd.DataFrame(rows).set_index("datetime")
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "v = ta.vwma(close, 5)\n"
+        "if close > v\n    strategy.close()\n"
+    )
+    got = _last_value(source, "_vwma_3", frame, 35)
+    assert got != got  # NaN, and no ZeroDivisionError getting here
+
+
+@pytest.mark.parametrize("length,offset,sigma", [(9, 0.85, 6.0), (20, 0.5, 3.0)])
+def test_alma_matches_its_definition(length, offset, sigma):
+    closes, _, frame = _volume_frame()
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"a = ta.alma(close, {length}, {offset}, {sigma})\n"
+        "if close > a\n    strategy.close()\n"
+    )
+    got = _last_value(source, "_alma_1", frame, 75)
+    want = _alma_reference(closes[:75], length, offset, sigma)
+    assert got == pytest.approx(want, rel=1e-12)
+
+
+def test_alma_defaults_match_tradingviews():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "a = ta.alma(close, 9)\n"
+        "if close > a\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "PineAlma(self.data.close, period=9, offset=0.85, sigma=6.0)" in result.code
+
+
+def test_the_new_averages_read_the_same_in_both_run_modes():
+    """`PineAlma` writes `once` for the same reason the others do."""
+    _, _, frame = _volume_frame()
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "sm = ta.sma(close, 10)\n"
+        "a = ta.alma(sm, 9)\n"
+        "if close > a\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+
+    def readings(runonce):
+        namespace = {}
+        exec(compile(result.code, "<converted>", "exec"), namespace)
+        seen = {}
+        base = namespace[result.class_name]
+
+        class Watched(base):
+            def next(self):
+                super().next()
+                seen[len(self)] = self._alma_2[0]
+
+        cerebro = bt.Cerebro(runonce=runonce)
+        cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+        cerebro.addstrategy(Watched)
+        cerebro.run()
+        return seen
+
+    vectorised, stepwise = readings(True), readings(False)
+    assert len(vectorised) > 40
+    for bar, got in vectorised.items():
+        want = stepwise[bar]
+        assert (got != got and want != want) or got == want, f"bar {bar}"
+
+
+def test_the_new_indicators_are_only_emitted_when_used():
+    assert "class PineAlma" not in convert(DUAL_MA).code
+
+
+@pytest.mark.parametrize("call", ["ta.hma", "ta.vwma", "ta.alma"])
+def test_a_length_only_known_per_bar_is_reported_for_the_new_averages(call):
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "n = close > open ? 5 : 9\n"
+        f"v = {call}(close, n)\n"
+        "if close > v\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("length argument" in item for item in result.unsupported)
+
+
+def test_generated_hull_strategy_runs_and_trades():
+    source = """//@version=6
+strategy("Hull")
+fast = input.int(9, "Fast")
+slow = input.int(30, "Slow")
+h = ta.hma(close, fast)
+s = ta.hma(close, slow)
+if h > s
+    strategy.entry("l", strategy.long)
+if h < s
+    strategy.close()
+"""
+    value, closed = _run(source)
+    assert closed > 0
+    assert value != 10_000.0
+    _, tight = _run(source, fast=4, slow=12)
+    assert tight != closed
