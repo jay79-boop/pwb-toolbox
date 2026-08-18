@@ -47,8 +47,14 @@ A worked example, for this repo's 21st MCP key:
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
+- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
+- `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
+- `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
+- `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`
+- `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
+  `index.html` (the published landing page; see "Design tooling" below)
 
 ## Environment
 
@@ -88,7 +94,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (733 tests, ~28s cold / ~15s warm)
+pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
@@ -108,6 +114,11 @@ black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
   `black` is pinned in `requirements-dev.txt`; its stable style changes with
   each January release, so an unpinned formatter would eventually fail CI on
   code nobody touched. Bump the pin deliberately, reformatting in the same commit.
+- Do **not** pin an exact test count in this file. Every branch that adds a test
+  has to touch that one line, so any two open PRs collide on it — three of the
+  merges in August were conflicts on nothing else, and the number was stale by
+  thirty within a day of the last fix. `pytest` prints the real total; the
+  timing hint in Commands is what the line is actually for.
 - Tests must not require network access or a live broker. `ib_insync` calls are
   exercised against a mocked `IB` client (see `tests/test_ib_connector_calibration.py`),
   and dataset tests should not depend on `PWB_API_KEY` or a Hugging Face login.

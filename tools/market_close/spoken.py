@@ -202,6 +202,10 @@ def say_dollars(amount: float) -> str:
     the penny on air.
     """
     a = abs(float(amount))
+    if a >= 10_000:
+        # "sixty-four thousand one hundred and six dollars" is not something a
+        # person says out loud. Round five figures and up to the hundred.
+        return f"{int_to_words(int(round(a / 100.0)) * 100)} dollars"
     if a >= 1000:
         return f"{int_to_words(int(round(a)))} dollars"
 
