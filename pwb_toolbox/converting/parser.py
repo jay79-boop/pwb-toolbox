@@ -20,12 +20,14 @@ from .nodes import (
     Bool,
     Call,
     ExprStmt,
+    FuncDef,
     If,
     Index,
     ListLit,
     Na,
     Name,
     Num,
+    Param,
     Program,
     Str,
     Ternary,
@@ -118,6 +120,18 @@ _LEADING_CONTINUATION = re.compile(
     r"^\s*(?:and\b|or\b|\?|:|==|!=|<=|>=|<|>|\+|-|\*|/|%)"
 )
 
+#: `-` and `+` are the two operators that are also prefixes, so a line opening
+#: with one is genuinely ambiguous: it either continues the line above
+#: (`x = a` / `    - b`) or is a fresh expression with a sign (`-1` as the
+#: value of an `if` branch). Only the second can follow a line that opens a
+#: block, and whether a line opens one is decidable from its own text.
+_LEADING_SIGN = re.compile(r"^\s*[+-]")
+_OPENS_BLOCK = re.compile(
+    r"^\s*(?:if|else|for|while|switch)\b"  # a block statement
+    r"|(?:=|:=)\s*(?:if|switch)\b"  # `x = if cond`, `x = switch mode`
+    r"|=>\s*$"  # a function, or a switch case with its value below
+)
+
 #: Words that may precede the name in a declaration, as in
 #: ``float entryPrice = na`` or ``series int n = 0``. Pine allows a type, a
 #: type qualifier, or both. None of it changes what the assignment means to
@@ -189,6 +203,20 @@ def _ends_dangling(tokens, start) -> bool:
     return last.kind == "NAME" and last.value in _DANGLING_WORDS
 
 
+def _continues_previous(line: str, previous: str) -> bool:
+    """True when ``line`` picks up the expression ``previous`` left hanging.
+
+    Asked from both ends -- once by the line itself, to know that its
+    indentation opens no block, and once by the line above, to know to hold
+    its newline back -- so the two must be the same question.
+    """
+    if not _LEADING_CONTINUATION.match(line):
+        return False
+    if _LEADING_SIGN.match(line) and _OPENS_BLOCK.search(previous):
+        return False
+    return True
+
+
 def tokenize(source: str) -> list:
     """Turn Pine source into tokens, with INDENT/DEDENT for block structure."""
     tokens = []
@@ -211,7 +239,8 @@ def tokenize(source: str) -> list:
 
     continuing = False  # the previous line left an expression unfinished
     for index, (lineno, line) in enumerate(lines):
-        starts_continuation = bool(_LEADING_CONTINUATION.match(line))
+        previous = lines[index - 1][1] if index else ""
+        starts_continuation = _continues_previous(line, previous)
         # A continuation is part of the line above, so its indentation says
         # nothing about block structure and must not open one.
         if depth == 0 and not continuing and not starts_continuation:
@@ -294,8 +323,8 @@ def tokenize(source: str) -> list:
         # Hold the newline back when this line is unfinished, or when the next
         # one picks the expression up with a leading operator.
         nxt = lines[index + 1][1] if index + 1 < len(lines) else ""
-        continuing = _ends_dangling(tokens, line_start) or bool(
-            _LEADING_CONTINUATION.match(nxt)
+        continuing = _ends_dangling(tokens, line_start) or _continues_previous(
+            nxt, line
         )
         if depth == 0 and not continuing:
             tokens.append(Token("NEWLINE", None, lineno))
@@ -314,6 +343,8 @@ class Parser:
         self.pos = 0
         #: Names introduced by `type X` blocks, which then act as type words.
         self.user_types = set()
+        #: Pine name -> FuncDef, filled as declarations are parsed.
+        self.functions = {}
 
     # --- token helpers -------------------------------------------------------
 
@@ -352,6 +383,10 @@ class Parser:
         while not self.at("EOF"):
             statement = self.parse_statement()
             if statement is not None:
+                if isinstance(statement, FuncDef):
+                    self.functions[statement.name] = statement
+                    self.skip_newlines()
+                    continue
                 if (
                     declaration is None
                     and isinstance(statement, ExprStmt)
@@ -366,7 +401,12 @@ class Parser:
                     continue
                 body.append(statement)
             self.skip_newlines()
-        return Program(declaration=declaration, version=version, body=body)
+        return Program(
+            declaration=declaration,
+            version=version,
+            body=body,
+            functions=self.functions,
+        )
 
     def _skip_block(self, kind, start_line):
         """Consume a construct plus any indented body, returning it verbatim."""
@@ -415,7 +455,7 @@ class Parser:
             index += 1
         return False
 
-    def parse_statement(self):
+    def parse_statement(self, value_position=False):
         token = self.current
 
         if token.kind == "NAME" and token.value in _BLOCK_KEYWORDS:
@@ -423,7 +463,8 @@ class Parser:
 
         # A switch whose result goes nowhere is a side-effecting block, which
         # is a different thing from the expression handled below. Skip and
-        # report it rather than mis-reading it as one.
+        # report it rather than mis-reading it as one -- unless the block it
+        # sits in stands for a value, where the switch is that value.
         if (
             token.kind == "NAME"
             and token.value == "switch"
@@ -432,16 +473,24 @@ class Parser:
                 and self.tokens[self.pos + 1].value in _ASSIGN_OPS
             )
         ):
+            if value_position:
+                return ExprStmt(self.parse_switch())
             return self._skip_block("switch statement", token.line)
 
         if token.kind == "NAME" and token.value == "if":
             return self.parse_if()
 
-        # `f(x) =>` declares a function. Translating one is out of scope, but
-        # failing to parse it is not the same as reporting it: the rest of the
-        # script still has plenty worth telling the caller about.
         if self._at_function_declaration():
-            return self._skip_block("user-defined function", token.line)
+            start = self.pos
+            try:
+                return self.parse_function(token.line)
+            except PineSyntaxError:
+                # Reading a body is best-effort. One that uses something the
+                # grammar does not model is skipped and reported, exactly as
+                # every body was before any of them could be read -- failing
+                # the whole file over it would tell the caller far less.
+                self.pos = start
+                return self._skip_block("user-defined function", token.line)
 
         # `type Zone` opens a user-defined type, its fields on an indented
         # block. Same reasoning as a function: skip it and report it, rather
@@ -452,9 +501,15 @@ class Parser:
             self.user_types.add(self.tokens[self.pos + 1].value)
             return self._skip_block("user-defined type", token.line)
 
-        # `[a, b] = ta.macd(...)` -- tuple destructuring.
+        # `[a, b] = ta.macd(...)` destructures a tuple; `[a, b]` on its own
+        # returns one, which a function body does at its end. The `=` past the
+        # closing bracket is what tells them apart.
         if token.kind == "OP" and token.value == "[":
-            return self.parse_tuple_assign()
+            if self._at_tuple_assign():
+                return self.parse_tuple_assign()
+            value = self.parse_expression()
+            self.expect("NEWLINE")
+            return ExprStmt(value)
 
         qualifier = ""
         if token.kind == "NAME" and token.value in ("var", "varip"):
@@ -493,6 +548,57 @@ class Parser:
         value = self.parse_expression()
         self.expect("NEWLINE")
         return ExprStmt(value)
+
+    def parse_function(self, start_line):
+        """Parse ``name(a, b) =>`` and the body that follows it.
+
+        The body may be an expression on the same line or an indented block;
+        both are kept as a list of statements, since the generator treats the
+        one-liner as a block of one.
+        """
+        name = self.expect("NAME").value
+        self.expect("OP", "(")
+        params = []
+        while not self.at("OP", ")"):
+            params.append(self.parse_param())
+            if self.at("OP", ","):
+                self.advance()
+        self.expect("OP", ")")
+        self.expect("OP", "=>")
+
+        if self.at("NEWLINE"):
+            body = self.parse_block(value_position=True)
+        else:
+            body = [ExprStmt(self.parse_expression())]
+            self.expect("NEWLINE")
+        return FuncDef(name=name, params=tuple(params), body=body)
+
+    def parse_param(self):
+        """One parameter, with its type words dropped and its default kept.
+
+        Pine writes these as `x`, `float x`, `series float x`, or
+        `float phase = 0.0`. The type is consumed rather than recorded: it
+        constrains what Pine accepts, not what the value means here.
+        """
+        while self.at("NAME") and (
+            self.current.value in _TYPE_WORDS or self.current.value in self.user_types
+        ):
+            generic = self._generic_end(self.pos + 1)
+            if generic is not None:
+                self.pos = generic  # `array<float> xs`
+                break
+            if self._empty_brackets_at(self.pos + 1):
+                self.pos += 3  # `float[] xs`, the older spelling
+                break
+            if self.tokens[self.pos + 1].kind != "NAME":
+                break  # a parameter named after a type, as in `f(color) =>`
+            self.advance()
+        name = self.expect("NAME").value
+        default = None
+        if self.at("OP", "="):
+            self.advance()
+            default = self.parse_expression()
+        return Param(name=name, default=default)
 
     def parse_switch(self):
         """Parse ``switch [subject]`` and its indented ``pattern => value`` block.
@@ -626,6 +732,24 @@ class Parser:
                     return
             end -= 1
 
+    def _at_tuple_assign(self) -> bool:
+        """True when the `[` here opens a target list rather than a tuple value."""
+        index, depth = self.pos, 0
+        while index < len(self.tokens):
+            token = self.tokens[index]
+            if token.kind in ("NEWLINE", "EOF"):
+                return False
+            if token.kind == "OP":
+                if token.value == "[":
+                    depth += 1
+                elif token.value == "]":
+                    depth -= 1
+                    if depth == 0:
+                        nxt = self.tokens[index + 1]
+                        return nxt.kind == "OP" and nxt.value in ("=", ":=")
+            index += 1
+        return False
+
     def parse_tuple_assign(self):
         self.expect("OP", "[")
         targets = []
@@ -639,7 +763,14 @@ class Parser:
         self.expect("NEWLINE")
         return TupleAssign(targets=targets, value=value)
 
-    def parse_block(self):
+    def parse_block(self, value_position=False):
+        """Parse an indented block.
+
+        ``value_position`` marks a block whose statements stand for a value --
+        a function body. There a bare ``switch`` is the value being returned,
+        where at statement level the same text is a side-effecting block. The
+        flag does not descend into nested blocks, which are control flow again.
+        """
         self.expect("NEWLINE")
         self.expect("INDENT")
         body = []
@@ -647,7 +778,7 @@ class Parser:
             self.skip_newlines()
             if self.at("DEDENT") or self.at("EOF"):
                 break
-            statement = self.parse_statement()
+            statement = self.parse_statement(value_position=value_position)
             if statement is not None:
                 body.append(statement)
         if self.at("DEDENT"):

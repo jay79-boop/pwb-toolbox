@@ -18,11 +18,10 @@ What is deliberately not translated
 -----------------------------------
 
 Anything whose Backtrader equivalent would be a guess is reported rather than
-emitted: ``varip``'s intrabar updates, arrays and matrices, user-defined
-functions, loops, and ``strategy.exit`` offsets measured in ticks.
-Presentational calls (``plot``, ``bgcolor``, ``label.new``) are dropped, but
-reported separately as *ignored* -- they change nothing about how the strategy
-trades.
+emitted: ``varip``'s intrabar updates, arrays and matrices, loops, and
+``strategy.exit`` offsets measured in ticks. Presentational calls (``plot``,
+``bgcolor``, ``label.new``) are dropped, but reported separately as *ignored*
+-- they change nothing about how the strategy trades.
 
 ``var`` is the exception that is *not* a guess: Pine initialises it once and
 keeps it across bars, which is what an instance attribute already does, so it
@@ -37,7 +36,16 @@ timeframe stops being tunable at that point -- resampling happens before
 ``addstrategy`` -- which is why a timeframe taken from an input is resolved to
 that input's default and reported.
 
-``strategy.exit`` with a ``stop`` or ``limit`` is a third. Both are absolute
+A user-defined function is the third, and it is inlined at each call site
+rather than emitted as a Python ``def``. That is not a shortcut: Pine gives
+every call site its own independent series state, so two calls to the same
+function do not share history the way two calls to a Python function share a
+closure. Substituting the arguments into the body is what that rule *means*
+here -- and it also dissolves the length problem, since ``ta.sma(src, len)``
+gets a concrete length the moment the call site's argument replaces ``len``.
+See :meth:`_Generator._inline_call`.
+
+``strategy.exit`` with a ``stop`` or ``limit`` is a fourth. Both are absolute
 prices, so they become a Backtrader stop and limit order linked one-cancels-
 other. The subtlety is that Pine's exit is a *standing instruction* rather than
 a submission: it is re-evaluated on every bar and moves its orders when the
@@ -60,6 +68,7 @@ from .nodes import (
     Bool,
     Call,
     ExprStmt,
+    FuncDef,
     If,
     Index,
     ListLit,
@@ -319,6 +328,112 @@ _EXIT_HELPER = (
 )
 
 
+#: How far a single inlined call may expand. Substitution duplicates a local
+#: once per read, so a body that leans on its intermediates grows fast; past
+#: this the output stops being something anyone would want to read, and the
+#: honest answer is that the function wants real intermediate values.
+_INLINE_NODE_LIMIT = 400
+
+
+def _substitute(node, bindings):
+    """Replace every bound name in ``node`` with the expression bound to it.
+
+    Names that are *not* bound are left alone, which is what Pine means: a
+    function body reads anything it did not declare from the one global scope,
+    and after inlining that scope is the caller's.
+    """
+    if isinstance(node, Name):
+        return bindings.get(node.id, node)
+    if isinstance(node, Index):
+        return Index(
+            base=_substitute(node.base, bindings),
+            offset=_substitute(node.offset, bindings),
+        )
+    if isinstance(node, Call):
+        return Call(
+            func=node.func,
+            args=tuple(_substitute(a, bindings) for a in node.args),
+            kwargs=tuple((k, _substitute(v, bindings)) for k, v in node.kwargs),
+        )
+    if isinstance(node, Unary):
+        return Unary(op=node.op, operand=_substitute(node.operand, bindings))
+    if isinstance(node, Binary):
+        return Binary(
+            op=node.op,
+            left=_substitute(node.left, bindings),
+            right=_substitute(node.right, bindings),
+        )
+    if isinstance(node, Ternary):
+        return Ternary(
+            cond=_substitute(node.cond, bindings),
+            then=_substitute(node.then, bindings),
+            other=_substitute(node.other, bindings),
+        )
+    if isinstance(node, ListLit):
+        return ListLit(items=tuple(_substitute(i, bindings) for i in node.items))
+    return node  # a literal, which has nothing to substitute into
+
+
+def _node_count(node):
+    """Size of an expression tree, used to bound how far inlining may expand."""
+    total = 1
+    for child in (
+        getattr(node, "base", None),
+        getattr(node, "offset", None),
+        getattr(node, "operand", None),
+        getattr(node, "left", None),
+        getattr(node, "right", None),
+        getattr(node, "cond", None),
+        getattr(node, "then", None),
+        getattr(node, "other", None),
+    ):
+        if child is not None:
+            total += _node_count(child)
+    for child in getattr(node, "args", ()) or ():
+        total += _node_count(child)
+    for _, child in getattr(node, "kwargs", ()) or ():
+        total += _node_count(child)
+    for child in getattr(node, "items", ()) or ():
+        total += _node_count(child)
+    return total
+
+
+def _if_as_expression(statement):
+    """Read a trailing ``if`` block as the value its function returns.
+
+    Pine hands back the last expression of whichever branch ran, so an ``if``
+    in this position is a conditional expression written over several lines --
+    the same shape :func:`~pwb_toolbox.converting.parser.Parser.parse_if_expression`
+    already folds. Returns ``None`` when a branch carries more than one
+    expression, which a conditional cannot hold.
+    """
+
+    def branch(body):
+        if len(body) == 1 and isinstance(body[0], ExprStmt):
+            return body[0].value
+        if len(body) == 1 and isinstance(body[0], Assign) and not body[0].qualifier:
+            return body[0].value
+        return None
+
+    then = branch(statement.body)
+    if then is None:
+        return None
+    if not statement.orelse:
+        # Pine yields `na` when a value-carrying `if` falls off the end.
+        return Ternary(cond=statement.cond, then=then, other=Na())
+    if len(statement.orelse) == 1 and isinstance(statement.orelse[0], If):
+        other = _if_as_expression(statement.orelse[0])
+    else:
+        other = branch(statement.orelse)
+    if other is None:
+        return None
+    return Ternary(cond=statement.cond, then=then, other=other)
+
+
+class _InlineFailure(Exception):
+    """A nested inline could not be done. The reason is already reported."""
+
+
 class ConversionError(RuntimeError):
     """Raised when the source cannot be converted at all."""
 
@@ -399,6 +514,10 @@ class _Generator:
         #: inner expression of a request.security is translated.
         self._feed = "self.data"
         self._uses_exit = False
+        self.functions = program.functions
+        #: Names currently being inlined, so recursion is caught rather than
+        #: followed. A stack catches mutual recursion as well as direct.
+        self._inlining = []
 
     # --- helpers -------------------------------------------------------------
 
@@ -429,6 +548,210 @@ class _Generator:
         if message not in self.ignored:
             self.ignored.append(message)
 
+    # --- user-defined functions ----------------------------------------------
+
+    def _inline_call(self, call):
+        """Substitute a call's arguments into its body, returning an expression.
+
+        Pine's functions are not Python's. Each call site keeps its own series
+        state, so two calls to one function share nothing -- which is exactly
+        what substituting the arguments into a fresh copy of the body produces.
+        Doing it on the AST rather than on generated source also means the rest
+        of this module needs no special case: by the time anything else sees
+        the result, it is an ordinary expression.
+
+        Returns ``None`` when the body is outside the subset, having reported
+        why.
+        """
+        func = self.functions[call.func]
+
+        if call.func in self._inlining:
+            self._reject(
+                f"{call.func}(): a recursive function cannot be inlined, and "
+                "Backtrader has nothing to recurse over"
+            )
+            return None
+
+        bindings = self._bind_arguments(func, call)
+        if bindings is None:
+            return None
+
+        self._inlining.append(call.func)
+        try:
+            result = self._inline_body(func, bindings)
+            if result is None:
+                return None
+            if isinstance(result, ListLit):
+                # `[lower, upper, atr]` at the end of a body returns several
+                # values at once, which only a destructuring call site can
+                # take -- and that is reported in its own right.
+                self._reject(
+                    f"{call.func}() returns a tuple, which needs tuple "
+                    "destructuring at the call site"
+                )
+                return None
+            # Resolve calls the body makes to other functions here, while this
+            # one is still on the stack. Doing it later -- when the caller
+            # lowers the result -- would let a recursive function recurse
+            # forever, because the stack would already have been unwound.
+            result = self._resolve_user_calls(result)
+        except _InlineFailure:
+            return None
+        finally:
+            self._inlining.pop()
+
+        # Substitution copies a local everywhere it is read, so a body that
+        # reads its own intermediates many times over grows multiplicatively.
+        # The indicator calls inside are still built once -- `_hoist` shares
+        # identical constructions -- but the arithmetic around them is not.
+        if _node_count(result) > _INLINE_NODE_LIMIT:
+            self._reject(
+                f"{call.func}(): inlining this expands past "
+                f"{_INLINE_NODE_LIMIT} nodes, which is a sign the body wants "
+                "real intermediate values rather than substitution"
+            )
+            return None
+        return result
+
+    def _resolve_user_calls(self, node):
+        """Inline every user-defined call inside ``node``, innermost first."""
+        if isinstance(node, Call):
+            resolved = Call(
+                func=node.func,
+                args=tuple(self._resolve_user_calls(a) for a in node.args),
+                kwargs=tuple((k, self._resolve_user_calls(v)) for k, v in node.kwargs),
+            )
+            if resolved.func not in self.functions:
+                return resolved
+            inlined = self._inline_call(resolved)
+            if inlined is None:
+                raise _InlineFailure
+            return inlined
+        if isinstance(node, Index):
+            return Index(
+                base=self._resolve_user_calls(node.base),
+                offset=self._resolve_user_calls(node.offset),
+            )
+        if isinstance(node, Unary):
+            return Unary(op=node.op, operand=self._resolve_user_calls(node.operand))
+        if isinstance(node, Binary):
+            return Binary(
+                op=node.op,
+                left=self._resolve_user_calls(node.left),
+                right=self._resolve_user_calls(node.right),
+            )
+        if isinstance(node, Ternary):
+            return Ternary(
+                cond=self._resolve_user_calls(node.cond),
+                then=self._resolve_user_calls(node.then),
+                other=self._resolve_user_calls(node.other),
+            )
+        if isinstance(node, ListLit):
+            return ListLit(items=tuple(self._resolve_user_calls(i) for i in node.items))
+        return node
+
+    def _bind_arguments(self, func, call):
+        """Map each parameter to the expression the call supplies for it."""
+        supplied = dict(call.kwargs)
+        unknown = supplied.keys() - {p.name for p in func.params}
+        if unknown:
+            self._reject(
+                f"{call.func}(): no parameter named {sorted(unknown)[0]!r}",
+            )
+            return None
+        if len(call.args) > len(func.params):
+            self._reject(
+                f"{call.func}() takes {len(func.params)} arguments but "
+                f"{len(call.args)} were given"
+            )
+            return None
+
+        bindings = {}
+        for position, param in enumerate(func.params):
+            if position < len(call.args):
+                bindings[param.name] = call.args[position]
+            elif param.name in supplied:
+                bindings[param.name] = supplied[param.name]
+            elif param.default is not None:
+                bindings[param.name] = param.default
+            else:
+                self._reject(
+                    f"{call.func}(): no argument for {param.name!r}, which has "
+                    "no default"
+                )
+                return None
+        return bindings
+
+    def _inline_body(self, func, bindings):
+        """Fold a body down to the single expression its call site stands for.
+
+        Each assignment extends the substitution rather than emitting a line,
+        so a local is read as whatever it was last assigned. That makes ``:=``
+        work for free: rebinding leaves earlier reads holding the earlier
+        value, which is what sequential assignment means.
+        """
+        for position, statement in enumerate(func.body):
+            last = position == len(func.body) - 1
+
+            if isinstance(statement, Assign):
+                if statement.qualifier in ("var", "varip"):
+                    self._reject(
+                        f"{func.name}(): `{statement.qualifier} "
+                        f"{statement.target}` keeps state per call site, which "
+                        "inlining cannot give it"
+                    )
+                    return None
+                value = _substitute(statement.value, bindings)
+                bindings[statement.target] = value
+                if last:
+                    return value
+                continue
+
+            if isinstance(statement, ExprStmt):
+                if last:
+                    return _substitute(statement.value, bindings)
+                if (
+                    isinstance(statement.value, Call)
+                    and statement.value.func in PRESENTATIONAL
+                ):
+                    self._ignore(
+                        f"{statement.value.func}() dropped: presentational only"
+                    )
+                    continue
+                self._reject(
+                    f"{func.name}(): a statement in the middle of the body has "
+                    "no value to carry forward"
+                )
+                return None
+
+            if isinstance(statement, If) and last:
+                folded = _if_as_expression(statement)
+                if folded is None:
+                    self._reject(
+                        f"{func.name}(): the trailing `if` has a branch "
+                        "carrying more than one expression, so it does not "
+                        "read as the function's value"
+                    )
+                    return None
+                return _substitute(folded, bindings)
+
+            if isinstance(statement, Unsupported):
+                self._reject(
+                    f"{func.name}(): its body uses {statement.kind}, which is "
+                    "not supported"
+                )
+                return None
+
+            self._reject(
+                f"{func.name}(): its body uses "
+                f"{type(statement).__name__.lower()}, which inlining cannot "
+                "reduce to a single expression"
+            )
+            return None
+
+        self._reject(f"{func.name}(): its body is empty")
+        return None
+
     # --- expression lowering -------------------------------------------------
 
     def _line_expr(self, node):
@@ -447,6 +770,9 @@ class _Generator:
         if isinstance(node, Num):
             return repr(_literal(node))
         if isinstance(node, Call):
+            if node.func in self.functions:
+                inlined = self._inline_call(node)
+                return None if inlined is None else self._line_expr(inlined)
             return self._hoist_indicator(node)
         return None
 
@@ -583,6 +909,10 @@ class _Generator:
         return "None"
 
     def _value_call(self, call):
+        if call.func in self.functions:
+            inlined = self._inline_call(call)
+            return "None" if inlined is None else self._value_expr(inlined)
+
         if call.func in INPUT_FUNCS:
             # `stop = input.float(5.0, "Stop %") / 100` -- an input does not
             # have to be the whole right-hand side to be a tunable param.
@@ -892,6 +1222,19 @@ class _Generator:
         if statement.qualifier == "var":
             self._declare_state(statement)
             return
+
+        # Resolve a user-defined call before the checks below, so a function
+        # that just wraps an indicator -- `smooth(src, n) => ta.sma(src, n)` --
+        # still becomes a line object rather than a scalar read of one.
+        if isinstance(statement.value, Call) and statement.value.func in self.functions:
+            inlined = self._inline_call(statement.value)
+            if inlined is None:
+                return
+            statement = Assign(
+                target=statement.target,
+                value=inlined,
+                qualifier=statement.qualifier,
+            )
 
         if isinstance(statement.value, Call) and statement.value.func in INPUT_FUNCS:
             if indent:
