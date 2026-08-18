@@ -96,6 +96,21 @@ indicator, so one is emitted alongside the strategy. The bar under test is
 once that many further bars have closed and confirmed it. See
 ``_PIVOT_INDICATOR``.
 
+Naming an inlined intermediate is the thirteenth, and it is one absence
+wearing three faces. Substitution has nowhere to put a body local, so copying
+it into every read grows the tree multiplicatively, ``adx[1]`` has no previous
+bar to read off an expression tree, and ``ta.ema(adx, n)`` cannot take one as
+a source. A local past :data:`_MATERIALISE_NODE_LIMIT` is given a name in
+``next()`` instead, which is one node, lands in ``_computed``, and lets
+:meth:`_Generator._promote` build the same expression as a line the moment
+anything asks for its history or hands it to an indicator. See
+:meth:`_Generator._materialise`.
+
+That splits the prelude in two. A ``var`` update has to run on every bar
+wherever the call sits, so it is still refused under an ``if``. A named
+intermediate is a value rather than a state machine, and computing it only on
+the bars that read it is the same strategy.
+
 An ``if`` that writes one name in every branch is the twelfth. It is how a
 Pine function picks a value -- assign a default, overwrite it in whichever
 branch applies, hand the name back -- and it is an assignment rather than an
@@ -769,6 +784,21 @@ _EXIT_HELPER = (
 #: honest answer is that the function wants real intermediate values.
 _INLINE_NODE_LIMIT = 400
 
+#: How big a body local may get, as a substituted expression, before it is
+#: given a name in ``next()`` instead of being copied into every read of it.
+#:
+#: Substitution has nowhere to put an intermediate, and that one absence wears
+#: three faces: copying a local everywhere grows the tree multiplicatively,
+#: ``adx[1]`` cannot read history off an expression tree, and ``ta.ema(adx, n)``
+#: cannot take one as a source. Naming the local answers all three at once --
+#: the name is one node, it lands in ``_computed``, and ``_promote`` builds a
+#: line from it on demand.
+#:
+#: Well under :data:`_INLINE_NODE_LIMIT`, because several named locals still
+#: have to fit inside it, and comfortably above the arithmetic that makes up
+#: an ordinary one-line body, which should stay substituted.
+_MATERIALISE_NODE_LIMIT = 60
+
 
 def _substitute(node, bindings):
     """Replace every bound name in ``node`` with the expression bound to it.
@@ -1187,7 +1217,9 @@ class _Generator:
                 held = isinstance(bound, Name) and bound.id in self.state
                 value = self._value_expr(_substitute(statement.value, bindings))
                 if held:
-                    self._prelude.append(f"self.{self.state[bound.id]} = {value}")
+                    self._prelude.append(
+                        (True, f"self.{self.state[bound.id]} = {value}")
+                    )
                     # Only now: the right-hand side above still had to see the
                     # previous bar's value, which is what `e0[1]` means.
                     self._var_written.add(bound.id)
@@ -1195,7 +1227,7 @@ class _Generator:
                         return bound
                     continue
                 name = self._local(f"{slug}_{_safe(statement.target.lstrip(chr(95)))}")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 bindings[statement.target] = Name(name)
                 if last:
@@ -1205,7 +1237,7 @@ class _Generator:
             if isinstance(statement, ExprStmt) and last:
                 value = self._value_expr(_substitute(statement.value, bindings))
                 name = self._local(f"{slug}_value")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 return Name(name)
 
@@ -1226,7 +1258,7 @@ class _Generator:
                     return None
                 value = self._value_expr(_substitute(folded, bindings))
                 name = self._local(f"{slug}_value")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 return Name(name)
 
@@ -1315,6 +1347,29 @@ class _Generator:
                 return None
         return bindings
 
+    def _materialise(self, func, target, node):
+        """Give a body local a name in ``next()`` rather than copying it around.
+
+        Returns the ``Name`` to bind in its place. Registering the node in
+        ``_computed`` is the part that matters beyond size: it is what lets
+        :meth:`_promote` build a line for the same expression later, so the
+        local can carry history and feed an indicator -- neither of which a
+        substituted expression tree can do.
+
+        The prelude only reaches ``next()`` from a top-level statement, which
+        :meth:`_emit_statement` already enforces for the stateful path and now
+        covers this one too.
+        """
+        stem = f"{_slug(func.name) or 'fn'}_{_safe(target.lstrip(chr(95)))}"
+        name = self._local(stem)
+        value = self._value_expr(node)
+        self._prelude.append((False, f"{_safe(name)} = {value}"))
+        self.scalars.add(name)
+        # Single, unconditional, never reassigned -- true by construction here,
+        # which is exactly what `_promotable` checks for a top-level name.
+        self._computed[name] = node
+        return Name(name)
+
     def _inline_body(self, func, bindings):
         """Fold a body down to the single expression its call site stands for.
 
@@ -1335,6 +1390,8 @@ class _Generator:
                     )
                     return None
                 value = _substitute(statement.value, bindings)
+                if not last and _node_count(value) > _MATERIALISE_NODE_LIMIT:
+                    value = self._materialise(func, statement.target, value)
                 bindings[statement.target] = value
                 if last:
                     return value
@@ -1373,6 +1430,8 @@ class _Generator:
                         )
                         return None
                     value = _substitute(folded, bindings)
+                    if not last and _node_count(value) > _MATERIALISE_NODE_LIMIT:
+                        value = self._materialise(func, target, value)
                     bindings[target] = value
                     if last:
                         return value
@@ -1722,6 +1781,14 @@ class _Generator:
                 # time() is read off the feed's clock rather than hoisted into
                 # a line, so its history is the same read at an offset.
                 return self._value_time(node.base, ago=offset)
+            if not isinstance(node.base, Name) and isinstance(offset, int):
+                # `ta.ema(close, 20)[1]` is the previous bar of a line that has
+                # to exist for the current bar to be readable at all, so the
+                # base is built the way any indicator source is and then read
+                # at an offset. Backtrader spells that the same way Pine does.
+                lowered = self._line_expr(node.base)
+                if lowered is not None:
+                    return f"{lowered}[{-offset}]"
             if not isinstance(node.base, Name) or not isinstance(offset, int):
                 self._reject("history access is only supported as name[constant]")
                 return "None"
@@ -1773,6 +1840,12 @@ class _Generator:
         # than loudly wrong, which is the worst way to be wrong.
         if name in self.scalars:
             if index:
+                # The scalar holds this bar's number and nothing else, but the
+                # expression behind it is known, so the same value exists as a
+                # line the moment anything asks for its history.
+                handle = self._promote(name)
+                if handle is not None:
+                    return f"{handle}[{index}]"
                 self._reject(
                     f"{name}: history of a computed value needs a Backtrader line"
                 )
@@ -2117,17 +2190,23 @@ class _Generator:
             )
             return "None"
 
-        for key, value in call.kwargs:
-            if key == "lookahead" and isinstance(value, Name):
-                if value.id.endswith("lookahead_on"):
-                    # Reads the higher-timeframe bar before it has closed.
-                    # Backtrader has no equivalent, and inventing one would
-                    # mean feeding the strategy data it could not have had.
-                    self._reject(
-                        "request.security with barmerge.lookahead_on reads a bar "
-                        "before it closes; there is no Backtrader equivalent"
-                    )
-                    return "None"
+        # Pine takes `lookahead` fourth-and-fifth positionally as well as by
+        # name, and only the keyword form was being checked. A script written
+        # `request.security(sym, "240", x, barmerge.gaps_off,
+        # barmerge.lookahead_on)` converted clean and read the higher-timeframe
+        # bar before it closed -- a backtest that cannot lose, on data the
+        # strategy could not have had. Any `lookahead_on` in the call is the
+        # answer, wherever it sits.
+        settings = [value for _, value in call.kwargs] + list(call.args[3:])
+        for value in settings:
+            if isinstance(value, Name) and value.id.endswith("lookahead_on"):
+                # Backtrader has no equivalent, and inventing one would mean
+                # feeding the strategy data it could not have had.
+                self._reject(
+                    "request.security with barmerge.lookahead_on reads a bar "
+                    "before it closes; there is no Backtrader equivalent"
+                )
+                return "None"
 
         if isinstance(timeframe, Name) and timeframe.id == "timeframe.period":
             # The chart's own timeframe. Pine still routes it through
@@ -2263,17 +2342,21 @@ class _Generator:
             prelude, self._prelude = self._prelude, outer
         if not prelude:
             return
-        if indent:
+        if indent and any(per_bar for per_bar, _ in prelude):
             # Pine updates a function's state on every bar wherever the call
             # sits. Emitting these under an `if` would update it only on the
             # bars the condition held, which is a different strategy.
+            #
+            # A named intermediate carries no such requirement: it is a value,
+            # not a state machine, and computing it only on the bars that read
+            # it is the same strategy.
             self._reject(
                 "a function that keeps state across bars can only be called "
                 "from a top-level statement, since Pine updates it every bar"
             )
             return
         pad = "    " * indent
-        self.next_lines[mark:mark] = [f"{pad}{line}" for line in prelude]
+        self.next_lines[mark:mark] = [f"{pad}{line}" for _, line in prelude]
 
     def _emit_one(self, statement, indent):
         pad = "    " * indent

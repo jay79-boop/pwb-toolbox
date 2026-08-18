@@ -3385,3 +3385,165 @@ def test_a_trailing_if_without_an_assignment_still_reads_as_the_value():
     )
     strategy = _instance(source, frame=_price_frame(bars=20))
     assert strategy.got == 22
+
+
+# --- naming an intermediate instead of copying it ----------------------------
+
+
+_BIG_LOCAL = " + ".join(f"close[{i}] * {i}" for i in range(1, 40))
+
+
+def test_a_large_body_local_is_named_rather_than_copied():
+    """Substitution has nowhere to put an intermediate, so a local read more
+    than once used to be copied into every read and blow the node budget.
+    Naming it is what the reject message was asking for all along."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d + d + d\n"
+        "    e\n"
+        "if f(5) > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    # One scalar assignment in next(), not three copies of a forty-term sum.
+    body = result.code.split("def next(self):")[1]
+    assert body.count("close[-39]") == 1
+
+
+def test_a_named_intermediate_can_feed_an_indicator():
+    """`ta.ema(d, p)` needs a line, and a substituted expression tree is not
+    one. The name lands in `_computed`, which is what `_promote` reads, so the
+    same expression is built a second time in `__init__` as an indicator
+    source while `next()` keeps the scalar."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = ta.ema(d, p)\n"
+        "    e\n"
+        "if f(5) > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+
+    setup, body = result.code.split("def next(self):")
+    # Built on the promoted line, not on a bare price series.
+    assert "bt.indicators.EMA(self._line_" in setup
+    assert "close(-39)" in setup
+    # And it survives a real cerebro. An expression tree handed to an
+    # indicator converts cleanly and then dies on the first bar, so running it
+    # is the part of this test that would catch a wrong source.
+    value, _ = _run(source)
+    assert isinstance(value, float)
+
+
+def test_a_named_intermediate_can_carry_history():
+    """`d[1]` off an expression tree has no previous bar to read. Off a name
+    it does, by the same route any computed value takes."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f() =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d - d[1]\n"
+        "    e\n"
+        "var float got = 0.0\n"
+        "got := f()\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.got != 0.0
+
+
+def test_a_named_intermediate_may_be_computed_under_an_if():
+    """A value is not a state machine. `var` updates have to run every bar
+    wherever the call sits, and are still refused under an `if`; a named
+    intermediate computed only on the bars that read it is the same strategy."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d + d\n"
+        "    e\n"
+        "if close > open\n"
+        "    if f(5) > 0\n        strategy.close()\n"
+    )
+    assert convert(source).ok
+
+
+def test_a_function_that_keeps_state_is_still_refused_under_an_if():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f() =>\n"
+        "    var int n = 0\n"
+        "    n := n + 1\n"
+        "    n\n"
+        "if close > open\n"
+        "    if f() > 0\n        strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("every bar" in item for item in result.unsupported)
+
+
+def test_history_of_an_indicator_call_reads_the_line_at_an_offset():
+    """`ta.ema(close, 20)[1]` is the previous bar of a line that has to exist
+    for the current bar to be readable at all."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float got = 0.0\n"
+        "got := ta.ema(close, 5)[1]\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.got > 0.0
+
+
+def test_history_of_an_indicator_call_is_the_previous_bar():
+    """Pinned against the line read directly, so an off-by-one here shows up
+    as a difference rather than as a plausible number."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float now = 0.0\n"
+        "var float before = 0.0\n"
+        "now := ta.ema(close, 5)\n"
+        "before := ta.ema(close, 5)[1]\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.now != strategy.before
+
+
+# --- lookahead ---------------------------------------------------------------
+
+
+_SECURITY = (
+    '//@version=6\nstrategy("S")\n'
+    'x = request.security(syminfo.tickerid, "240", close, {settings})\n'
+    "if x > 0\n    strategy.close()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "lookahead=barmerge.lookahead_on",
+        "barmerge.gaps_off, barmerge.lookahead_on",
+        "barmerge.gaps_on, barmerge.lookahead_on",
+    ],
+)
+def test_lookahead_on_is_refused_wherever_it_sits(settings):
+    """Regression, and the worst kind this converter can have. Pine takes
+    `lookahead` positionally as well as by name, and only the keyword form was
+    checked -- so the positional spelling converted clean and read the
+    higher-timeframe bar before it closed. That is a backtest that cannot lose,
+    on data the strategy could not have had."""
+    result = convert(_SECURITY.format(settings=settings))
+    assert not result.ok
+    assert any("before it closes" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    ["barmerge.gaps_off, barmerge.lookahead_off", "lookahead=barmerge.lookahead_off"],
+)
+def test_lookahead_off_is_the_normal_case_and_still_converts(settings):
+    assert convert(_SECURITY.format(settings=settings)).ok
