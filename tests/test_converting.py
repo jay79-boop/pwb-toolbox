@@ -1833,8 +1833,8 @@ def test_mutual_recursion_is_reported_not_followed():
     assert any("recursive" in item for item in result.unsupported)
 
 
-def test_var_inside_a_body_is_reported():
-    """Pine keeps a `var` per call site, which substitution cannot give it."""
+def test_var_inside_a_body_becomes_an_attribute():
+    """Pine keeps a `var` per call site, so each call site gets an attribute."""
     source = (
         '//@version=6\nstrategy("S")\n'
         "acc(x) =>\n"
@@ -1842,10 +1842,12 @@ def test_var_inside_a_body_is_reported():
         "    total := total + x\n"
         "    total\n"
         "y = acc(close)\n"
+        "if y > 0\n    strategy.close()\n"
     )
     result = convert(source)
-    assert not result.ok
-    assert any("keeps state per call site" in item for item in result.unsupported)
+    assert result.ok, result.unsupported
+    assert "self._acc_total_1 = 0" in result.code
+    assert "self._acc_total_1 = (self._acc_total_1 + self.data.close[0])" in result.code
 
 
 def test_a_missing_argument_is_reported():
@@ -1979,3 +1981,251 @@ def test_generated_function_strategy_responds_to_its_input():
     _, tight = _run(FUNCTION_STRATEGY, band=0.5)
     _, wide = _run(FUNCTION_STRATEGY, band=3.0)
     assert tight != wide
+
+
+# --- user-defined functions: var state across bars ---------------------------
+
+JMA_STRATEGY = """//@version=6
+strategy("JMA")
+length = input.int(14, "Length")
+f_jma(src, len, phase, power) =>
+    var float jma = na
+    var float e0  = na
+    var float e1  = na
+    var float e2  = na
+    _pr    = phase < -100 ? 0.5 : phase > 100 ? 2.5 : phase / 100.0 + 1.5
+    _beta  = 0.45 * (len - 1) / (0.45 * (len - 1) + 2)
+    _alpha = math.pow(_beta, power)
+    e0    := (1 - _alpha) * src + _alpha * nz(e0[1], src)
+    e1    := (src - e0) * (1 - _beta) + _beta * nz(e1[1], 0)
+    e2    := (e0 + _pr * e1 - nz(jma[1], src)) * math.pow(1 - _alpha, 2) + math.pow(_alpha, 2) * nz(e2[1], 0)
+    jma   := nz(jma[1], src) + e2
+    jma
+smooth = f_jma(close, length, 0, 2.0)
+if close > smooth
+    strategy.entry("l", strategy.long)
+if close < smooth
+    strategy.close()
+"""
+
+
+def test_a_stateful_body_emits_updates_in_source_order():
+    """The `var` updates are statements, not part of one expression.
+
+    A pure body folds into a single expression. State has to be *updated*, in
+    order, once per bar, so it becomes lines in front of the statement that
+    asked for the value.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float a = 0.0\n"
+        "    var float b = 0.0\n"
+        "    a := a + x\n"
+        "    b := b + a\n"
+        "    b\n"
+        "y = f(close)\n"
+        "if y > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    body = result.code.split("def next(self):")[1]
+    first = body.index("self._f_a_1 = (self._f_a_1 + self.data.close[0])")
+    second = body.index("self._f_b_2 = (self._f_b_2 + self._f_a_1)")
+    assert first < second
+
+
+def test_each_call_site_gets_its_own_state():
+    """Two calls to one filter are two filters, and Pine says so."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(src, n) =>\n"
+        "    var float acc = 0.0\n"
+        "    acc := acc * (1 - 1.0 / n) + src / n\n"
+        "    acc\n"
+        "a = f(close, 5)\n"
+        "b = f(close, 20)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    setup = result.code.split("def __init__")[1].split("def next")[0]
+    assert setup.count("= 0") == 2, setup
+    assert "self._f_acc_1" in setup and "self._f_acc_3" in setup
+
+
+def test_history_of_a_var_reads_the_previous_bar_before_its_write():
+    """`nz(e0[1], src)` wants the value from last bar, and gets it.
+
+    One attribute holds one value. Read before this bar's assignment it still
+    holds the previous bar's, which is exactly what Pine's `[1]` means here.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float e = na\n"
+        "    e := 0.5 * x + 0.5 * nz(e[1], x)\n"
+        "    e\n"
+        "y = f(close)\n"
+        "if y > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert (
+        "self._f_e_1 = ((0.5 * self.data.close[0]) + (0.5 * "
+        "(self._f_e_1 if self._f_e_1 == self._f_e_1 else self.data.close[0])))"
+    ) in result.code
+
+
+def test_a_bare_var_read_after_its_write_is_this_bars_value():
+    """Pine's bare `e0` after `e0 :=` is the new value, and so is this."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float e = 0.0\n"
+        "    e := x * 2\n"
+        "    d = x - e\n"
+        "    d\n"
+        "y = f(close)\n"
+        "if y > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "f_d_2 = (self.data.close[0] - self._f_e_1)" in result.code
+
+
+def test_history_of_a_var_read_after_its_write_is_reported():
+    """After the assignment the attribute holds this bar, not the last one."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float a = 0.0\n"
+        "    a := a + x\n"
+        "    b = a[1]\n"
+        "    b\n"
+        "y = f(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("read after this bar's assignment" in i for i in result.unsupported)
+
+
+def test_two_bars_of_var_history_is_reported():
+    """One attribute cannot answer `a[2]`, and guessing would be worse."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float a = 0.0\n"
+        "    a := x + nz(a[2], 0)\n"
+        "    a\n"
+        "y = f(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("a: a var holds one value" in i for i in result.unsupported)
+
+
+def test_a_stateful_call_from_inside_an_if_is_reported():
+    """Pine updates the state every bar wherever the call sits.
+
+    Emitting the updates under an `if` would update them only on the bars the
+    condition held, which is a different strategy -- so it is refused rather
+    than emitted.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float a = 0.0\n"
+        "    a := a + x\n"
+        "    a\n"
+        "if close > open\n    y = f(close)\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("top-level statement" in i for i in result.unsupported)
+
+
+def test_varip_in_a_body_is_refused_for_being_intrabar():
+    """The objection to varip is ticks, not inlining -- say the right one."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    varip float a = 0.0\n"
+        "    a := a + x\n"
+        "    a\n"
+        "y = f(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("updates intrabar" in i for i in result.unsupported)
+
+
+def test_a_non_literal_var_initial_value_is_reported():
+    """`__init__` runs before there is a first bar to read `close` from."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    var float a = close\n"
+        "    a := a + x\n"
+        "    a\n"
+        "y = f(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("literal initial value" in i for i in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "call,expected",
+    [
+        ("math.pow(close, 2)", "(self.data.close[0] ** 2)"),
+        ("math.sqrt(close)", "math.sqrt(self.data.close[0])"),
+        ("math.log(close)", "math.log(self.data.close[0])"),
+        ("math.exp(close)", "math.exp(self.data.close[0])"),
+        ("math.floor(close)", "math.floor(self.data.close[0])"),
+        ("math.sign(close)", "((self.data.close[0] > 0) - (self.data.close[0] < 0))"),
+        ("math.avg(high, low)", "((self.data.high[0] + self.data.low[0]) / 2)"),
+    ],
+)
+def test_scalar_math_functions(call, expected):
+    """The JMA needs `math.pow`; the rest of the set comes free with it."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"v = {call}\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert f"v = {expected}" in result.code
+
+
+def test_math_import_is_emitted_only_when_it_is_used():
+    used = convert(
+        '//@version=6\nstrategy("S")\nv = math.sqrt(close)\n'
+        "if v > 0\n    strategy.close()\n"
+    )
+    unused = convert(
+        '//@version=6\nstrategy("S")\nv = math.pow(close, 2)\n'
+        "if v > 0\n    strategy.close()\n"
+    )
+    assert "import math" in used.code
+    assert "import math" not in unused.code
+
+
+def test_generated_jma_strategy_runs_and_trades():
+    """The real filter from the corpus, executed on a real cerebro."""
+    value, closed = _run(JMA_STRATEGY)
+    assert closed > 0
+    assert value != 10_000.0
+
+
+def test_generated_jma_state_actually_carries_across_bars():
+    """A filter that reset every bar would track close exactly and never trade.
+
+    The point of `var` is that the attribute survives `next()`. If it did not,
+    `jma` would collapse to a function of this bar alone and the crossing
+    tests would behave completely differently.
+    """
+    _, fast = _run(JMA_STRATEGY, length=5)
+    _, slow = _run(JMA_STRATEGY, length=60)
+    assert fast != slow
