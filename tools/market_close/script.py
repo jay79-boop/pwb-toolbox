@@ -255,35 +255,53 @@ CRYPTO_JOKES = [
     "[exhales] I have no further analysis. [pause] I'm not certain anybody " "does.",
 ]
 
+# Closers. Each states the show's proposition and then undercuts it, so the
+# call to action never has to be begged for.
 SIGN_OFF = [
-    "[pause] The market will do something tomorrow.\n"
-    "[pause] We'll explain it afterward. [pause] Confidently.",
+    "[pause] Tomorrow I'll tell you whether tomorrow was real, [pause] or just "
+    "more breathing.\n[exhales] Most days it's breathing.",
     "[pause] Same time tomorrow, [pause] where I will read you different "
     "numbers in an identical tone of voice.",
-    "[pause] Go and do something that isn't this. [pause] The screen will "
-    "still be here.",
     "[pause] Nothing that happened today will matter in ten years — [pause] "
     "which is either comforting or upsetting, [pause] depending entirely on "
     "your time horizon.",
+    "[pause] Go and do something that isn't this. [exhales] The screen will "
+    "still be here, [pause] being wrong at you.",
 ]
 
-# Fixed. See the module docstring: this is the one block that never rotates,
-# and its line breaks are deliberate beats.
-STRAIGHT_BEAT = """[sighs] And here's the part I say straight, because it actually matters.
-Nothing in this broadcast is advice. Not one word of it. I am reading numbers
-off a screen and making jokes about them — that is the entire job.
-[pause] If you're putting real money at risk, the two things that survive
-contact with reality are position sizing and time horizon. Everything else,
-[pause] including me, [pause] is entertainment.
+# The ask. Never "smash that subscribe" — each of these states what the show is
+# for and then declines to say the word, which is the joke and the pitch at once.
+CALL_TO_ACTION = [
+    "[pause] If you'd rather know which days matter than hear about all of "
+    "them — [starts laughing] you know where the button is. [pause] I'm not "
+    "going to say it. [pause] We both know.",
+    "[pause] Follow along if you like being told when nothing happened. "
+    "[exhales] It's a small market, that one. [starts laughing] I'm building "
+    "it anyway.",
+    "[pause] There's one of these every weekday. [pause] You know how this "
+    "works. [starts laughing] I'm not doing the voice.",
+]
 
-[pause] Okay. [exhales] Back to it."""
+# Fixed. See the module docstring: this is the one block that never rotates.
+#
+# Note what it does NOT say: "because this actually matters". Announcing that
+# something is important is the tell of copy written to sound sincere rather
+# than to be it. The weight here comes from [sighs], the short sentences and
+# the flat delivery — the performance carries it, not a label on top.
+STRAIGHT_BEAT = """[sighs] One straight thing, then I'll go.
 
-KICKER_PLACEHOLDER = (
-    "<< Write the kicker by hand — one human-scale story, no numbers, landing\n"
-    "   on [starts laughing]. It is the only segment this tool will not write\n"
-    "   for you, and the only one anybody ever quotes back at you. Pass it\n"
-    "   with --kicker-file to drop it in here. >>"
-)
+None of this is advice. I'm not an advisor. I'm a bloke reading a data feed out
+loud.
+[pause] If you've got real money on the line, two things survive contact with
+reality. [pause] How much you put in. [pause] And how long you leave it.
+[pause] Everything else — [pause] me very much included — [pause] is noise with
+a personality."""
+
+# The handoff out of the opening story and into the market. Fixed: the story
+# above it is different every night, so the seam has to be the same every night
+# or the show has no recognisable shape at all.
+COLD_OPEN_HANDOFF = "[pause] I'm {anchor}. [pause] Let's look at today."
+
 
 GAIN_VERBS = ("closed up", "gained", "added", "advanced")
 LOSS_VERBS = ("closed down", "slipped", "shed", "gave up")
@@ -339,13 +357,24 @@ def _index_clause(quote: Quote, position: int) -> str:
 
 
 def cold_open(facts: MarketFacts, options: ScriptOptions) -> str:
+    """Open on the human story, then hand off to the market.
+
+    The personal beat used to close the show, after four minutes of numbers
+    nobody had a reason to sit through. It opens now because it is the only
+    part of the broadcast a stranger has any reason to care about in the first
+    ten seconds — and because a story about being wrong hands straight over to
+    a show whose whole thesis is that nobody knows why anything moved.
+
+    Falls back to the rotating market-shaped opener when no story is supplied,
+    so an unattended run still produces something sayable.
+    """
+    handoff = COLD_OPEN_HANDOFF.format(anchor=options.anchor)
+
+    if options.kicker:
+        return f"[COLD OPEN]\n\n{options.kicker.strip()}\n\n{handoff}"
+
     line = pick(COLD_OPEN[facts.direction], facts.session_date, "cold-open")
-    dateline = spoken.say_date(facts.session_date)
-    return (
-        f"[COLD OPEN]\n\n"
-        f"Good evening. I'm {options.anchor}, and this is {options.show} "
-        f"for {dateline}.\n[pause] {line}"
-    )
+    return f"[COLD OPEN]\n\n{line}\n\n{handoff}"
 
 
 def scale_line(quote: Quote, session: date) -> str | None:
@@ -472,36 +501,35 @@ def commodities(facts: MarketFacts) -> str | None:
 
 
 def straight_beat() -> str:
-    return f"[THE STRAIGHT BEAT]\n\n{STRAIGHT_BEAT}"
-
-
-def kicker(options: ScriptOptions) -> str:
-    body = options.kicker.strip() if options.kicker else KICKER_PLACEHOLDER
-    return f"[KICKER]\n\nAnd finally tonight —\n\n{body}"
+    return f"[STRAIGHT]\n\n{STRAIGHT_BEAT}"
 
 
 def sign_off(facts: MarketFacts, options: ScriptOptions) -> str:
     line = pick(SIGN_OFF, facts.session_date, "sign-off")
-    return (
-        f"[SIGN-OFF]\n\n"
-        f"That's {options.show}. I'm {options.anchor}.\n{line}\n[pause] Goodnight."
-    )
+    ask = pick(CALL_TO_ACTION, facts.session_date, "cta")
+    return f"[SIGN-OFF]\n\n{line}\n\n{ask}\n\n[pause] {options.anchor}. See you after the bell."
 
 
-def render(facts: MarketFacts, options: ScriptOptions | None = None) -> str:
-    """Build the full script. Segments with no data are dropped, not faked."""
+def render(
+    facts: MarketFacts,
+    options: ScriptOptions | None = None,
+    full: bool = False,
+) -> str:
+    """Build the script. Segments with no data are dropped, not faked.
+
+    Five segments by default, running two to three minutes: the story, the
+    tape, the movers, the disclaimer, the ask. Rates, crude and crypto sit
+    behind ``full`` because a viewer who came for a market read does not also
+    want a bond quote and an oil quote and a Bitcoin quote — that is the
+    information overload that makes every one of these channels skippable, and
+    cutting it is what buys the attention the rest of the script needs.
+    """
     options = options or ScriptOptions()
 
-    segments = [
-        cold_open(facts, options),
-        tape(facts),
-        movers(facts),
-        rates(facts),
-        commodities(facts),
-        straight_beat(),
-        kicker(options),
-        sign_off(facts, options),
-    ]
+    segments = [cold_open(facts, options), tape(facts), movers(facts)]
+    if full:
+        segments += [rates(facts), commodities(facts)]
+    segments += [straight_beat(), sign_off(facts, options)]
 
     return "\n\n\n".join(segment for segment in segments if segment) + "\n"
 

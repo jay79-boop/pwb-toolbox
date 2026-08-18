@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--kicker-file",
         type=Path,
-        help="hand-written kicker to drop into the [KICKER] slot",
+        help="hand-written story that opens the show, before the market",
     )
     parser.add_argument(
         "--names",
@@ -94,6 +94,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--preview",
         action="store_true",
         help="show only the tape and movers, for checking the numbers",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="also include the rates and commodities segments (longer, denser)",
     )
     parser.add_argument(
         "--out", type=Path, help="write the script here (default: stdout)"
@@ -148,9 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             _log("no tape or movers data to preview")
             return 1
     else:
+        if kicker is None:
+            _log(
+                "note: no --kicker-file, so the show opens on a stock line about "
+                "the market. The opening story is the only part a stranger has a "
+                "reason to care about; write one."
+            )
         text = script.render(
             facts,
             ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
+            full=args.full,
         )
 
     offenders = warn_on_digits(text)
