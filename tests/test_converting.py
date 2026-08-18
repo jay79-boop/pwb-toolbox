@@ -5,6 +5,7 @@ through a real Backtrader `cerebro` on synthetic bars, so "it converted" is
 never mistaken for "it works".
 """
 
+import calendar
 import datetime
 import random
 
@@ -3115,3 +3116,141 @@ def test_generated_wavetrend_responds_to_its_inputs():
     _, fast = _run(WAVETREND, chLen=4, avgLen=5)
     _, slow = _run(WAVETREND, chLen=30, avgLen=40)
     assert fast != slow
+
+
+# --- the clock: timeframe.period and time() ---------------------------------
+
+
+def _intraday_frame(bars=96, minutes=60, seed=11):
+    """Hourly bars from midnight, so a 4-hour bucket turns over inside the run."""
+    rng = random.Random(seed)
+    price = 100.0
+    start = datetime.datetime(2022, 1, 1, 0, 0)
+    rows = []
+    for i in range(bars):
+        price *= 1 + rng.gauss(0, 0.01)
+        rows.append(
+            {
+                "datetime": start + datetime.timedelta(minutes=minutes * i),
+                "open": price,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": 1000,
+            }
+        )
+    return pd.DataFrame(rows).set_index("datetime")
+
+
+def _instance(source, frame=None, **feed_kwargs):
+    """Run a converted strategy and hand back the instance, for reading state."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    frame = _intraday_frame() if frame is None else frame
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame, **feed_kwargs))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0]
+
+
+@pytest.mark.parametrize(
+    "text,seconds",
+    [("240", 14400), ("15", 900), ("D", 86400), ("2D", 172800), ("S", 1), ("30S", 30)],
+)
+def test_a_resolution_that_tiles_the_epoch_has_a_second_count(text, seconds):
+    from pwb_toolbox.converting.backtrader import timeframe_seconds
+
+    assert timeframe_seconds(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["", "W", "3W", "M", "12M", "nonsense", None])
+def test_a_resolution_that_does_not_tile_the_epoch_has_none(text):
+    """A week floored by modulo starts on a Thursday and a month has no fixed
+    length, so both are refused rather than quietly rounded to the wrong bar."""
+    from pwb_toolbox.converting.backtrader import timeframe_seconds
+
+    assert timeframe_seconds(text) is None
+
+
+def test_timeframe_period_reads_the_feed_it_was_given():
+    """Pine asks the chart; the converted class asks the feed, which is the
+    same question once the caller has chosen a timeframe for the data."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'if timeframe.period == "60"\n    strategy.entry("L", strategy.long)\n'
+    )
+    strategy = _instance(source, timeframe=bt.TimeFrame.Minutes, compression=60)
+    assert strategy.position.size > 0
+
+
+def test_timeframe_period_on_a_daily_feed_spells_it_the_way_pine_does():
+    """One of a unit is the bare letter in Pine: `D`, never `1D`."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'if timeframe.period == "D"\n    strategy.entry("L", strategy.long)\n'
+    )
+    strategy = _instance(
+        source, frame=_price_frame(bars=40), timeframe=bt.TimeFrame.Days, compression=1
+    )
+    assert strategy.position.size > 0
+
+
+def test_change_of_time_fires_once_per_higher_timeframe_bar():
+    """`ta.change(time(res)) != 0` is Pine's idiom for "a new res bar just
+    started". On hourly bars a 4-hour bucket turns over every fourth bar."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if ta.change(time("240")) != 0\n    seen := seen + 1\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=96, minutes=60))
+    # 96 hourly bars span 24 four-hour buckets. The first bar has no previous
+    # bar to differ from, so Backtrader's `[1]` repeats it and it does not count.
+    assert strategy.seen == 23
+
+
+def test_time_floors_to_the_resolution_not_to_the_bar():
+    """Every bar inside one 4-hour bucket reports that bucket's opening time."""
+    source = (
+        '//@version=6\nstrategy("S")\n' "var int stamp = 0\n" 'stamp := time("240")\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=4, minutes=60))
+    assert strategy.stamp == calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_time_with_a_session_is_reported_rather_than_approximated():
+    """The session argument needs the exchange calendar. The feed has none, and
+    guessing one would move every bucket boundary."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'x = time("240", "0930-1600")\n'
+        "if x > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("exchange calendar" in item for item in result.unsupported)
+
+
+def test_a_weekly_resolution_for_time_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'x = time("W")\n'
+        "if x > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("does not floor" in item for item in result.unsupported)
+
+
+def test_change_of_a_source_without_history_is_reported():
+    """Regression. `ta.change` built its previous value by re-evaluating the
+    source when that source was not a name, so the difference was the value
+    minus itself: a condition that compiled, ran, and never once fired."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "if ta.change(math.max(high, low)) != 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs bar history" in item for item in result.unsupported)

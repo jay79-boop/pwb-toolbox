@@ -96,6 +96,16 @@ indicator, so one is emitted alongside the strategy. The bar under test is
 once that many further bars have closed and confirmed it. See
 ``_PIVOT_INDICATOR``.
 
+The clock is the eleventh. ``timeframe.period`` and ``time()`` ask what the
+chart is and when this bar opened, and the feed already knows both, so neither
+needs the caller to declare anything. ``time(res)`` floors the bar's stamp to
+``res``, which is what makes Pine's ``ta.change(time("240")) != 0`` fire on the
+first chart bar of each new four-hour bar. Two things about it are refused
+rather than guessed: a session argument, which needs an exchange calendar the
+feed does not carry, and a weekly or monthly resolution, which does not floor
+by modulo -- the epoch falls on a Thursday. See ``_TIME_HELPER`` and
+:meth:`_Generator._value_time`.
+
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
 """
@@ -229,6 +239,94 @@ def parse_timeframe(text):
     if unit == "" and count == "":
         return None
     return _TIMEFRAME_UNITS[unit], int(count) if count else 1
+
+
+#: Seconds in one bar of a Pine resolution, for flooring a timestamp to it.
+#: Weeks and months are deliberately absent: a week is a fixed 604800 seconds
+#: only if you accept the week starting on a Thursday, which is where the epoch
+#: falls, and a month is not a fixed number of seconds at all.
+_TIMEFRAME_SECONDS = {"S": 1, "": 60, "D": 86400}
+
+
+def timeframe_seconds(text):
+    """Seconds in one bar of ``text``, or None where Pine's floor is not a modulo.
+
+    ``"240"`` is 14400 and ``"D"`` is 86400. Returns None for the empty string
+    -- the chart's own timeframe, which needs no flooring -- and for weeks and
+    months, which do not tile the epoch evenly.
+    """
+    if not isinstance(text, str):
+        return None
+    token = text.strip().upper()
+    match = re.fullmatch(r"(\d*)([SDWM]?)", token)
+    if not match or token == "":
+        return None
+    count, unit = match.groups()
+    if unit == "" and count == "":
+        return None
+    per = _TIMEFRAME_SECONDS.get(unit)
+    if per is None:
+        return None
+    return per * (int(count) if count else 1)
+
+
+#: Emitted into a strategy that reads ``timeframe.period`` or calls ``time()``.
+#:
+#: Both are questions about the clock rather than about price, and a running
+#: backtest answers them from the feed it was handed. ``timeframe.period``
+#: inverts :func:`parse_timeframe`: Pine writes minutes as a bare number and
+#: everything else with a unit letter, and writes one of a unit as the bare
+#: letter, so ``(Minutes, 240)`` is ``"240"`` and ``(Days, 1)`` is ``"D"``.
+#:
+#: ``time(res)`` is the opening time of the ``res`` bar containing this one,
+#: which is a floor, and that floor is the whole point: it makes
+#: ``ta.change(time("240")) != 0`` true on the first chart bar of each new
+#: four-hour bar. The assumption the floor carries is stated in the emitted
+#: docstring rather than left for the reader to discover.
+_TIME_HELPER = (
+    "    _PINE_UNITS = (",
+    '        (bt.TimeFrame.Seconds, "S"),',
+    '        (bt.TimeFrame.Minutes, ""),',
+    '        (bt.TimeFrame.Days, "D"),',
+    '        (bt.TimeFrame.Weeks, "W"),',
+    '        (bt.TimeFrame.Months, "M"),',
+    "    )",
+    "",
+    "    def _pine_timeframe(self):",
+    '        """The primary feed\'s timeframe, spelled the way Pine spells it."""',
+    "        for frame, unit in self._PINE_UNITS:",
+    "            if self.data._timeframe == frame:",
+    "                count = int(self.data._compression or 1)",
+    '                if unit == "":',
+    "                    return str(count)",
+    '                return unit if count == 1 else "%d%s" % (count, unit)',
+    '        return ""',
+    "",
+    "    def _pine_time(self, seconds=None, ago=0):",
+    '        """Opening time in epoch milliseconds, as Pine\'s time() reports it.',
+    "",
+    "        With no resolution this is the bar's own stamp. With one, it is that",
+    "        stamp floored to the resolution, so the value changes exactly when a",
+    "        new higher-timeframe bar begins.",
+    "",
+    "        The floor runs on a continuous clock from midnight UTC. That is exact",
+    "        for a market trading around the clock, and for any whose sessions",
+    "        divide the day evenly. It is off by the session open for one whose",
+    "        four-hour bars start at 09:30.",
+    '        """',
+    "        if ago and len(self) <= ago:",
+    "            # Backtrader reads the far end of the preallocated buffer when",
+    "            # the history is not there yet, which is a bar from the future.",
+    "            # Pine answers na there, and reading this bar instead makes the",
+    "            # difference downstream zero, which is what na produces.",
+    "            ago = 0",
+    "        when = self.data.datetime.datetime(-ago)",
+    "        stamp = calendar.timegm(when.utctimetuple())",
+    "        if seconds:",
+    "            stamp -= stamp % seconds",
+    "        return stamp * 1000",
+    "",
+)
 
 
 #: Pine builtins that read straight across to a Backtrader expression.
@@ -846,6 +944,7 @@ class _Generator:
         self._uses_math = False
         self._uses_trades = False
         self._uses_entry = False
+        self._uses_time = False
         self._uses_pivot = False
         self._uses_expr = False
         #: Pine name -> the expression it was assigned, for top-level plain
@@ -1523,6 +1622,14 @@ class _Generator:
 
         if isinstance(node, Index):
             offset = _literal(node.offset)
+            if (
+                isinstance(node.base, Call)
+                and node.base.func == "time"
+                and isinstance(offset, int)
+            ):
+                # time() is read off the feed's clock rather than hoisted into
+                # a line, so its history is the same read at an offset.
+                return self._value_time(node.base, ago=offset)
             if not isinstance(node.base, Name) or not isinstance(offset, int):
                 self._reject("history access is only supported as name[constant]")
                 return "None"
@@ -1594,6 +1701,13 @@ class _Generator:
                 "not a full history"
             )
             return current
+
+        if name == "timeframe.period":
+            if index:
+                self._reject("timeframe.period: the chart's timeframe has no history")
+                return "None"
+            self._uses_time = True
+            return "self._pine_timeframe()"
 
         if name in BUILTIN_VALUES:
             if index:
@@ -1740,12 +1854,20 @@ class _Generator:
             if not isinstance(length, int):
                 self._reject("ta.change: length must be a constant")
                 return "None"
-            now = self._value_expr(source)
-            before = self._value_expr(
-                Index(base=source, offset=Num(float(length)))
-                if isinstance(source, Name)
-                else source
+            has_history = isinstance(source, Name) or (
+                isinstance(source, Call) and source.func == "time"
             )
+            if not has_history:
+                # Re-evaluating the source would subtract a value from itself
+                # and report no change on any bar. Saying so beats emitting a
+                # condition that silently never fires.
+                self._reject(
+                    "ta.change: the source needs bar history, so it has to be a "
+                    "name or a builtin that carries one"
+                )
+                return "None"
+            now = self._value_expr(source)
+            before = self._value_expr(Index(base=source, offset=Num(float(length))))
             return f"({now} - {before})"
 
         if call.func in PIVOTS:
@@ -1786,6 +1908,9 @@ class _Generator:
                 return "None"
             parts = [self._value_expr(a) for a in call.args]
             return f"(({' + '.join(parts)}) / {len(parts)})"
+
+        if call.func == "time":
+            return self._value_time(call)
 
         if call.func == "request.security":
             return self._value_security(call)
@@ -1843,6 +1968,41 @@ class _Generator:
             if key in levels:
                 arguments.append(f"{key}={self._value_expr(levels[key])}")
         self.next_lines.append(f"{pad}self._pine_exit({', '.join(arguments)})")
+
+    def _value_time(self, call, ago=0):
+        """Lower Pine's ``time()`` to a floored stamp read off the primary feed.
+
+        ``time()`` is this bar's opening time and ``time(res)`` is the opening
+        time of the ``res`` bar containing it. ``ago`` reads a bar back, which
+        is what ``time(res)[1]`` and ``ta.change(time(res))`` need.
+
+        A session argument is refused rather than approximated: honouring it
+        needs the exchange calendar, and the feed does not carry one.
+        """
+        if len(call.args) > 1:
+            self._reject(
+                "time() with a session argument needs the exchange calendar, "
+                "which the data feed does not carry"
+            )
+            return "None"
+        self._uses_time = True
+        if not call.args:
+            return f"self._pine_time(None, {ago})" if ago else "self._pine_time()"
+        resolution = call.args[0]
+        text = _literal(resolution)
+        if not isinstance(text, str):
+            self._reject("time(): the resolution must be a literal string")
+            return "None"
+        seconds = timeframe_seconds(text)
+        if seconds is None:
+            self._reject(
+                f"time(): resolution {text!r} does not floor to a fixed number "
+                "of seconds"
+            )
+            return "None"
+        if ago:
+            return f"self._pine_time({seconds}, {ago})"
+        return f"self._pine_time({seconds})"
 
     def _value_security(self, call):
         """Lower ``request.security`` onto a resampled Backtrader feed.
@@ -2294,6 +2454,8 @@ class _Generator:
 
     def _render(self):
         out = ["import backtrader as bt"]
+        if self._uses_time:
+            out.append("import calendar")
         if self._uses_math:
             out.append("import math")
         out += ["", ""]
@@ -2364,6 +2526,8 @@ class _Generator:
             out.append("        pass")
         out.append("")
 
+        if self._uses_time:
+            out.extend(_TIME_HELPER)
         if self._uses_entry:
             out.extend(_ENTRY_HELPER)
         if self._uses_exit:
