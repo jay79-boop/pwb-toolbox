@@ -53,7 +53,7 @@ as everywhere else here: report what you measured. It's a cheaper seat and it sa
 | # | segment | what it is |
 |---|---------|------------|
 | 1 | `[COLD OPEN]` | your story, then a fixed handoff into the market |
-| 2 | `[THE TAPE]` | the move, what it means, and how wide it was |
+| 2 | `[THE TAPE]` | the move, what it means, which way it leaned |
 | 3 | `[MOVERS]` | the day's biggest single move, and the heuristic behind it |
 | 4 | `[STRAIGHT]` | the disclaimer |
 | 5 | `[SIGN-OFF]` | the proposition, then the ask |
@@ -68,9 +68,9 @@ because a story about being confidently wrong hands straight over to a show whos
 whole thesis is that nobody knows why anything moved.
 
 **`--full` is the long version, and everything it adds is unasked for.** A bond quote,
-an oil quote, a Bitcoin quote, and a second single-stock move, and the raw advancer/decliner tally. That density is the
-information overload that makes every one of these channels skippable; cutting it is
-what buys the attention the rest of the script needs.
+an oil quote, a Bitcoin quote, a second single-stock move, and the raw advancer/decliner
+tally. That density is the information overload that makes every one of these channels
+skippable; cutting it is what buys the attention the rest of the script needs.
 
 Two of those cuts are worth spelling out. A gainer *and* a loser every night is a
 format rather than a reason — it fills the same twenty seconds whether or not either
