@@ -129,10 +129,22 @@ def test_say_basis_points(value, expected):
         (27.00, "twenty-seven dollars"),
         (128.4, "a hundred and twenty-eight dollars and forty cents"),
         (68_400.0, "sixty-eight thousand four hundred dollars"),
+        (1_012.0, "one thousand and twelve dollars"),
     ],
 )
 def test_say_dollars(amount, expected):
     assert spoken.say_dollars(amount) == expected
+
+
+def test_say_dollars_rounds_five_figure_prices_to_the_hundred():
+    """Nobody reads bitcoin to the dollar on air."""
+    assert spoken.say_dollars(64_106.0) == "sixty-four thousand one hundred dollars"
+    assert spoken.say_dollars(64_162.0) == "sixty-four thousand two hundred dollars"
+    # Four figures stay exact — a thousand-dollar stock is quoted to the dollar.
+    assert (
+        spoken.say_dollars(9_999.0)
+        == "nine thousand nine hundred and ninety-nine dollars"
+    )
 
 
 def test_say_dollars_carries_rounded_cents_into_the_dollar():
@@ -296,49 +308,85 @@ def test_direction(changes, expected):
     assert facts.direction == expected
 
 
+def session(advancers, decliners, index_pct=0.6):
+    """A session with one index moved by ``index_pct`` and the given breadth."""
+    return MarketFacts(
+        session_date=DAY_TWO,
+        indices=[
+            Quote("SPX", market.INDEX_NAMES["SPX"], 100.0 + index_pct, 100.0),
+        ],
+        advancers=advancers,
+        decliners=decliners,
+    )
+
+
 def test_narrow_breadth_needs_a_real_sample():
-    assert MarketFacts(DAY_TWO, advancers=1, decliners=4).is_narrow is False
-    assert MarketFacts(DAY_TWO, advancers=181, decliners=319).is_narrow is True
-    assert MarketFacts(DAY_TWO, advancers=300, decliners=200).is_narrow is False
+    assert session(1, 4).is_narrow is False
+    assert session(181, 319).is_narrow is True
+    assert session(300, 200).is_narrow is False
 
 
 @pytest.mark.parametrize(
-    "advancers,decliners,expected",
+    "advancers,decliners,index_pct,expected",
     [
-        (1, 4, None),  # too small a sample to characterise
-        (19, 0, None),
-        (181, 319, "narrow"),
-        (20, 20, "even"),  # neither claim is true at a coin flip
-        (24, 20, "even"),
-        (300, 200, "broad"),
+        (1, 4, 0.6, None),  # too small a sample to characterise
+        (19, 0, 0.6, None),
+        (13, 27, 0.6, "narrow"),  # index up, most names down
+        (13, 27, -0.6, "declining"),  # index down, most names down
+        (27, 13, 0.6, "advancing"),  # index up, most names up
+        (27, 13, -0.6, "divergent"),  # index down, most names up
+        (20, 20, 0.6, "even"),  # neither claim is true at a coin flip
+        (24, 20, -0.6, "even"),
     ],
 )
-def test_breadth_state(advancers, decliners, expected):
-    facts = MarketFacts(DAY_TWO, advancers=advancers, decliners=decliners)
-    assert facts.breadth_state == expected
+def test_breadth_state_reads_counts_against_the_index(
+    advancers, decliners, index_pct, expected
+):
+    assert session(advancers, decliners, index_pct).breadth_state == expected
+
+
+def test_a_broad_decline_is_not_called_a_narrow_advance():
+    """Regression: 13 up / 27 down on a DOWN day is not a narrow advance.
+
+    The counts alone said "narrow", so a session where every index fell was
+    getting "The advance was narrow" — and one line in that bank says "on a day
+    the index finished higher" outright.
+    """
+    text = script.tape(session(13, 27, index_pct=-0.6))
+    assert any(joke in text for joke in script.BREADTH_DECLINING)
+    assert not any(joke in text for joke in script.BREADTH_NARROW)
+    assert "advance was narrow" not in text
+    assert "finished higher" not in text
+
+
+def test_a_narrow_advance_still_reads_as_one():
+    text = script.tape(session(13, 27, index_pct=0.6))
+    assert any(joke in text for joke in script.BREADTH_NARROW)
+    assert not any(joke in text for joke in script.BREADTH_DECLINING)
+
+
+def test_an_index_falling_while_names_rise_is_called_out():
+    text = script.tape(session(27, 13, index_pct=-0.6))
+    assert any(joke in text for joke in script.BREADTH_DIVERGENT)
+    assert not any(joke in text for joke in script.BREADTH_BROAD)
 
 
 def test_an_even_split_is_not_called_broad_based():
     """20 up / 20 down must not claim "most names participated"."""
-    facts = MarketFacts(
-        session_date=DAY_TWO,
-        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.6, 100.0)],
-        advancers=20,
-        decliners=20,
-    )
-    text = script.tape(facts)
+    text = script.tape(session(20, 20))
     assert any(joke in text for joke in script.BREADTH_EVEN)
     assert not any(joke in text for joke in script.BREADTH_BROAD)
     assert not any(joke in text for joke in script.BREADTH_NARROW)
 
 
+def test_every_breadth_state_has_a_bank():
+    states = {"narrow", "advancing", "declining", "divergent", "even"}
+    assert set(script.BREADTH_BANKS) == states
+    assert all(script.BREADTH_BANKS[state] for state in states)
+
+
 def test_thin_breadth_drops_the_line_rather_than_guessing():
-    facts = MarketFacts(
-        session_date=DAY_TWO,
-        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.6, 100.0)],
-        advancers=3,
-        decliners=2,
-    )
+    facts = session(3, 2)
     text = script.tape(facts)
     assert "names\nrose" not in text and "names rose" not in text
     for bank in (script.BREADTH_NARROW, script.BREADTH_EVEN, script.BREADTH_BROAD):

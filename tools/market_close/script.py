@@ -120,10 +120,35 @@ BREADTH_BROAD = [
     "Participation was wide tonight. [pause] Enjoy it. [pause] It doesn't " "last.",
 ]
 
+BREADTH_DECLINING = [
+    "More fell than rose, which on a down day is at least internally "
+    "consistent. [pause] Enjoy that. [pause] It's the only consistency you're "
+    "getting tonight.",
+    "The decline was broad. [pause] Nowhere to hide, as people say — [pause] "
+    "usually right before telling you where to hide.",
+    "Most things went down. [pause] I'd like to tell you it was orderly. "
+    "[exhales] It was just uniform.",
+    "That one was wide. [pause] It wasn't a rotation, it wasn't a reallocation, "
+    "[pause] it was a Tuesday.",
+]
+
+BREADTH_DIVERGENT = [
+    "More names rose than fell — [pause] on a day the index finished lower. "
+    "[pause] A few very large companies had a bad afternoon and took the "
+    "average down with them.",
+    "The index fell. [pause] Most stocks didn't. [pause] Which tells you "
+    "roughly what the index is these days.",
+    "Most of the market went up today, and the number on the screen went down. "
+    "[pause] Both of those are true, [pause] which is the problem with the "
+    "number on the screen.",
+]
+
 BREADTH_BANKS = {
     "narrow": BREADTH_NARROW,
+    "advancing": BREADTH_BROAD,
+    "declining": BREADTH_DECLINING,
+    "divergent": BREADTH_DIVERGENT,
     "even": BREADTH_EVEN,
-    "broad": BREADTH_BROAD,
 }
 
 GAINER_JOKES = [
