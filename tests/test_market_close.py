@@ -687,6 +687,53 @@ def test_rates_reads_to_the_level_but_at_it_when_unchanged():
     assert "was effectively unchanged, at four-oh-nine" in script.rates(still)
 
 
+def test_movers_names_one_stock_by_default():
+    """A gainer and a loser every night is a format, not a reason."""
+    text = script.movers(market.demo_facts())
+    assert text.count("\n\n") == 1  # one block: line, then its joke
+
+
+def test_movers_leads_with_the_larger_move():
+    facts = market.demo_facts()
+    # demo: Nvidia +14%, Pfizer -22% — the decline is the story.
+    assert "Pfizer" in script.movers(facts)
+    assert "Nvidia" not in script.movers(facts)
+
+
+def test_movers_leads_with_the_gainer_when_it_is_larger():
+    facts = market.demo_facts()
+    facts.gainer = Quote("NVDA", "Nvidia", 150.0, 100.0)
+    facts.loser = Quote("PFE", "Pfizer", 95.0, 100.0)
+    assert "Nvidia" in script.movers(facts)
+    assert "Pfizer" not in script.movers(facts)
+
+
+def test_a_lone_decline_does_not_open_mid_thought():
+    """ "Going the other way" needs something to be the other way from."""
+    facts = MarketFacts(session_date=DAY_TWO, loser=Quote("PFE", "Pfizer", 78.0, 100.0))
+    text = script.movers(facts)
+    assert "Going the other way" not in text
+    assert "The biggest move today went the wrong way." in text
+
+
+def test_movers_both_restores_the_second_name():
+    text = script.movers(market.demo_facts(), both=True)
+    assert "Nvidia" in text
+    assert "Pfizer" in text
+    assert "Going the other way" in text
+
+
+def test_full_render_carries_two_movers_and_the_default_one():
+    assert "Nvidia" not in script.render(market.demo_facts())
+    assert "Nvidia" in script.render(market.demo_facts(), full=True)
+
+
+def test_one_mover_keeps_the_no_digits_invariant():
+    for both in (False, True):
+        text = script.movers(market.demo_facts(), both=both)
+        assert not any(c.isdigit() for c in text)
+
+
 def test_movers_segment_never_asserts_a_cause():
     """The generator has prices, not press releases. See the module docstring."""
     text = script.movers(market.demo_facts())
