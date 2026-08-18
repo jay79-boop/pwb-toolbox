@@ -248,10 +248,23 @@ Two consequences worth knowing before working on it:
 
 Windows, PowerShell 5.1, at `C:\Users\Gexio\OneDrive\pwb-toolbox`, Python 3.12.
 
+**A second checkout exists at `C:\Users\Gexio\pwb-toolbox`, without the
+`OneDrive`, and it is not the one to use.** Sessions have landed work in it by
+mistake, and the two drift: on 2026-08-18 the real checkout was sixteen files
+and 1,834 lines behind it, missing `static/option-lab.js`,
+`static/journal-shots.js` and the whole recent `tools/market_close` run. Always
+spell the OneDrive path out in a command rather than assuming the shell's
+working directory, and if a checkout does not have `OneDrive` in its path, stop
+before writing to it.
+
 **`origin` is `paperswithbacktest/pwb-toolbox`, the upstream project — not their
 fork.** Their fork is `jay79-boop/pwb-toolbox`, added as the remote `jay`.
 Telling them to `git pull origin main` pulls upstream and conflicts; branches
-pushed from here arrive via `git fetch jay <branch>`.
+pushed from here arrive via `git fetch jay <branch>`. Check what `main` tracks
+before reading anything into `git status`: while it tracks `origin`, the
+ahead/behind counts measure the fork against *upstream* and say nothing about
+whether the checkout is current — the `[ahead 113, behind 1]` on 2026-08-18 sat
+above a checkout that was in fact 1,834 lines stale.
 
 Running only `pwb_toolbox.scraping` and `pwb_toolbox.converting` needs six
 packages, not all of `requirements-dev.txt` (which drags in `transformers`,
