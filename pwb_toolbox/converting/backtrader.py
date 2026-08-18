@@ -77,6 +77,12 @@ Pine's trade counters are the seventh. Backtrader keeps no ledger of closed
 trades, so one is built from ``notify_trade`` -- but only in strategies that
 ask for it. See ``_TRADES_HELPER``.
 
+``ta.pivothigh`` and ``ta.pivotlow`` are the eighth. Backtrader has no pivot
+indicator, so one is emitted alongside the strategy. The bar under test is
+``right`` bars back, which is what keeps it causal: a pivot is reported only
+once that many further bars have closed and confirmed it. See
+``_PIVOT_INDICATOR``.
+
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
 """
@@ -136,6 +142,8 @@ INDICATORS = {
 
 #: Pine cross helpers, mapped to a CrossOver line plus the comparison that
 #: recovers the direction Pine means.
+PIVOTS = ("ta.pivothigh", "ta.pivotlow")
+
 CROSSES = {
     "ta.crossover": "> 0",
     "ta.crossunder": "< 0",
@@ -347,6 +355,46 @@ _RESERVED = {
 #: orders instead of adding more. Translating each call into a fresh
 #: `self.sell(...)` would stack an order per bar and fill several times, which
 #: is a wrong backtest rather than an error -- so the orders are maintained.
+#: Emitted above the strategy class when the script uses `ta.pivothigh` or
+#: `ta.pivotlow`. Backtrader has no equivalent, but the definition is exact.
+#:
+#: The bar under test is `right` bars back, and it is a pivot when it beats
+#: every one of the `left` bars before it and every one of the `right` bars
+#: after it. Both comparisons are strict, which is what Pine does: a flat top
+#: -- two equal highs side by side -- is not a pivot high, and scripts that
+#: want one write their own with `>=` on the left.
+#:
+#: Nothing here reads a bar later than the current one, which is the whole
+#: point of the `right` offset: the pivot is reported only once `right` more
+#: bars have closed and confirmed it.
+_PIVOT_INDICATOR = (
+    "class PinePivot(bt.Indicator):",
+    '    """Pine\'s ta.pivothigh / ta.pivotlow, as a Backtrader line.',
+    "",
+    "    Carries the pivot value on the bar that confirms it, NaN elsewhere,",
+    "    which is what Pine returns and what `na()` then tests.",
+    '    """',
+    "",
+    '    lines = ("pivot",)',
+    '    params = (("left", 5), ("right", 5), ("high", True))',
+    "",
+    "    def __init__(self):",
+    "        self.addminperiod(self.p.left + self.p.right + 1)",
+    "",
+    "    def next(self):",
+    "        left, right = self.p.left, self.p.right",
+    "        candidate = self.data[-right]",
+    "        newer = [self.data[-right + step] for step in range(1, right + 1)]",
+    "        older = [self.data[-right - step] for step in range(1, left + 1)]",
+    "        if self.p.high:",
+    "            found = all(candidate > value for value in newer + older)",
+    "        else:",
+    "            found = all(candidate < value for value in newer + older)",
+    "        self.lines.pivot[0] = candidate if found else float('nan')",
+    "",
+    "",
+)
+
 #: Emitted into any strategy that uses `strategy.entry`.
 #:
 #: `self.buy()` is not what `strategy.entry` means, and the difference is not
@@ -710,6 +758,7 @@ class _Generator:
         self._uses_math = False
         self._uses_trades = False
         self._uses_entry = False
+        self._uses_pivot = False
         self.functions = program.functions
         #: Names currently being inlined, so recursion is caught rather than
         #: followed. A stack catches mutual recursion as well as direct.
@@ -1245,6 +1294,61 @@ class _Generator:
         self._reject(f"unknown identifier {name!r}")
         return "None"
 
+    def _hoist_pivot(self, call):
+        """Build a ``PinePivot`` in ``__init__`` and return its handle.
+
+        Pine takes ``(source, left, right)`` or, in the short form, just
+        ``(left, right)`` over ``high`` for a pivot high and ``low`` for a
+        pivot low.
+        """
+        is_high = call.func == "ta.pivothigh"
+
+        # Keywords first, so the positionals that remain can be matched
+        # against the slots they actually fill. `ta.pivothigh(high,
+        # rightbars=2)` leaves one positional, and it is `leftbars`.
+        nodes = {}
+        for key, node in call.kwargs:
+            if key in ("leftbars", "left"):
+                nodes["left"] = node
+            elif key in ("rightbars", "right"):
+                nodes["right"] = node
+            elif key == "source":
+                nodes["source"] = node
+        positional = list(call.args)
+        missing = [slot for slot in ("left", "right") if slot not in nodes]
+        if len(positional) == len(missing) + 1 and "source" not in nodes:
+            nodes["source"] = positional.pop(0)
+        if len(positional) != len(missing):
+            self._reject(f"{call.func} expects (source, left, right) or (left, right)")
+            return None
+        nodes.update(zip(missing, positional))
+
+        if "source" in nodes:
+            source = self._line_expr(nodes["source"])
+            if source is None:
+                self._reject(
+                    f"{call.func}: source argument is not a plain series or parameter"
+                )
+                return None
+        else:
+            # Pine's short form measures the high for a pivot high and the low
+            # for a pivot low, not the close for both.
+            source = f"{self._feed}.{'high' if is_high else 'low'}"
+
+        bars = {slot: self._line_expr(nodes[slot]) for slot in ("left", "right")}
+        if bars.get("left") is None or bars.get("right") is None:
+            # Same boundary as an indicator's period: a Backtrader indicator
+            # fixes its window when it is constructed.
+            self._reject(f"{call.func}: could not resolve its left/right bar counts")
+            return None
+
+        self._uses_pivot = True
+        return self._hoist(
+            "pivot",
+            f"PinePivot({source}, left={bars['left']}, right={bars['right']}, "
+            f"high={is_high})",
+        )
+
     def _value_trade_field(self, call):
         """Lower ``strategy.closedtrades.entry_price(i)`` and its siblings."""
         ledger, _, field = call.func.rpartition(".")
@@ -1327,6 +1431,10 @@ class _Generator:
                 else source
             )
             return f"({now} - {before})"
+
+        if call.func in PIVOTS:
+            handle = self._hoist_pivot(call)
+            return f"{handle}[0]" if handle else "None"
 
         if call.func.startswith(("strategy.closedtrades.", "strategy.opentrades.")):
             return self._value_trade_field(call)
@@ -1835,6 +1943,8 @@ class _Generator:
         if self._uses_math:
             out.append("import math")
         out += ["", ""]
+        if self._uses_pivot:
+            out.extend(_PIVOT_INDICATOR)
         out.append(f"class {self.class_name}(bt.Strategy):")
 
         title = self.declaration[1] if self.declaration else ""

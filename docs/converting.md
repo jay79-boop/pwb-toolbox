@@ -82,6 +82,8 @@ duplicate is pure waste.
 | `float[] xs = ...` | the older array spelling, read the same way |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
+| `ta.pivothigh/pivotlow(src, left, right)` | a `PinePivot` line, emitted with the file |
+| the short form, `ta.pivothigh(left, right)` | the same over `high` / `low` |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
 | `close`, `open`, `high`, `low`, `volume` | `self.data.<line>[0]` |
 | `hl2`, `hlc3`, `ohlc4` | the arithmetic spelled out |
@@ -356,6 +358,43 @@ other way — which is what happened before this rule existed — an `if` branch
 
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## Pivots, and the offset that makes them honest
+
+Backtrader has no pivot indicator, so one is emitted into the generated file
+when the script asks for it:
+
+```pinescript
+ph = ta.pivothigh(high, leftBars, rightBars)
+plFound = not na(ta.pivotlow(low, leftBars, rightBars))
+```
+
+```python
+self._pivot_1 = PinePivot(self.data.high, left=self.p.leftBars,
+                          right=self.p.rightBars, high=True)
+```
+
+The bar under test is `right` bars back. It is a pivot when it beats every one
+of the `left` bars before it and every one of the `right` bars after it, and
+the line carries its value on the bar that confirms it and `NaN` everywhere
+else — which is what Pine returns, and what `na()` then tests.
+
+**Both comparisons are strict.** A flat top — two equal highs side by side —
+is not a pivot high in Pine, and scripts that want one write their own with
+`>=` on the left. The test suite checks this against a brute-force definition
+written out longhand, on integer prices where ties are common enough that a
+`>=` would show up immediately.
+
+**The `right` offset is what makes it causal**, and that is not incidental: a
+pivot is reported only once `right` further bars have closed and confirmed it.
+Nothing reads a bar that has not happened. There is a test that grows the feed
+and asserts no reading already taken changes — the same check the lookahead
+section above applies to `request.security`.
+
+The window is fixed when the indicator is constructed, so `left` and `right`
+have to be numbers or params — the same boundary as any indicator's length. A
+computed source is refused for the same reason `ta.ema(computed, n)` is; see
+"A known simplification".
 
 ## `strategy.entry` is not `self.buy()`
 
