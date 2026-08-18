@@ -231,6 +231,46 @@ contact with reality are position sizing and time horizon. Everything else,
 
 [pause] Okay. [exhales] Back to it."""
 
+# Also fixed, and for the same reason: the channel intro is written once and
+# reused, so nothing about it rotates. Its line breaks are beats too.
+INTRO = """[COLD OPEN]
+
+Good evening. My name is Max Brennan.
+[pause] I read numbers off a screen for a living.
+
+[pause] Every weekday, after the closing bell, I'm going to tell you what the market did. [pause] Not what it means. [pause] Not what it's about to do next. [pause] What it DID.
+[pause] Past tense. [pause] Verifiable.
+
+[exhales] You would be amazed how rare that is.
+
+
+[THE ARRANGEMENT]
+
+So here's the deal I'm offering you.
+[pause] I'll give you the index levels, the biggest mover in both directions, the ten-year, oil, and whatever Bitcoin has done to itself since breakfast. [pause] Four minutes. [pause] No opinions about the Fed.
+
+[pause] In exchange — [pause] you have to let me be a little bit funny about it.
+[pause] That's the whole arrangement. [sarcastic] I think you're getting the better end of it.
+
+
+[THE STRAIGHT BEAT]
+
+[sighs] And one thing straight, up front, because it sets the tone for everything after it.
+Nothing on this channel is advice. I am not a financial advisor. I'm a face on a screen with a good voice and access to a data feed.
+[pause] If you're putting real money at risk, the two things that survive contact with reality are position sizing and time horizon. Everything else, [pause] including me, [pause] is entertainment.
+
+[pause] Okay. [exhales] That's the serious bit. [pause] It's the only one.
+
+
+[SIGN-OFF]
+
+The market opens tomorrow. [pause] It'll do something.
+[pause] I'll be here afterward, [pause] explaining it. [pause] Confidently.
+
+[pause] I'm Max Brennan. [pause] This is the Market Close.
+[pause] Goodnight.
+"""
+
 KICKER_PLACEHOLDER = (
     "<< Write the kicker by hand — one human-scale story, no numbers, landing\n"
     "   on [starts laughing]. It is the only segment this tool will not write\n"
@@ -397,6 +437,33 @@ def commodities(facts: MarketFacts) -> str | None:
 
 def straight_beat() -> str:
     return f"[THE STRAIGHT BEAT]\n\n{STRAIGHT_BEAT}"
+
+
+def intro() -> str:
+    """The channel intro: fixed evergreen copy, rendered once and reused.
+
+    Everything else in this module is a daily render — facts in, script out,
+    different every session. This one is the opposite: a whole broadcast of
+    fixed copy, recorded once and left at the top of the feed until the format
+    itself changes. Nothing about it rotates, because a viewer meeting the show
+    for the first time should meet the same show every time.
+
+    It deliberately mirrors the episode's own shape — cold open, body, straight
+    beat, sign-off — so it teaches the format by being the format: whoever
+    watches it has already sat through a miniature episode by the time it ends,
+    and the disclaimer lands in the same slot it will land in every night after.
+
+    Because it asserts no figures it needs no market data, which makes it the
+    one script here that runs with no ``PWB_API_KEY``, no Hugging Face login and
+    no network at all.
+
+    ``ScriptOptions`` does not apply. ``--anchor`` and ``--show`` rename the
+    anchor and the programme in a daily script by substituting them into the
+    template; the intro names Max Brennan and the Market Close inside its own
+    sentences, so there is nothing to substitute and renaming would leave the
+    copy half-changed. It is written prose, not a template.
+    """
+    return INTRO
 
 
 def kicker(options: ScriptOptions) -> str:

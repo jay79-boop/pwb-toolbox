@@ -729,6 +729,117 @@ def test_cli_preview_reports_when_there_is_nothing_to_show(monkeypatch, capsys):
 
 
 # --------------------------------------------------------------------------
+# channel intro
+# --------------------------------------------------------------------------
+
+
+def test_intro_carries_every_segment_header():
+    """It mirrors the episode structure, which is how it teaches the format."""
+    text = script.intro()
+    for header in (
+        "[COLD OPEN]",
+        "[THE ARRANGEMENT]",
+        "[THE STRAIGHT BEAT]",
+        "[SIGN-OFF]",
+    ):
+        assert header in text
+
+
+def test_intro_contains_no_digits():
+    """The production invariant holds here too: ElevenLabs sees no numeral.
+
+    The intro is hand-written rather than rendered from figures, so nothing
+    upstream of it spells numbers — which is exactly why it is worth pinning.
+    """
+    assert not any(c.isdigit() for c in script.intro())
+
+
+def test_intro_splits_into_four_named_segments():
+    pairs = script.split_segments(script.intro())
+    assert [name for name, _ in pairs] == [
+        "cold-open",
+        "the-arrangement",
+        "the-straight-beat",
+        "sign-off",
+    ]
+    assert all(body for _, body in pairs)
+
+
+def test_intro_makes_the_same_disclaimer_commitments():
+    """Different words from the daily straight beat; identical promises."""
+    text = script.intro()
+    assert "Nothing on this channel is advice." in text
+    assert "position sizing and time horizon" in text
+
+
+def test_cli_intro_prints_to_stdout(capsys):
+    assert main(["--intro"]) == 0
+    assert "[COLD OPEN]" in capsys.readouterr().out
+
+
+def test_cli_intro_writes_to_out(tmp_path):
+    out = tmp_path / "intro.txt"
+    assert main(["--intro", "--out", str(out)]) == 0
+    assert "[THE ARRANGEMENT]" in out.read_text(encoding="utf-8")
+
+
+def test_cli_intro_writes_four_numbered_segments(tmp_path):
+    target = tmp_path / "render"
+    assert main(["--intro", "--segments", str(target)]) == 0
+    assert sorted(p.name for p in target.iterdir()) == [
+        "01-cold-open.txt",
+        "02-the-arrangement.txt",
+        "03-the-straight-beat.txt",
+        "04-sign-off.txt",
+    ]
+
+
+def test_cli_intro_collects_no_data(monkeypatch, capsys):
+    """The point of the flag: no dataset load, no key, no network.
+
+    Also pins the precedence — ``--demo`` and ``--free`` name data sources, and
+    ``--intro`` reaches neither of them.
+    """
+
+    def explode(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("--intro must not touch any data source")
+
+    monkeypatch.setattr(market, "collect", explode)
+    monkeypatch.setattr(market, "demo_facts", explode)
+    monkeypatch.setattr(free, "collect_free", explode)
+
+    assert main(["--intro"]) == 0
+    assert main(["--intro", "--demo", "--free"]) == 0
+    assert "[SIGN-OFF]" in capsys.readouterr().out
+
+
+def test_cli_intro_beats_preview(capsys):
+    assert main(["--intro", "--preview"]) == 0
+    out = capsys.readouterr().out
+    assert "[COLD OPEN]" in out
+    assert "[THE TAPE]" not in out
+    assert "[MOVERS]" not in out
+
+
+def test_cli_intro_ignores_a_kicker_file(tmp_path, capsys):
+    """No slot to drop one into, so a bogus path must not even be opened."""
+    missing = tmp_path / "nope.txt"
+    assert main(["--intro", "--kicker-file", str(missing)]) == 0
+    assert "[COLD OPEN]" in capsys.readouterr().out
+
+
+def test_cli_intro_is_fixed_copy_regardless_of_anchor_and_show(capsys):
+    """--anchor/--show rename a daily script; the intro is written prose."""
+    argv = ["--intro", "--anchor", "Robin Vale", "--show", "the Closing Bell"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "Max Brennan" in out
+    assert "This is the Market Close." in out
+    assert "Robin Vale" not in out
+    assert "the Closing Bell" not in out
+
+
+# --------------------------------------------------------------------------
 # free mode (yfinance)
 # --------------------------------------------------------------------------
 

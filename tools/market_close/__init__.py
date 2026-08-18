@@ -9,7 +9,7 @@ way it should be spoken. See ``README.md`` in this directory.
 
 from .free import collect_free
 from .market import MarketFacts, Quote, collect, demo_facts
-from .script import ScriptOptions, preview, render, split_segments
+from .script import ScriptOptions, intro, preview, render, split_segments
 
 __all__ = [
     "MarketFacts",
@@ -18,6 +18,7 @@ __all__ = [
     "collect",
     "collect_free",
     "demo_facts",
+    "intro",
     "preview",
     "render",
     "split_segments",

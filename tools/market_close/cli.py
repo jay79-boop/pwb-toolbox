@@ -4,11 +4,13 @@
     python -m tools.market_close --preview
     python -m tools.market_close --kicker-file kicker.txt --out close.txt
     python -m tools.market_close --segments render/
+    python -m tools.market_close --intro --segments intro/
 
 ``--segments`` is the one worth knowing about: it writes the script out one
 numbered file per block, which is the order you paste them into ElevenLabs.
 ``--preview`` is the one you'll type most: tape and movers only, to check the
-figures read correctly before committing to a render.
+figures read correctly before committing to a render. ``--intro`` is the one
+you'll type once: fixed channel copy, no data of any kind behind it.
 """
 
 from __future__ import annotations
@@ -64,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Generate a daily market-close script with Eleven v3 audio tags.",
     )
     parser.add_argument(
+        "--intro",
+        action="store_true",
+        help="emit the fixed channel intro instead of a daily script (no market data needed)",
+    )
+    parser.add_argument(
         "--demo",
         action="store_true",
         help="use a canned session instead of loading data (no network, no credentials)",
@@ -110,32 +117,40 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    names = _load_names(args.names)
-    if names is not None:
-        names = {**market.COMPANY_NAMES, **names}
-
-    if args.demo:
-        facts = market.demo_facts(args.date)
+    if args.intro:
+        # Fixed copy, so there is nothing to collect and nothing to fill in.
+        # Taking this branch before any of the loading below is the whole
+        # point of the flag: no key, no network, no data source at all — which
+        # also leaves --demo, --free, --preview and --kicker-file with nothing
+        # to act on.
+        text = script.intro()
     else:
-        collect = free.collect_free if args.free else market.collect
-        facts = collect(names=names)
-        if args.date is not None:
-            facts.session_date = args.date
+        names = _load_names(args.names)
+        if names is not None:
+            names = {**market.COMPANY_NAMES, **names}
 
-    kicker = None
-    if args.kicker_file is not None:
-        kicker = args.kicker_file.read_text(encoding="utf-8")
+        if args.demo:
+            facts = market.demo_facts(args.date)
+        else:
+            collect = free.collect_free if args.free else market.collect
+            facts = collect(names=names)
+            if args.date is not None:
+                facts.session_date = args.date
 
-    if args.preview:
-        text = script.preview(facts)
-        if not text:
-            _log("no tape or movers data to preview")
-            return 1
-    else:
-        text = script.render(
-            facts,
-            ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
-        )
+        kicker = None
+        if args.kicker_file is not None:
+            kicker = args.kicker_file.read_text(encoding="utf-8")
+
+        if args.preview:
+            text = script.preview(facts)
+            if not text:
+                _log("no tape or movers data to preview")
+                return 1
+        else:
+            text = script.render(
+                facts,
+                ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
+            )
 
     offenders = warn_on_digits(text)
     if offenders:
