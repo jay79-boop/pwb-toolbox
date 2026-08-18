@@ -89,7 +89,7 @@ duplicate is pure waste.
 | `hl2`, `hlc3`, `ohlc4` | the arithmetic spelled out, as a line or a read |
 | `close[3]` | `self.data.close[-3]` |
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
-| `cond ? a : b` | `a if cond else b` |
+| `cond ? a : b` | `a if cond else b`, or a `PineExpr` line where one is needed |
 | `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | an `if` read for its value | the conditional expression it means |
@@ -160,7 +160,8 @@ Reported in `result.unsupported`, never approximated:
 - `pyramiding` above 0 — Backtrader nets one position per feed; see below
 - `strategy.closedtrades.max_runup/max_drawdown/commission/entry_id/exit_id/exit_comment` — Backtrader records none of them
 - more than one bar of history on a trade counter — only the previous bar is kept
-- a computed value used as an indicator source when it is conditional, reassigned, or a ternary — see "Computed values as indicator sources"
+- a computed value used as an indicator source when it is reassigned or conditional — see "Computed values as indicator sources"
+- an indicator length, or a pivot's bar counts, that is only known per bar — a period is read once, when the indicator is built
 - any identifier or call the converter does not know
 
 Reported separately in `result.ignored`, because dropping them changes nothing
@@ -714,22 +715,48 @@ means, and each of these is a separate rule:
 - **assigned inside an `if`** — it holds a value on some bars and not others, where a line is computed on every one
 - **reassigned with `:=`, or a `var`** — the same objection, spread over time
 
-**A ternary is not lowered to a line either**, and this one is worth stating
-plainly because it is the largest remaining gap. `bt.If` is a line operation,
-so it computes *both* of its branches on every bar. The idiom
+### A conditional needs a function, not a line operation
+
+`bt.If` is a line operation, so it computes **both** of its branches on every
+bar. That is fine for arithmetic and wrong for a guard:
 
 ```pinescript
 ci = d != 0 ? (hlc3 - esa) / (0.015 * d) : 0.0
 ```
 
-is written precisely so the division does not happen when `d` is zero — and
+The conditional is there so the division does not happen when `d` is zero, and
 Backtrader's line division raises `ZeroDivisionError` rather than yielding
-`na`. Lowered eagerly, the guard would stop working and the run would crash.
-So a ternary stays the per-bar conditional it is in `next()`, and anything
-built on one is reported rather than promoted. In the sweep corpus that is 85
-of the remaining refusals; making it work needs the expression compiled into a
-custom indicator's `next()`, the way `PinePivot` is, rather than composed from
-operators.
+`na`. Lowered with `bt.If`, the guard stops working and the run dies.
+
+So a ternary becomes a `PineExpr` instead — the expression as an ordinary
+Python function of the current bar's values, where `if`/`else` is lazy again:
+
+```python
+self._expr_3 = PineExpr(
+    self._ema_2, ((self.data.high + self.data.low + self.data.close) / 3), self._ema_1,
+    func=lambda a0, a1, a2: (((a1 - a2) / (0.015 * a0)) if (a0 != 0) else 0),
+)
+```
+
+Only the **leaves** become inputs — a price series, an indicator, a promoted
+line. Everything above them stays in the function, which is the point: hoisting
+`x / d` into an input would compute it every bar again. Because the inputs are
+lines, Backtrader still works out the minimum period and the evaluation order.
+
+### Why both custom indicators write `once`
+
+Backtrader runs indicators vectorised by default (`runonce=True`) and stepwise
+on request. An indicator that defines only `next` gets its vectorised pass
+*emulated*: Backtrader replays `next` while advancing the inputs by hand.
+
+That emulation reads an input a bar out of step when the input is itself an
+indicator carrying a minimum period. Not an error — just different numbers, on
+some bars, in the mode nearly everyone runs. `PinePivot` over `ta.sma(close,
+10)` missed three pivots out of a hundred bars that way.
+
+So both `PineExpr` and `PinePivot` write `once` explicitly, and the test suite
+runs a strategy using both under `runonce=True` and `runonce=False` and asserts
+every bar agrees.
 
 ## A known simplification
 

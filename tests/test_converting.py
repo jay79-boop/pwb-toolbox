@@ -2792,10 +2792,11 @@ def test_pivot_argument_forms(call, expected):
     ],
 )
 def test_pivot_calls_outside_the_subset_are_reported(call, reason):
-    """`osc` and `n` are conditional here, which no single line can be."""
+    """`osc` is a var, and `n` is a per-bar value where a number is needed."""
     source = (
         '//@version=6\nstrategy("S")\n'
-        "osc = close > open ? high : low\n"
+        "var float osc = 0.0\n"
+        "osc := high - low\n"
         "n = close > open ? 3 : 5\n"
         f"v = {call}\n"
         "if not na(v)\n    strategy.close()\n"
@@ -2919,8 +2920,6 @@ def test_the_promoted_line_and_the_scalar_agree():
 @pytest.mark.parametrize(
     "setup",
     [
-        # A conditional value is not one line.
-        "osc = close > open ? high : low\n",
         # Reassigned, so it is a different value later.
         "osc = 0.0\nif close > open\n    osc := high - low\n",
         # A var is one number carried forward, not a series.
@@ -2947,12 +2946,13 @@ def test_a_value_that_is_not_one_series_is_not_promoted(setup):
     assert any("not a plain series" in item for item in result.unsupported)
 
 
-def test_a_ternary_is_not_lowered_to_a_line():
-    """`bt.If` evaluates both branches, which defeats a divide-by-zero guard.
+def test_a_ternary_becomes_a_per_bar_expression_not_a_line_operation():
+    """`bt.If` would compute both branches, which defeats the guard.
 
     `d != 0 ? x / d : 0` is written precisely so the division does not happen
-    when `d` is zero. As a line operation both arms are computed every bar and
-    it raises, so this stays a per-bar conditional in `next()` instead.
+    when `d` is zero. A line operation computes both arms every bar and
+    Backtrader's line division raises, so the expression moves into a Python
+    function where `if`/`else` is lazy again.
     """
     result = convert(
         '//@version=6\nstrategy("S")\n'
@@ -2961,8 +2961,136 @@ def test_a_ternary_is_not_lowered_to_a_line():
         "ma = ta.sma(safe, 10)\n"
         "if close > ma\n    strategy.close()\n"
     )
+    assert result.ok, result.unsupported
+    assert "bt.If(" not in result.code
+    assert "PineExpr(" in result.code
+    assert "if (a0 != 0) else 0" in result.code
+
+
+def test_a_guarded_division_does_not_raise_on_a_zero_divisor():
+    """The point of the whole exercise, checked on a feed that hits zero."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "d = high - low\n"
+        "safe = d != 0 ? (close - open) / d : 0.0\n"
+        "ma = ta.sma(safe, 5)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    start = datetime.datetime(2022, 1, 1)
+    rows = []
+    for i in range(60):
+        close = 100.0
+        # One bar with high == low makes the divisor exactly zero.
+        high, low = (close, close) if i == 30 else (close * 1.01, close * 0.99)
+        rows.append(
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": close * 0.999,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": 1000,
+            }
+        )
+    frame = pd.DataFrame(rows).set_index("datetime")
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.run()  # a ZeroDivisionError here is the failure
+
+
+def test_a_pine_expression_reads_the_same_in_both_run_modes():
+    """Backtrader runs indicators vectorised by default and stepwise on
+    request, and a custom indicator has to mean the same thing in both.
+
+    Leaving `once` to Backtrader's `next` emulation reads an indicator input a
+    bar out of step -- silently, and only on some bars.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "sm = ta.sma(close, 10)\n"
+        "v = sm > close ? sm - close : 0.0\n"
+        "ma = ta.sma(v, 5)\n"
+        "p = ta.pivothigh(sm, 3, 3)\n"
+        "if ma > 0 and not na(p)\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    # Both custom indicators must be in play, and both over an *indicator*
+    # input -- which is the case the emulation gets wrong.
+    assert "PineExpr(" in result.code and "PinePivot(" in result.code
+
+    def readings(runonce):
+        namespace = {}
+        exec(compile(result.code, "<converted>", "exec"), namespace)
+        seen = {}
+        base = namespace[result.class_name]
+
+        class Watched(base):
+            def next(self):
+                super().next()
+                seen[len(self)] = tuple(
+                    getattr(self, name)[0]
+                    for name in sorted(self.__dict__)
+                    if name.startswith(("_expr_", "_pivot_"))
+                )
+
+        cerebro = bt.Cerebro(runonce=runonce)
+        cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+        cerebro.addstrategy(Watched)
+        cerebro.run()
+        return seen
+
+    vectorised, stepwise = readings(True), readings(False)
+    assert len(vectorised) > 100
+    for bar, pair in vectorised.items():
+        other = stepwise[bar]
+        for got, want in zip(pair, other):
+            same = (got != got and want != want) or got == want
+            assert same, f"bar {bar}: {got} != {want}"
+
+
+@pytest.mark.parametrize(
+    "length,expected",
+    [
+        ("20", "period=20"),
+        ("n", "period=self.p.n"),
+        ("n * 2", "period=(self.p.n * 2)"),
+        ("int(n / 2)", "period=int((self.p.n / 2))"),
+    ],
+)
+def test_an_indicator_length_may_be_computed_from_constants(length, expected):
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(14, "N")\n'
+        f"ma = ta.sma(close, {length})\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert expected in result.code
+
+
+@pytest.mark.parametrize(
+    "length", ["close > open ? 3 : 5", "high - low", "ta.sma(close, 5)"]
+)
+def test_a_length_that_is_only_known_per_bar_is_reported(length):
+    """A period is read once, when the indicator is built.
+
+    Lowering one of these as a line produced a class that converted cleanly
+    and then died on the first bar, which is worse than reporting it.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        f"n = {length}\n"
+        "ma = ta.sma(close, n)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
     assert not result.ok
-    assert any("not a plain series" in item for item in result.unsupported)
+    assert any("length argument" in item for item in result.unsupported)
 
 
 def test_the_two_derived_series_spellings_stay_in_step():

@@ -83,7 +83,14 @@ indicator -- and a value the script assigned as an ordinary number is lowered a
 second time, as a line, when something asks for it as a source. See
 :meth:`_Generator._line_expr` and :meth:`_Generator._promote`.
 
-``ta.pivothigh`` and ``ta.pivotlow`` are the ninth. Backtrader has no pivot
+A conditional is the ninth. ``bt.If`` computes both of its branches every bar,
+which defeats the guard a conditional usually is -- ``d != 0 ? x / d : 0``
+would divide anyway, and Backtrader's line division raises where Pine answers
+``na``. So a ternary becomes a ``PineExpr``: the expression as a Python
+function of the current bar's values, where ``if``/``else`` is lazy again.
+See ``_EXPR_INDICATOR`` and :meth:`_Generator._expr_line`.
+
+``ta.pivothigh`` and ``ta.pivotlow`` are the tenth. Backtrader has no pivot
 indicator, so one is emitted alongside the strategy. The bar under test is
 ``right`` bars back, which is what keeps it causal: a pivot is reported only
 once that many further bars have closed and confirmed it. See
@@ -392,6 +399,13 @@ _RESERVED = {
 #: Nothing here reads a bar later than the current one, which is the whole
 #: point of the `right` offset: the pivot is reported only once `right` more
 #: bars have closed and confirmed it.
+#:
+#: ``once`` is not an optimisation. Backtrader runs indicators vectorised by
+#: default, and emulates a missing ``once`` by replaying ``next`` while
+#: advancing the inputs by hand -- which reads a bar out of step when an input
+#: is itself an indicator carrying a minimum period. Silently, and only on some
+#: bars. Writing ``once`` means the emulation is never used, and the two
+#: spellings share ``_found`` so the rule they apply cannot drift apart.
 _PIVOT_INDICATOR = (
     "class PinePivot(bt.Indicator):",
     '    """Pine\'s ta.pivothigh / ta.pivotlow, as a Backtrader line.',
@@ -406,16 +420,65 @@ _PIVOT_INDICATOR = (
     "    def __init__(self):",
     "        self.addminperiod(self.p.left + self.p.right + 1)",
     "",
+    "    def _found(self, candidate, window):",
+    '        """Strict on both sides: a flat top is not a pivot."""',
+    "        if self.p.high:",
+    "            return all(candidate > value for value in window)",
+    "        return all(candidate < value for value in window)",
+    "",
     "    def next(self):",
     "        left, right = self.p.left, self.p.right",
-    "        candidate = self.data[-right]",
-    "        newer = [self.data[-right + step] for step in range(1, right + 1)]",
-    "        older = [self.data[-right - step] for step in range(1, left + 1)]",
-    "        if self.p.high:",
-    "            found = all(candidate > value for value in newer + older)",
-    "        else:",
-    "            found = all(candidate < value for value in newer + older)",
-    "        self.lines.pivot[0] = candidate if found else float('nan')",
+    "        source = self.data",
+    "        window = [source[-right + step] for step in range(1, right + 1)]",
+    "        window += [source[-right - step] for step in range(1, left + 1)]",
+    "        candidate = source[-right]",
+    "        self.lines.pivot[0] = (",
+    "            candidate if self._found(candidate, window) else float('nan')",
+    "        )",
+    "",
+    "    def once(self, start, end):",
+    "        left, right = self.p.left, self.p.right",
+    "        source, out = self.data.array, self.lines.pivot.array",
+    "        for i in range(start, end):",
+    "            window = [source[i - right + step] for step in range(1, right + 1)]",
+    "            window += [source[i - right - step] for step in range(1, left + 1)]",
+    "            candidate = source[i - right]",
+    "            out[i] = (",
+    "                candidate if self._found(candidate, window) else float('nan')",
+    "            )",
+    "",
+    "",
+)
+
+#: Emitted above the strategy class when an expression has to be evaluated a
+#: bar at a time rather than composed from line operators.
+#:
+#: Backtrader's line arithmetic computes every operand on every bar, which is
+#: wrong for a conditional. `d != 0 ? x / d : 0` is written precisely so the
+#: division does not happen when `d` is zero, and `bt.If` divides anyway --
+#: then Backtrader's line division raises where Pine would answer `na`. Here
+#: the expression is an ordinary Python function of the current bar's values,
+#: so `if`/`else` is lazy again and the guard the author wrote does its job.
+#:
+#: The inputs are lines, so Backtrader still works out the minimum period and
+#: the evaluation order. Only the *structure* moves into the function.
+_EXPR_INDICATOR = (
+    "class PineExpr(bt.Indicator):",
+    '    """A Pine expression evaluated per bar, so its branches stay lazy."""',
+    "",
+    '    lines = ("value",)',
+    '    params = (("func", None),)',
+    "",
+    "    def next(self):",
+    "        self.lines.value[0] = self.p.func(*[data[0] for data in self.datas])",
+    "",
+    "    def once(self, start, end):",
+    "        # Written out rather than left to Backtrader's `next` emulation,",
+    "        # which reads an indicator input a bar out of step.",
+    "        arrays = [data.array for data in self.datas]",
+    "        out = self.lines.value.array",
+    "        for i in range(start, end):",
+    "            out[i] = self.p.func(*[array[i] for array in arrays])",
     "",
     "",
 )
@@ -784,6 +847,7 @@ class _Generator:
         self._uses_trades = False
         self._uses_entry = False
         self._uses_pivot = False
+        self._uses_expr = False
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
         self._computed = {}
@@ -1197,15 +1261,18 @@ class _Generator:
             return None if operand is None else f"(-{operand})"
         if isinstance(node, Binary):
             if node.op not in _LINE_OPS:
-                # Comparisons and `and`/`or` do have Backtrader equivalents,
-                # but a truth value is not a source, and `bt.If` evaluates
-                # both of its branches -- see `_promote`.
+                # A comparison is not a source. `and`/`or` over lines are, but
+                # only inside a `PineExpr`, where they stay short-circuiting.
                 return None
             left = self._line_expr(node.left)
             right = self._line_expr(node.right)
             if left is None or right is None:
                 return None
             return f"({left} {node.op} {right})"
+        if isinstance(node, Ternary):
+            # Not `bt.If`: it computes both branches on every bar, which
+            # defeats the guard a conditional usually exists to be.
+            return self._expr_line(node)
         if isinstance(node, Call):
             if node.func in self.functions:
                 inlined = self._inline_call(node)
@@ -1224,6 +1291,149 @@ class _Generator:
                     return f"(({' + '.join(parts)}) / {len(parts)})"
                 return f"{_LINE_MATH[node.func]}({', '.join(parts)})"
             return self._hoist_indicator(node)
+        return None
+
+    def _period_expr(self, node):
+        """Lower a length, or a pivot's bar count, or return ``None``.
+
+        This is not ``_line_expr`` and must not be: a period is read once,
+        when the indicator is constructed, so it has to be a number by then.
+        A line is not, and passing one produces a class that converts cleanly
+        and then dies on the first bar -- which is worse than reporting it.
+        """
+        if isinstance(node, Num):
+            return repr(_literal(node))
+        if isinstance(node, Name):
+            if node.id in self.param_names:
+                return f"self.p.{_safe(node.id)}"
+            inner = self._computed.get(node.id)
+            if inner is None or node.id in self._promoting:
+                return None
+            self._promoting.add(node.id)
+            try:
+                return self._period_expr(inner)
+            finally:
+                self._promoting.discard(node.id)
+        if isinstance(node, Unary) and node.op == "-":
+            operand = self._period_expr(node.operand)
+            return None if operand is None else f"(-{operand})"
+        if isinstance(node, Binary) and node.op in _LINE_OPS:
+            left = self._period_expr(node.left)
+            right = self._period_expr(node.right)
+            if left is None or right is None:
+                return None
+            return f"({left} {_BINARY_OPS[node.op]} {right})"
+        if isinstance(node, Call) and node.func in ("int", "math.round"):
+            inner = self._period_expr(node.args[0]) if node.args else None
+            return None if inner is None else f"int({inner})"
+        if isinstance(node, Call) and node.func in ("math.max", "math.min"):
+            parts = [self._period_expr(a) for a in node.args]
+            if not parts or any(part is None for part in parts):
+                return None
+            name = "max" if node.func == "math.max" else "min"
+            return f"{name}({', '.join(parts)})"
+        return None
+
+    def _expr_line(self, node):
+        """Build a ``PineExpr`` for something the line operators cannot hold.
+
+        Only the *leaves* become inputs -- a price series, an indicator, a
+        promoted line. Everything above them stays in the function, which is
+        what keeps a conditional lazy: hoisting `x / d` into an input would
+        compute it on every bar again, defeating the guard around it.
+        """
+        inputs = []
+        body = self._expr_source(node, inputs)
+        if body is None or not inputs:
+            return None
+        self._uses_expr = True
+        names = ", ".join(f"a{index}" for index in range(len(inputs)))
+        return self._hoist(
+            "expr",
+            f"PineExpr({', '.join(inputs)}, func=lambda {names}: {body})",
+        )
+
+    def _expr_source(self, node, inputs):
+        """Render ``node`` as Python over the current bar, or ``None``."""
+
+        def slot(lowered):
+            if lowered in inputs:
+                return f"a{inputs.index(lowered)}"
+            inputs.append(lowered)
+            return f"a{len(inputs) - 1}"
+
+        if isinstance(node, Num):
+            return repr(_literal(node))
+        if isinstance(node, Str):
+            return repr(node.value)
+        if isinstance(node, Bool):
+            return "True" if node.value else "False"
+        if isinstance(node, Na):
+            return "float('nan')"
+
+        if isinstance(node, Name):
+            if node.id in self.param_names:
+                # A param is fixed for the run, so reading it through the
+                # closure raises no ordering question.
+                return f"self.p.{_safe(node.id)}"
+            lowered = self._line_expr(node)
+            return None if lowered is None else slot(lowered)
+
+        if isinstance(node, Index):
+            lowered = self._line_expr(node)
+            return None if lowered is None else slot(lowered)
+
+        if isinstance(node, Unary):
+            operand = self._expr_source(node.operand, inputs)
+            if operand is None:
+                return None
+            return f"(not {operand})" if node.op == "not" else f"({node.op}{operand})"
+
+        if isinstance(node, Binary):
+            operator = _BINARY_OPS.get(node.op)
+            if operator is None:
+                return None
+            left = self._expr_source(node.left, inputs)
+            right = self._expr_source(node.right, inputs)
+            if left is None or right is None:
+                return None
+            return f"({left} {operator} {right})"
+
+        if isinstance(node, Ternary):
+            cond = self._expr_source(node.cond, inputs)
+            then = self._expr_source(node.then, inputs)
+            other = self._expr_source(node.other, inputs)
+            if cond is None or then is None or other is None:
+                return None
+            return f"({then} if {cond} else {other})"
+
+        if isinstance(node, Call):
+            if node.func in self.functions:
+                inlined = self._inline_call(node)
+                return None if inlined is None else self._expr_source(inlined, inputs)
+            if node.func == "na":
+                if len(node.args) != 1:
+                    return None
+                inner = self._expr_source(node.args[0], inputs)
+                return None if inner is None else f"({inner} != {inner})"
+            if node.func == "nz":
+                inner = self._expr_source(node.args[0], inputs) if node.args else "0"
+                fallback = (
+                    self._expr_source(node.args[1], inputs)
+                    if len(node.args) > 1
+                    else "0"
+                )
+                if inner is None or fallback is None:
+                    return None
+                return f"({inner} if {inner} == {inner} else {fallback})"
+            if node.func in _BUILTIN_MATH:
+                parts = [self._expr_source(a, inputs) for a in node.args]
+                if not parts or any(part is None for part in parts):
+                    return None
+                return f"{_BUILTIN_MATH[node.func]}({', '.join(parts)})"
+            lowered = self._line_expr(node)
+            return None if lowered is None else slot(lowered)
+
         return None
 
     def _promote(self, name):
@@ -1280,10 +1490,10 @@ class _Generator:
         if spec.takes_period:
             period = None
             if args:
-                period = self._line_expr(args.pop(0))
+                period = self._period_expr(args.pop(0))
             for key, value in call.kwargs:
                 if key in ("length", "period"):
-                    period = self._line_expr(value)
+                    period = self._period_expr(value)
             if period is None:
                 self._reject(f"{call.func}: could not resolve its length argument")
                 return None
@@ -1441,7 +1651,7 @@ class _Generator:
             # for a pivot low, not the close for both.
             source = f"{self._feed}.{'high' if is_high else 'low'}"
 
-        bars = {slot: self._line_expr(nodes[slot]) for slot in ("left", "right")}
+        bars = {slot: self._period_expr(nodes[slot]) for slot in ("left", "right")}
         if bars.get("left") is None or bars.get("right") is None:
             # Same boundary as an indicator's period: a Backtrader indicator
             # fixes its window when it is constructed.
@@ -2089,6 +2299,8 @@ class _Generator:
         out += ["", ""]
         if self._uses_pivot:
             out.extend(_PIVOT_INDICATOR)
+        if self._uses_expr:
+            out.extend(_EXPR_INDICATOR)
         out.append(f"class {self.class_name}(bt.Strategy):")
 
         title = self.declaration[1] if self.declaration else ""
