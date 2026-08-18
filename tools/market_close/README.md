@@ -124,6 +124,17 @@ Three choices in that calculation are deliberate:
 The spoken multiple stays coarse — "about twice", "about three times", never "two
 point three times". A decimal would imply a precision twenty sessions don't support.
 
+**`ordinary` means "typical", never "nothing".** The two are the same only in a calm
+month. A one percent drop can be perfectly average for a volatile market and still be
+the most interesting fact on offer, so the band's lines report the measured baseline
+instead of waving the day away:
+
+> About average — [pause] and average around here is nine tenths of a percent a day,
+> at the moment. [pause] Make of that what you like. [starts laughing] I've stopped.
+
+A test forbids "not a story", "least reportable" and "nothing" from ever appearing in
+that bank.
+
 ## Why there are no digits in the output
 
 ElevenLabs reads numerals by its own rules, and on a markets script that is most of
