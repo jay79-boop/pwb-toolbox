@@ -3254,3 +3254,134 @@ def test_change_of_a_source_without_history_is_reported():
     )
     assert not result.ok
     assert any("needs bar history" in item for item in result.unsupported)
+
+
+# --- an `if` that picks a value across branches ------------------------------
+
+
+def test_an_if_that_writes_one_name_folds_into_the_substitution():
+    """The shape a Pine function uses to choose a value over several branches:
+    assign a default, overwrite it in whichever branch applies, hand it back."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 0\n"
+        "    if x > 2\n"
+        "        out := 10\n"
+        "    else if x > 1\n"
+        "        out := 20\n"
+        "    else\n"
+        "        out := 30\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 20
+
+
+def test_an_if_with_no_else_leaves_the_name_alone():
+    """Pine does not blank a variable when no branch runs, so neither does
+    this. `_if_as_expression` would have to answer na here; binding the name
+    to itself and substituting gives back whatever it last held."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 7\n"
+        "    if x > 100\n"
+        "        out := 1\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 7
+
+
+def test_a_later_branch_can_read_the_name_it_is_writing():
+    """`out := out + 1` reads the value from before the block, because the
+    whole conditional is substituted against the bindings as they stood."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 5\n"
+        "    if x > 1\n"
+        "        out := out + 1\n"
+        "    else\n"
+        "        out := out - 1\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 6
+
+
+def test_branches_writing_different_names_are_reported():
+    """Two names is two assignments, and only one of them can be the value
+    carried forward. Folding it would silently drop the other."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    a = 0\n"
+        "    b = 0\n"
+        "    if x > 1\n"
+        "        a := 1\n"
+        "    else\n"
+        "        b := 2\n"
+        "    a\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("write one name in every branch" in i for i in result.unsupported)
+
+
+def test_a_name_first_assigned_inside_an_if_is_reported():
+    """Without a prior value there is nothing for the untaken branch to keep,
+    and Pine's answer there is na rather than a number."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    if x > 1\n"
+        "        out := 1\n"
+        "    else\n"
+        "        out := 2\n"
+        "    out\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("assigned only inside" in i for i in result.unsupported)
+
+
+def test_a_branch_carrying_two_statements_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 0\n"
+        "    if x > 1\n"
+        "        tmp = x * 2\n"
+        "        out := tmp\n"
+        "    else\n"
+        "        out := 3\n"
+        "    out\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("one name in every branch" in i for i in result.unsupported)
+
+
+def test_a_trailing_if_without_an_assignment_still_reads_as_the_value():
+    """The older reading is still there for a block whose branches are bare
+    expressions rather than assignments."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    if x > 1\n"
+        "        11\n"
+        "    else\n"
+        "        22\n"
+        "var int got = 0\n"
+        "got := pick(0)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 22

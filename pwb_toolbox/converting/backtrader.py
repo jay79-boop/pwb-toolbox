@@ -96,6 +96,14 @@ indicator, so one is emitted alongside the strategy. The bar under test is
 once that many further bars have closed and confirmed it. See
 ``_PIVOT_INDICATOR``.
 
+An ``if`` that writes one name in every branch is the twelfth. It is how a
+Pine function picks a value -- assign a default, overwrite it in whichever
+branch applies, hand the name back -- and it is an assignment rather than an
+expression, so it folds into the substitution wherever it sits rather than
+only at the end of a body. A missing ``else`` binds the name to itself, which
+substitution turns back into whatever it last held: Pine leaves a variable
+alone when no branch runs. See :func:`_if_as_assignment`.
+
 The clock is the eleventh. ``timeframe.period`` and ``time()`` ask what the
 chart is and when this bar opened, and the feed already knows both, so neither
 needs the caller to declare anything. ``time(res)`` floors the bar's stamp to
@@ -825,6 +833,64 @@ def _node_count(node):
     return total
 
 
+def _if_as_assignment(statement):
+    """Read an ``if`` whose every branch assigns one name as a conditional.
+
+    This is the shape a Pine function uses to pick a value over several
+    branches and then hand it back:
+
+        moment = 0
+        if a and b
+            moment := 1
+        else if c
+            moment := 2
+        else
+            moment := 4
+        moment
+
+    Every branch writes the same name, so the block is one assignment whose
+    right-hand side is a chain of conditionals -- which is what
+    :meth:`_Generator._inline_body` can carry forward in its substitution.
+
+    A missing ``else`` binds the name to *itself*. Pine leaves a variable
+    alone when no branch runs, and substitution turns that back into whatever
+    the name last held, where :func:`_if_as_expression` would have to answer
+    ``na`` because it has no name to fall back on.
+
+    Returns ``(target, expression)``, or None when the branches disagree about
+    what they are writing or carry more than one statement.
+    """
+
+    def branch(body):
+        if (
+            len(body) == 1
+            and isinstance(body[0], Assign)
+            and body[0].qualifier in ("", ":=")
+        ):
+            return body[0].target, body[0].value
+        return None
+
+    head = branch(statement.body)
+    if head is None:
+        return None
+    target, value = head
+
+    if not statement.orelse:
+        other = Name(target)
+    elif len(statement.orelse) == 1 and isinstance(statement.orelse[0], If):
+        nested = _if_as_assignment(statement.orelse[0])
+        if nested is None or nested[0] != target:
+            return None
+        other = nested[1]
+    else:
+        tail = branch(statement.orelse)
+        if tail is None or tail[0] != target:
+            return None
+        other = tail[1]
+
+    return target, Ternary(cond=statement.cond, then=value, other=other)
+
+
 def _if_as_expression(statement):
     """Read a trailing ``if`` block as the value its function returns.
 
@@ -1291,7 +1357,33 @@ class _Generator:
                 )
                 return None
 
-            if isinstance(statement, If) and last:
+            if isinstance(statement, If):
+                # A block that writes one name is an assignment, wherever it
+                # sits. Try that first: it is the only reading available to an
+                # `if` in the middle of a body, and for a trailing one it also
+                # keeps the name's previous value when no branch runs.
+                assigned = _if_as_assignment(statement)
+                if assigned is not None:
+                    target, folded = assigned
+                    if target not in bindings:
+                        self._reject(
+                            f"{func.name}(): `{target}` is assigned only inside "
+                            "an `if`, so it has no value on the branch that "
+                            "does not run"
+                        )
+                        return None
+                    value = _substitute(folded, bindings)
+                    bindings[target] = value
+                    if last:
+                        return value
+                    continue
+                if not last:
+                    self._reject(
+                        f"{func.name}(): an `if` in the middle of the body has "
+                        "to write one name in every branch to carry a value "
+                        "forward"
+                    )
+                    return None
                 folded = _if_as_expression(statement)
                 if folded is None:
                     self._reject(
