@@ -85,10 +85,25 @@ def test_ordinal_to_words(day, expected):
         (2.5, "two and a half percent"),
         (14.0, "fourteen percent"),
         (0.001, "a fraction of a percent"),
+        (0.94, "nine tenths of a percent"),
+        (0.95, "one percent"),
+        (0.99, "one percent"),
     ],
 )
 def test_say_percent_uses_desk_idiom(pct, expected):
     assert spoken.say_percent(pct) == expected
+
+
+def test_say_percent_never_says_ten_tenths():
+    """Regression: a clean one percent move arrives as 0.9999999999999998.
+
+    Floating point puts it just under the whole-percent branch, where it used
+    to round to ten tenths and say so out loud.
+    """
+    assert spoken.say_percent(-0.9999999999999998) == "one percent"
+    for step in range(90, 111):
+        said = spoken.say_percent(step / 100)
+        assert "ten tenths" not in said, (step / 100, said)
 
 
 @pytest.mark.parametrize(
