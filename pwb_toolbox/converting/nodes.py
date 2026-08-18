@@ -112,6 +112,33 @@ class ExprStmt:
     value: Any
 
 
+@dataclass(frozen=True)
+class Param:
+    """One parameter of a user-defined function.
+
+    ``default`` is the expression Pine falls back to when a call omits the
+    argument, or ``None`` when the parameter is required. The declared type,
+    if any, is dropped: it constrains what Pine accepts, not what the value
+    means to Backtrader.
+    """
+
+    name: str
+    default: Any = None
+
+
+@dataclass
+class FuncDef:
+    """``name(a, b) =>`` and its body.
+
+    Kept out of :class:`Program.body` because a declaration does nothing on its
+    own -- it is the call sites that produce code.
+    """
+
+    name: str
+    params: tuple
+    body: list
+
+
 @dataclass
 class Unsupported:
     """A construct parsed only well enough to be skipped and reported."""
@@ -126,3 +153,5 @@ class Program:
     declaration: tuple | None
     version: int | None
     body: list
+    #: Pine name -> :class:`FuncDef`, in declaration order.
+    functions: dict = field(default_factory=dict)

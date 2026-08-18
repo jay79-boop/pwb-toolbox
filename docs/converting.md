@@ -91,6 +91,8 @@ duplicate is pure waste.
 | `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | an `if` read for its value | the conditional expression it means |
+| `f(a, b) => ...` and its call sites | the body, inlined where it is called |
+| a parameter with a type, a default, or both | the type dropped, the default kept |
 | an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
@@ -136,7 +138,8 @@ Reported in `result.unsupported`, never approximated:
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
-- arrays, matrices, maps, user-defined functions and `type` blocks — all reported, so the rest of the script is still diagnosed
+- arrays, matrices, maps and `type` blocks — all reported, so the rest of the script is still diagnosed
+- a user-defined function that keeps `var` state, recurses, returns a tuple, or expands past the inlining limit — see below
 - `for` / `while` loops
 - a `switch` used as a statement rather than for its value — that is a side-effecting block
 - an `if` read for its value whose branch carries more than one expression — see below
@@ -319,8 +322,80 @@ starting with one continues the line above.
 tuple destructuring, `[macd, signal, hist] = ta.macd(...)`, which is a statement
 of its own.
 
+`-` and `+` need one more rule, because they are the two operators that are
+also *prefixes*. A line opening with one either continues the line above or is
+a fresh expression with a sign:
+
+```pinescript
+sign(v) =>
+    if v > 0
+        1
+    else if v < 0
+        -1        // the branch value, not `v < 0 - 1`
+```
+
+Only the second reading is possible after a line that opens a block, and
+whether a line opens one is decidable from its own text: it starts with `if`,
+`else`, `for`, `while` or `switch`, assigns an `if` or a `switch`, or ends with
+`=>`. So a signed line under a block opener is that block's body. Read the
+other way — which is what happened before this rule existed — an `if` branch of
+`-1` silently became arithmetic, and the strategy traded on it.
+
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## Functions, and why they are inlined
+
+A user-defined function becomes no Python function at all. Each call site gets
+its own copy of the body, with the arguments substituted in:
+
+```pinescript
+z(src, len) =>
+    m = ta.sma(src, len)
+    s = ta.stdev(src, len)
+    (src - m) / s
+
+fast = z(close, 20)
+slow = z(close, 50)
+```
+
+```python
+self._sma_1 = bt.indicators.SMA(self.data.close, period=20)
+self._standarddeviation_2 = bt.indicators.StandardDeviation(self.data.close, period=20)
+self._sma_3 = bt.indicators.SMA(self.data.close, period=50)
+self._standarddeviation_4 = bt.indicators.StandardDeviation(self.data.close, period=50)
+...
+fast = ((self.data.close[0] - self._sma_1[0]) / self._standarddeviation_2[0])
+slow = ((self.data.close[0] - self._sma_3[0]) / self._standarddeviation_4[0])
+```
+
+That is not a shortcut taken to avoid emitting a `def`. **Pine gives every call
+site its own independent series state** — two calls to one function do not
+share history the way two calls to a Python function share a closure. Copying
+the body per call site is what that rule means here, and a shared `def` would
+be the wrong translation.
+
+Inlining also dissolves a problem that has no other answer. A Backtrader
+indicator fixes its period when it is constructed, so `ta.sma(src, len)` cannot
+be built while `len` is still a parameter. After substitution there is no
+parameter: `len` is whatever the call site passed, and the indicator is built
+with it. The two `z` calls above become four indicators, correctly, because
+they are four different periods.
+
+A body is read as a sequence of assignments ending in one expression, and each
+assignment extends the substitution rather than emitting a line. `:=` therefore
+works for free — rebinding a local leaves earlier reads holding the earlier
+value, which is what sequential assignment means. The last statement carries the
+value, whether it is an expression, an assignment, a trailing `if`, or a
+trailing `switch`.
+
+### What it refuses
+
+- **`var` or `varip` in the body.** Pine keeps one per call site; substitution has nowhere to put it. This is the single most common blocker left in real strategies — the JMA and Kalman-style filters all want it.
+- **Recursion, direct or mutual.** There is nothing to recurse over, and a stack catches `g → h → g` as well as `f → f`.
+- **A tuple return**, `[lower, upper, atr]`. It needs a destructuring call site, which is refused in its own right.
+- **A body the grammar cannot read at all** — Pine allows several declarations on one line, and a `switch` case whose value is an indented block. Those are skipped and reported by name, exactly as every body was before any of them could be read. A function outside the subset must not fail the whole file.
+- **Runaway expansion.** Substitution copies a local once per read, so nesting multiplies. Past 400 nodes the conversion stops and says so: an expression that wide is not what the author wrote, and the body wants real intermediate values instead. The check runs innermost-first, so it stops at the level that crosses the line rather than after building everything above it.
 
 ## The two jobs of `if`
 

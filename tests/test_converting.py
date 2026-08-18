@@ -569,13 +569,12 @@ def test_hex_colour_literals_are_presentational_not_syntax_errors(literal):
         "ema(series float src, simple int period=0) =>",
     ],
 )
-def test_user_defined_functions_are_reported_not_fatal(declaration):
-    """Out of scope to translate, but refusing to parse tells the caller less."""
+def test_a_declaration_carrying_types_and_defaults_still_parses(declaration):
+    """Parameters may carry a type, a qualifier, a default, or all three."""
     source = '//@version=6\nstrategy("S")\n' + declaration + "\n    close\ny = close\n"
     result = convert(source)
-    assert not result.ok
-    assert any("user-defined function" in item for item in result.unsupported)
-    assert not any("could not parse" in item for item in result.unsupported)
+    assert result.ok, result.unsupported
+    assert "y = self.data.close[0]" in result.code
 
 
 def test_parsing_resumes_after_a_user_defined_function():
@@ -584,6 +583,14 @@ def test_parsing_resumes_after_a_user_defined_function():
     )
     assert isinstance(program.body[-1], Assign)
     assert program.body[-1].target == "y"
+
+
+def test_a_declaration_is_kept_out_of_the_program_body():
+    """A declaration produces no code on its own -- the call sites do."""
+    program = parse('//@version=6\nstrategy("S")\nf(x) =>\n    x * 2\ny = f(close)\n')
+    assert [type(node).__name__ for node in program.body] == ["Assign"]
+    assert list(program.functions) == ["f"]
+    assert [p.name for p in program.functions["f"].params] == ["x"]
 
 
 def test_user_defined_type_block_is_reported_not_fatal():
@@ -1580,3 +1587,395 @@ def test_convert_ignores_drawing_constants():
     result = convert(source)
     assert result.ok, result.unsupported
     assert any("color.green" in item for item in result.ignored)
+
+
+# --- user-defined functions: inlined at the call site ------------------------
+
+FUNCTION_STRATEGY = """//@version=6
+strategy("Functions")
+band = input.float(1.0, "Band")
+z(src, len) =>
+    m = ta.sma(src, len)
+    s = ta.stdev(src, len)
+    (src - m) / s
+grade(v) =>
+    if v > band
+        1.0
+    else if v < -band
+        -1.0
+    else
+        0.0
+score = grade(z(close, 20))
+if score > 0.5
+    strategy.entry("l", strategy.long)
+if score < -0.5
+    strategy.close()
+"""
+
+
+def test_a_one_line_function_is_inlined_at_the_call_site():
+    """The body takes the place of the call, with the arguments substituted."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "clamp01(x) => math.max(0.0, math.min(1.0, x))\n"
+        "score = clamp01(close / open)\n"
+        "if score > 0.5\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert (
+        "score = max(0, min(1, (self.data.close[0] / self.data.open[0])))"
+        in result.code
+    )
+
+
+def test_a_body_local_is_substituted_wherever_it_is_read():
+    """Locals fold into the expression rather than becoming Python names."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "z(src, len) =>\n"
+        "    m = ta.sma(src, len)\n"
+        "    s = ta.stdev(src, len)\n"
+        "    (src - m) / s\n"
+        "v = z(close, 20)\n"
+        "if v > 1.0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "bt.indicators.SMA(self.data.close, period=20)" in result.code
+    assert "bt.indicators.StandardDeviation(self.data.close, period=20)" in result.code
+    assert (
+        "v = ((self.data.close[0] - self._sma_1[0]) / self._standarddeviation_2[0])"
+        in result.code
+    )
+
+
+def test_an_argument_can_supply_an_indicator_length():
+    """Substitution happens before lowering, so `ta.sma(src, len)` resolves.
+
+    A Backtrader indicator fixes its period when it is constructed, so a
+    length that is still a parameter cannot be built. Inlining removes the
+    parameter: by the time the call is lowered the length is the literal the
+    call site passed.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "smooth(src, len) => ta.sma(src, len)\n"
+        "fast = smooth(close, 5)\n"
+        "slow = smooth(close, 30)\n"
+        "if fast > slow\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "bt.indicators.SMA(self.data.close, period=5)" in result.code
+    assert "bt.indicators.SMA(self.data.close, period=30)" in result.code
+
+
+def test_a_function_wrapping_an_indicator_still_becomes_a_line():
+    """`ma = smooth(close, 20)` must be a line object, not a read of one.
+
+    Otherwise `ma[1]` -- history -- stops working for no reason the caller
+    could see from the Pine source.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "smooth(src, n) => ta.sma(src, n)\n"
+        "ma = smooth(close, 20)\n"
+        "if ma > ma[1]\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "if (self._sma_1[0] > self._sma_1[-1]):" in result.code
+
+
+def test_two_call_sites_do_not_share_state():
+    """Pine gives each call site its own instance, which inlining reproduces."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "roc(src, n) => src - src[n]\n"
+        "a = roc(close, 1)\n"
+        "b = roc(high, 5)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "a = (self.data.close[0] - self.data.close[-1])" in result.code
+    assert "b = (self.data.high[0] - self.data.high[-5])" in result.code
+
+
+def test_a_parameter_default_fills_an_omitted_argument():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "lever(x, float k = 2.0) => x * k\n"
+        "a = lever(close)\n"
+        "b = lever(close, 3.0)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "a = (self.data.close[0] * 2)" in result.code
+    assert "b = (self.data.close[0] * 3)" in result.code
+
+
+def test_an_argument_may_be_passed_by_name():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "band(src, mult) => src * mult\n"
+        "b = band(close, mult=2.0)\n"
+        "if close > b\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "b = (self.data.close[0] * 2)" in result.code
+
+
+def test_a_function_calling_another_is_resolved_all_the_way_down():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "half(x) => x / 2\n"
+        "mid(a, b) => half(a + b)\n"
+        "m = mid(high, low)\n"
+        "if close > m\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "m = ((self.data.high[0] + self.data.low[0]) / 2)" in result.code
+
+
+def test_a_trailing_if_is_the_functions_value():
+    """Pine hands back the last expression of whichever branch ran."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "sign(v) =>\n"
+        "    if v > 0\n        1\n"
+        "    else if v < 0\n        -1\n"
+        "    else\n        0\n"
+        "s = sign(close - open)\n"
+        "if s > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "1 if ((self.data.close[0] - self.data.open[0]) > 0)" in result.code
+    assert (
+        "(-1) if ((self.data.close[0] - self.data.open[0]) < 0) else 0" in result.code
+    )
+
+
+def test_a_trailing_switch_is_the_functions_value():
+    """A bare switch is a statement at top level and a value inside a body."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "smooth(src, len, mode) =>\n"
+        "    switch mode\n"
+        '        "SMA" => ta.sma(src, len)\n'
+        "        =>      ta.ema(src, len)\n"
+        's = smooth(close, 14, "SMA")\n'
+        "if close > s\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "bt.indicators.SMA(self.data.close, period=14)" in result.code
+    assert "bt.indicators.EMA(self.data.close, period=14)" in result.code
+
+
+def test_a_bare_switch_at_top_level_is_still_a_statement():
+    """The value reading must not leak out of a function body."""
+    source = (
+        '//@version=6\nstrategy("S")\nmode = input.string("a", "M")\n'
+        "switch mode\n"
+        '    "a" => strategy.close()\n'
+        "ma = ta.sma(close, 10)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("switch statement" in item for item in result.unsupported)
+
+
+def test_a_reassigned_local_reads_as_its_latest_value():
+    """`:=` rebinds, so earlier reads keep the earlier value."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "step(x) =>\n"
+        "    a = x + 1\n"
+        "    a := a * 2\n"
+        "    a\n"
+        "v = step(close)\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "v = ((self.data.close[0] + 1) * 2)" in result.code
+
+
+def test_a_recursive_function_is_reported_not_followed():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(x) => f(x) + 1\n"
+        "y = f(close)\n"
+        "if y > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("recursive" in item for item in result.unsupported)
+
+
+def test_mutual_recursion_is_reported_not_followed():
+    """A stack catches two functions calling each other, which a flag would not."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "g(x) => h(x) + 1\n"
+        "h(x) => g(x) + 1\n"
+        "y = g(close)\n"
+        "if y > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("recursive" in item for item in result.unsupported)
+
+
+def test_var_inside_a_body_is_reported():
+    """Pine keeps a `var` per call site, which substitution cannot give it."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "acc(x) =>\n"
+        "    var float total = 0.0\n"
+        "    total := total + x\n"
+        "    total\n"
+        "y = acc(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("keeps state per call site" in item for item in result.unsupported)
+
+
+def test_a_missing_argument_is_reported():
+    source = '//@version=6\nstrategy("S")\nf(a, b) => a + b\ny = f(close)\n'
+    result = convert(source)
+    assert not result.ok
+    assert any("no argument for 'b'" in item for item in result.unsupported)
+
+
+def test_a_function_returning_a_tuple_is_reported():
+    """`[lower, upper]` needs a destructuring call site, which is refused."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "bands(src, n) =>\n"
+        "    m = ta.sma(src, n)\n"
+        "    [m - 1.0, m + 1.0]\n"
+        "b = bands(close, 20)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("returns a tuple" in item for item in result.unsupported)
+
+
+def test_destructuring_inside_a_body_is_still_read_as_a_target_list():
+    """The `=` past the bracket is what separates the two readings."""
+    program = parse(
+        '//@version=6\nstrategy("S")\n'
+        "f(x) =>\n"
+        "    [a, b] = ta.macd(x, 12, 26, 9)\n"
+        "    a + b\n"
+        "y = f(close)\n"
+    )
+    body = program.functions["f"].body
+    assert [type(node).__name__ for node in body] == ["TupleAssign", "ExprStmt"]
+
+
+def test_a_body_the_grammar_cannot_read_is_reported_not_fatal():
+    """Reading a body is best-effort; one outside the subset is still skipped.
+
+    Pine allows several declarations on one line, which this grammar does not
+    model. Failing the whole file over it would tell the caller far less than
+    naming the one function it could not read.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(src, len) =>\n"
+        "    var float a = na, var float b = 0.0\n"
+        "    a + b\n"
+        "ma = ta.sma(close, 10)\n"
+    )
+    result = convert(source)
+    assert any("user-defined function" in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+def test_parsing_resumes_after_a_body_the_grammar_cannot_read():
+    program = parse(
+        '//@version=6\nstrategy("S")\n'
+        "f(src, len) =>\n"
+        "    var float a = na, var float b = 0.0\n"
+        "    a + b\n"
+        "y = ta.sma(close, 10)\n"
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+def test_runaway_inlining_is_reported_rather_than_emitted():
+    """Substitution copies a local per read, so nesting multiplies.
+
+    The guard exists because the alternative is a single expression thousands
+    of nodes wide, which is neither readable nor what the author meant.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "a(x) => x + x\n"
+        "b(x) => a(x) + a(x)\n"
+        "c(x) => b(x) + b(x)\n"
+        "d(x) => c(x) + c(x)\n"
+        "e(x) => d(x) + d(x)\n"
+        "g(x) => e(x) + e(x)\n"
+        "h(x) => g(x) + g(x)\n"
+        "i(x) => h(x) + h(x)\n"
+        "y = i(close)\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("expands past" in item for item in result.unsupported)
+
+
+def test_a_signed_branch_value_is_not_eaten_as_a_continuation():
+    """`-1` under a block opener is that block's body, not the tail above.
+
+    Both readings are legal for a line starting with `-`, and only the line
+    above can decide. Getting it wrong silently turned `else if v < 0` plus a
+    branch of `-1` into the expression `v < 0 - 1`.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "x = if close > open\n    1\nelse\n    -1\n"
+        "if x > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "1 if (self.data.close[0] > self.data.open[0]) else (-1)" in result.code
+
+
+def test_a_genuine_signed_continuation_still_joins():
+    """The guard must not break the continuation it was carved out of."""
+    split = (
+        '//@version=6\nstrategy("S")\n'
+        "spread = high\n         - low\n"
+        "if spread > 0\n    strategy.close()\n"
+    )
+    joined = (
+        '//@version=6\nstrategy("S")\n'
+        "spread = high - low\n"
+        "if spread > 0\n    strategy.close()\n"
+    )
+    assert convert(split).code == convert(joined).code
+
+
+def test_generated_function_strategy_runs_and_trades():
+    value, closed = _run(FUNCTION_STRATEGY)
+    assert closed > 0
+    assert value != 10_000.0
+
+
+def test_generated_function_strategy_responds_to_its_input():
+    """The param reaches the inlined body, so the knob is live end to end."""
+    _, tight = _run(FUNCTION_STRATEGY, band=0.5)
+    _, wide = _run(FUNCTION_STRATEGY, band=3.0)
+    assert tight != wide
