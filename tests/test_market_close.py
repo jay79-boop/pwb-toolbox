@@ -1154,3 +1154,46 @@ def test_cli_checks_the_kicker_before_collecting_quotes(tmp_path, capsys, monkey
 
     assert main(["--free", "--kicker-file", str(tmp_path / "nope.txt")]) == 2
     assert called == []
+
+
+def test_cli_clears_segments_from_a_previous_render(tmp_path, capsys):
+    """A re-render must not leave an earlier run's files behind.
+
+    Segment numbering shifts whenever the script gains or loses a block, so the
+    old sign-off lands under a different number than the new one and survives.
+    That is how a stale sign-off carrying a since-renamed anchor stayed in an
+    output directory and read as current.
+    """
+    target = tmp_path / "render"
+    target.mkdir()
+    ghost = target / "06-sign-off.txt"
+    ghost.write_text("I'm Max Brennan, good night.\n", encoding="utf-8")
+
+    assert main(["--demo", "--segments", str(target)]) == 0
+
+    assert not ghost.exists()
+    written = sorted(p.name for p in target.glob("*.txt"))
+    assert written == [
+        "01-cold-open.txt",
+        "02-the-tape.txt",
+        "03-movers.txt",
+        "04-straight.txt",
+        "05-sign-off.txt",
+    ]
+    assert "Max Brennan" not in (target / "05-sign-off.txt").read_text(encoding="utf-8")
+    assert "removed 1 segment file(s)" in capsys.readouterr().err
+
+
+def test_cli_leaves_unrelated_files_in_the_segment_directory(tmp_path):
+    """Only this tool's own output is cleared — the directory may hold anything."""
+    target = tmp_path / "render"
+    target.mkdir()
+    keep = target / "kicker-notes.txt"
+    keep.write_text("mine\n", encoding="utf-8")
+    also_keep = target / "readme.md"
+    also_keep.write_text("mine too\n", encoding="utf-8")
+
+    assert main(["--demo", "--segments", str(target)]) == 0
+
+    assert keep.read_text(encoding="utf-8") == "mine\n"
+    assert also_keep.read_text(encoding="utf-8") == "mine too\n"

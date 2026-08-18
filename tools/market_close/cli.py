@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -44,6 +45,29 @@ def _load_names(path: Path | None) -> dict[str, str] | None:
     if not isinstance(data, dict):
         raise ValueError(f"{path} should hold a JSON object of ticker -> spoken name")
     return {str(k): str(v) for k, v in data.items()}
+
+
+# Files this tool wrote on a previous run: two-or-more digits, a hyphen, a
+# lower-case segment name. Deliberately narrow, so anything else the user keeps
+# alongside the output is left alone.
+_SEGMENT_FILE = re.compile(r"\d{2,}-[a-z0-9-]+\.txt")
+
+
+def _clear_previous_segments(directory: Path) -> int:
+    """Remove segment files from an earlier render, returning how many went.
+
+    Segment numbering shifts whenever the script gains or loses a block, so a
+    re-render writes ``05-sign-off.txt`` where the previous one wrote
+    ``06-sign-off.txt`` and leaves the old file sitting beside the new one.
+    Both look equally current, and the stale copy can carry a since-renamed
+    anchor straight into a recording.
+    """
+    removed = 0
+    for path in sorted(directory.glob("*.txt")):
+        if _SEGMENT_FILE.fullmatch(path.name):
+            path.unlink()
+            removed += 1
+    return removed
 
 
 def warn_on_digits(text: str) -> list[str]:
@@ -176,6 +200,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.segments is not None:
         args.segments.mkdir(parents=True, exist_ok=True)
+        stale = _clear_previous_segments(args.segments)
+        if stale:
+            _log(f"removed {stale} segment file(s) from a previous render")
         for position, (name, body) in enumerate(script.split_segments(text), start=1):
             target = args.segments / f"{position:02d}-{name}.txt"
             target.write_text(body + "\n", encoding="utf-8")
