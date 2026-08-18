@@ -68,13 +68,16 @@ because a story about being confidently wrong hands straight over to a show whos
 whole thesis is that nobody knows why anything moved.
 
 **`--full` is the long version, and everything it adds is unasked for.** A bond quote,
-an oil quote, a Bitcoin quote, and a second single-stock move. That density is the
+an oil quote, a Bitcoin quote, and a second single-stock move, and the raw advancer/decliner tally. That density is the
 information overload that makes every one of these channels skippable; cutting it is
 what buys the attention the rest of the script needs.
 
-The movers cut is worth spelling out: a gainer *and* a loser every night is a format
-rather than a reason. It fills the same twenty seconds whether or not either move was
-worth mentioning. The larger of the two is the actual story, so that is what gets said.
+Two of those cuts are worth spelling out. A gainer *and* a loser every night is a
+format rather than a reason — it fills the same twenty seconds whether or not either
+move was worth mentioning, so only the larger one gets said. And the advancer/decliner
+tally is exactly the recitation the breadth line was written to replace: "thirteen
+names rose, twenty-seven fell" tells you nothing that "most things went down" does not,
+and costs eight seconds to say.
 
 **Nothing announces how long it will take.** Naming a duration turns the video into a
 commitment the viewer has to weigh before pressing play, and "here's what I'll cover
@@ -180,7 +183,7 @@ string concatenation rather than wrapping for source readability.
 | `--free` | live data from Yahoo; no API key or login needed |
 | `--date YYYY-MM-DD` | override the session date, which also reseeds the rotation |
 | `--kicker-file PATH` | hand-written story that opens the show |
-| `--full` | the long version: rates, commodities, and a second mover |
+| `--full` | the long version: rates, commodities, a second mover, the tally |
 | `--names PATH` | JSON `{"TICKER": "spoken name"}`, merged over the built-ins |
 | `--anchor`, `--show` | rename the anchor and the programme |
 | `--preview` | tape and movers only; exits `1` when neither has data |

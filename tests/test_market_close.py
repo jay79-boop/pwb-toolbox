@@ -385,6 +385,31 @@ def test_every_breadth_state_has_a_bank():
     assert all(script.BREADTH_BANKS[state] for state in states)
 
 
+def test_tape_omits_the_advance_decline_tally_by_default():
+    """The breadth line already says which way it leaned; the tally is recitation."""
+    text = script.tape(market.demo_facts())
+    assert "names rose," not in text
+    # The interpretation survives the cut — only the raw numbers went.
+    assert any(line in text for line in script.BREADTH_BANKS["narrow"])
+
+
+def test_counts_restores_the_tally():
+    text = script.tape(market.demo_facts(), counts=True)
+    assert "names rose," in text
+
+
+def test_full_render_carries_the_tally_and_the_default_does_not():
+    assert "names rose," not in script.render(market.demo_facts())
+    assert "names rose," in script.render(market.demo_facts(), full=True)
+
+
+def test_every_breadth_line_stands_without_the_counts():
+    """With the tally gone each line has to open a sentence on its own."""
+    for bank in script.BREADTH_BANKS.values():
+        for line in bank:
+            assert line[0].isupper() or line.startswith("["), line
+
+
 def test_thin_breadth_drops_the_line_rather_than_guessing():
     facts = session(3, 2)
     text = script.tape(facts)
