@@ -23,6 +23,10 @@ orientation hook has every session open with a short unprompted catch-up — bra
 state, unpushed work, open PRs and their CI, anything unfinished, one suggested
 next step — so "where was I" is answered before it has to be asked.
 
+**"Catch me up"** is how they ask for that same thing again mid-session, when
+the thread is lost. It wants where things stand right now — branch, working
+tree, what is in flight — not a replay of how it got there.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
