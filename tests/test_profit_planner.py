@@ -27,6 +27,7 @@ from tools.build_profit_planner import (  # noqa: E402
     POSITIONS,
     SECTORS,
     STATUSES,
+    TP_HEADER,
     TP_RUNG_FIRST,
     TP_RUNG_LAST,
     TP_RUNGS,
@@ -274,3 +275,70 @@ def test_statuses_and_classes_are_offered_as_dropdowns(wb):
     sources = {dv.formula1 for dv in wb["Positions"].data_validations.dataValidation}
     assert "=Lists!$E$2:$E$7" in sources, "Class column needs its dropdown"
     assert "=Lists!$F$2:$F$4" in sources, "Status column needs its dropdown"
+
+
+def test_workbook_recalculates_on_open(wb):
+    """openpyxl saves no cached values.
+
+    A consumer that trusts what is stored rather than recomputing would show
+    every formula as blank, which reads as "the sheet does not work" rather
+    than as a missing flag.
+    """
+    assert wb.calculation.fullCalcOnLoad is True
+
+
+def test_ticker_plan_ladder_is_not_below_the_fold(wb):
+    """An earlier version froze twenty-one rows.
+
+    On a laptop that left nothing visible under the frozen block, so the sheet
+    looked like it ended at the tiles and the ladder appeared not to exist.
+    """
+    ws = wb["Ticker Plan"]
+    frozen_rows = int(ws.freeze_panes[1:]) - 1
+    assert frozen_rows == TP_HEADER, "the header row should be the last frozen one"
+    assert frozen_rows <= 14, f"{frozen_rows} frozen rows buries the ladder"
+
+
+def test_exit_ladder_survives_an_asset_it_has_never_heard_of(wb):
+    """Typing a ticker of your own used to turn the whole row into #N/A.
+
+    A name that is not on the register is not a mistake — it is something you
+    are sizing up before you own it — so the lookups fall back to blank and
+    the quantity and cost are yours to fill in.
+    """
+    ws = wb["Exit Ladder"]
+    for row in range(LADDER_FIRST, LADDER_LAST + 1):
+        for col in (2, 3):
+            formula = ws.cell(row=row, column=col).value
+            assert formula.startswith(f'=IF($A{row}="","",IFERROR(')
+            assert formula.endswith('""))')
+        assert (
+            ws.cell(row=row, column=4).value
+            == f'=IF(OR($B{row}="",$C{row}=""),"",$B{row}*$C{row})'
+        ), "cost basis must follow from the quantity and cost on the row"
+
+
+def test_exit_ladder_quantity_and_cost_are_editable(wb):
+    """They arrive filled in, but typing over them has to be allowed.
+
+    Amber is the workbook's promise that a cell can be typed in; these carry a
+    lookup and still need to accept an override.
+    """
+    ws = wb["Exit Ladder"]
+    for row in range(LADDER_FIRST, LADDER_LAST + 1):
+        for col in (2, 3):
+            assert ws.cell(row=row, column=col).fill.fgColor.rgb.endswith(
+                "FEF3C7"
+            ), f"Exit Ladder row {row} column {col} should read as typeable"
+
+
+def test_every_ladder_column_waits_for_its_inputs(wb):
+    """No column may compute from a half-filled row."""
+    ws = wb["Exit Ladder"]
+    for row in range(LADDER_FIRST, LADDER_LAST + 1):
+        for col in range(7, 19):
+            if col == 8:  # the percentage to sell is typed
+                continue
+            formula = ws.cell(row=row, column=col).value
+            for ref in (f'$B{row}=""', f'$C{row}=""', f'$F{row}=""', f'$H{row}=""'):
+                assert ref in formula, f"column {col} ignores {ref}"
