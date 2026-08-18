@@ -9,7 +9,8 @@ way it should be spoken.
 python -m tools.market_close --demo                        # canned session, no credentials
 python -m tools.market_close --free --preview              # live data, no credentials
 python -m tools.market_close --preview                     # tape and movers only
-python -m tools.market_close --kicker-file kicker.txt --out close.txt
+python -m tools.market_close --kicker-file story.txt --out close.txt
+python -m tools.market_close --full                         # adds rates and commodities
 python -m tools.market_close --segments render/            # one file per block
 ```
 
@@ -40,23 +41,52 @@ as everywhere else here: report what you measured. It's a cheaper seat and it sa
 
 1. `python -m tools.market_close --preview` — check the figures read correctly
    before committing to anything.
-2. `python -m tools.market_close --kicker-file kicker.txt --segments render/`
-3. Read it once out loud. The generator writes seven segments; you write the eighth.
-4. Paste `render/01-…` through `render/08-…` into ElevenLabs Text to Speech one at a
+2. Write the opening story into `story.txt`. One human-scale thing that actually
+   happened to you, no numbers, landing on `[starts laughing]`.
+3. `python -m tools.market_close --kicker-file story.txt --segments render/`
+4. Paste `render/01-…` through `render/05-…` into ElevenLabs Text to Speech one at a
    time, on **Eleven v3**, stability **Natural**.
 5. Stitch the clips, drop the track onto a HeyGen avatar as uploaded audio.
 
-Step 1 exists because the tape and movers carry nearly every number in the
-broadcast — index levels, breadth counts, two percentage moves, two closing prices.
-They are also the segments that change most between sessions, so an unfamiliar
-ticker spelling or an odd-sounding level shows up there first. `--preview` prints
-those two blocks exactly as they will be performed, jokes included, so what you
-audition is what ships. It exits non-zero when there is nothing to show, which
-makes it usable as a guard in a scheduled run.
+## Five segments, in this order
 
-Rendering segment by segment is not fussiness. v3 holds a performance together
+| # | segment | what it is |
+|---|---------|------------|
+| 1 | `[COLD OPEN]` | your story, then a fixed handoff into the market |
+| 2 | `[THE TAPE]` | the move, what it means, and how wide it was |
+| 3 | `[MOVERS]` | the two extremes, and the heuristic behind them |
+| 4 | `[STRAIGHT]` | the disclaimer |
+| 5 | `[SIGN-OFF]` | the proposition, then the ask |
+
+Three decisions in that shape are worth stating, because each is the opposite of
+what a newscast does.
+
+**The story opens the show.** It used to close it, after four minutes of numbers
+nobody had a reason to sit through. It leads now because it is the only part of the
+broadcast a stranger has any reason to care about in the first ten seconds — and
+because a story about being confidently wrong hands straight over to a show whose
+whole thesis is that nobody knows why anything moved.
+
+**Rates, crude and crypto are behind `--full`.** A viewer who came for a market read
+does not also want a bond quote and an oil quote and a Bitcoin quote. That density is
+the information overload that makes every one of these channels skippable; cutting it
+is what buys the attention the rest of the script needs. `--full` puts them back.
+
+**Nothing announces how long it will take.** Naming a duration turns the video into a
+commitment the viewer has to weigh before pressing play, and "here's what I'll cover
+in the next four minutes" spends the time it is describing.
+
+`--preview` earns its place at the top of that loop because the tape and movers carry
+nearly every number in the broadcast — index levels, breadth counts, two percentage
+moves, two closing prices — and they change most between sessions, so an unfamiliar
+ticker spelling or an odd-sounding level surfaces there first. It prints those two
+blocks exactly as they will be performed, jokes included, so what you audition is
+what ships. It exits non-zero when there is nothing to show, which makes it usable
+as a guard in a scheduled run.
+
+Rendering segment by segment is not fussiness either. v3 holds a performance together
 better across a few sentences than across a whole broadcast, and a bad take on the
-kicker should cost you one re-roll rather than the night's work.
+opening story should cost you one re-roll rather than the night's work.
 
 ## Noise or news
 
@@ -145,7 +175,8 @@ string concatenation rather than wrapping for source readability.
 | `--demo` | canned session; no network, no `PWB_API_KEY` |
 | `--free` | live data from Yahoo; no API key or login needed |
 | `--date YYYY-MM-DD` | override the session date, which also reseeds the rotation |
-| `--kicker-file PATH` | hand-written kicker for the `[KICKER]` slot |
+| `--kicker-file PATH` | hand-written story that opens the show |
+| `--full` | also include the rates and commodities segments |
 | `--names PATH` | JSON `{"TICKER": "spoken name"}`, merged over the built-ins |
 | `--anchor`, `--show` | rename the anchor and the programme |
 | `--preview` | tape and movers only; exits `1` when neither has data |

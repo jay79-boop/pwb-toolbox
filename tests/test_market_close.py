@@ -571,19 +571,19 @@ def test_a_working_week_does_not_repeat_the_cold_open():
 # --------------------------------------------------------------------------
 
 
-def test_render_includes_every_segment():
+def test_render_is_five_segments_by_default():
+    """Rates, crude and crypto sit behind --full: that density is the overload."""
     text = script.render(market.demo_facts())
-    for header in (
-        "[COLD OPEN]",
-        "[THE TAPE]",
-        "[MOVERS]",
-        "[RATES]",
-        "[COMMODITIES]",
-        "[THE STRAIGHT BEAT]",
-        "[KICKER]",
-        "[SIGN-OFF]",
-    ):
+    for header in ("[COLD OPEN]", "[THE TAPE]", "[MOVERS]", "[STRAIGHT]", "[SIGN-OFF]"):
         assert header in text
+    assert "[RATES]" not in text
+    assert "[COMMODITIES]" not in text
+
+
+def test_full_adds_the_dense_segments():
+    text = script.render(market.demo_facts(), full=True)
+    assert "[RATES]" in text
+    assert "[COMMODITIES]" in text
 
 
 def test_rendered_script_contains_no_digits():
@@ -621,25 +621,25 @@ def test_no_digits_across_a_sweep_of_sessions():
 
 def test_the_straight_beat_never_rotates():
     """The disclaimer is fixed on purpose — see the module docstring."""
-    renders = [
-        script.render(market.demo_facts(date(2026, 8, day))) for day in range(10, 15)
-    ]
-    for text in renders:
+    for day in range(10, 15):
+        text = script.render(market.demo_facts(date(2026, 8, day)))
         assert script.STRAIGHT_BEAT in text
-        assert "Nothing in this broadcast is advice." in text
+        assert "None of this is advice." in text
+
+
+def test_the_straight_beat_does_not_announce_its_own_importance():
+    """ "Because this actually matters" is the tell of copy trying to sound sincere."""
+    for phrase in ("actually matters", "really matters", "this is important"):
+        assert phrase not in script.STRAIGHT_BEAT
 
 
 def test_segments_without_data_are_dropped_not_faked():
-    facts = MarketFacts(session_date=DAY_TWO)
-    text = script.render(facts)
-    assert "[THE TAPE]" not in text
-    assert "[MOVERS]" not in text
-    assert "[RATES]" not in text
-    assert "[COMMODITIES]" not in text
+    text = script.render(MarketFacts(session_date=DAY_TWO), full=True)
+    for absent in ("[THE TAPE]", "[MOVERS]", "[RATES]", "[COMMODITIES]"):
+        assert absent not in text
     # The three that never depend on market data still stand.
-    assert "[COLD OPEN]" in text
-    assert "[THE STRAIGHT BEAT]" in text
-    assert "[SIGN-OFF]" in text
+    for present in ("[COLD OPEN]", "[STRAIGHT]", "[SIGN-OFF]"):
+        assert present in text
 
 
 def test_index_units_are_stated_once_then_dropped():
@@ -700,22 +700,31 @@ def test_options_carry_through_to_the_script():
         ScriptOptions(anchor="Robin Vale", show="the Closing Bell", kicker="A parrot."),
     )
     assert "I'm Robin Vale" in text
-    assert "the Closing Bell" in text
     assert "A parrot." in text
-    assert "Write the kicker by hand" not in text
 
 
-def test_kicker_placeholder_appears_when_none_is_supplied():
-    assert "Write the kicker by hand" in script.render(market.demo_facts())
+def test_the_story_opens_the_show_rather_than_closing_it():
+    """It leads because it is the only part a stranger cares about at ten seconds."""
+    text = script.render(
+        market.demo_facts(), ScriptOptions(kicker="I argued with a computer.")
+    )
+    first, _ = script.split_segments(text)[0]
+    assert first == "cold-open"
+    assert text.index("I argued with a computer.") < text.index("[THE TAPE]")
+    assert "[KICKER]" not in text
+
+
+def test_the_opener_falls_back_when_no_story_is_supplied():
+    """An unattended run still has to produce something sayable."""
+    text = script.render(market.demo_facts())
+    assert "[COLD OPEN]" in text
+    assert any(line in text for bank in script.COLD_OPEN.values() for line in bank)
 
 
 def test_split_segments_round_trips_the_render():
-    text = script.render(market.demo_facts())
-    pairs = script.split_segments(text)
+    pairs = script.split_segments(script.render(market.demo_facts()))
     names = [name for name, _ in pairs]
-    assert names[0] == "cold-open"
-    assert names[-1] == "sign-off"
-    assert "the-straight-beat" in names
+    assert names == ["cold-open", "the-tape", "movers", "straight", "sign-off"]
     assert all(body for _, body in pairs)
     assert not any(body.startswith("[COLD OPEN]") for _, body in pairs)
 
@@ -783,16 +792,31 @@ def test_cli_demo_writes_a_script(tmp_path, capsys):
 
 def test_cli_demo_prints_to_stdout(capsys):
     assert main(["--demo"]) == 0
-    assert "[THE STRAIGHT BEAT]" in capsys.readouterr().out
+    assert "[STRAIGHT]" in capsys.readouterr().out
 
 
 def test_cli_writes_numbered_segment_files(tmp_path):
     target = tmp_path / "render"
     assert main(["--demo", "--segments", str(target)]) == 0
-    written = sorted(p.name for p in target.iterdir())
-    assert written[0] == "01-cold-open.txt"
-    assert written[-1] == "08-sign-off.txt"
+    assert sorted(p.name for p in target.iterdir()) == [
+        "01-cold-open.txt",
+        "02-the-tape.txt",
+        "03-movers.txt",
+        "04-straight.txt",
+        "05-sign-off.txt",
+    ]
     assert "[COLD OPEN]" not in (target / "01-cold-open.txt").read_text()
+
+
+def test_cli_full_writes_seven_segments(tmp_path):
+    target = tmp_path / "render"
+    assert main(["--demo", "--full", "--segments", str(target)]) == 0
+    assert len(list(target.iterdir())) == 7
+
+
+def test_cli_notes_a_missing_story(capsys):
+    assert main(["--demo"]) == 0
+    assert "no --kicker-file" in capsys.readouterr().err
 
 
 def test_cli_reads_a_kicker_file(tmp_path):
@@ -1002,7 +1026,7 @@ def test_free_mode_names_the_proxies_honestly():
 
 
 def test_free_mode_renders_a_script_with_no_digits():
-    text = script.render(free.collect_free(downloader=fake_download))
+    text = script.render(free.collect_free(downloader=fake_download), full=True)
     assert not any(c.isdigit() for c in text)
     assert "[THE TAPE]" in text
     assert "[RATES]" in text
@@ -1029,7 +1053,7 @@ def test_collect_free_survives_a_dead_feed(capsys):
     assert "warning" in capsys.readouterr().out
     # The script still renders; the data segments just drop.
     text = script.render(facts)
-    assert "[THE STRAIGHT BEAT]" in text
+    assert "[STRAIGHT]" in text
     assert "[THE TAPE]" not in text
 
 
