@@ -544,6 +544,22 @@ class Parser:
         token = self.tokens[index] if index < len(self.tokens) else None
         return token is not None and token.kind == "OP" and token.value == "("
 
+    def _empty_brackets_at(self, index) -> bool:
+        """True for the `[]` in `float[] xs`, and never for `close[1]`.
+
+        Emptiness is the whole discriminator: an array type carries nothing
+        between the brackets, and a history access always carries an offset.
+        """
+        if index + 1 >= len(self.tokens):
+            return False
+        opening, closing = self.tokens[index], self.tokens[index + 1]
+        return (
+            opening.kind == "OP"
+            and opening.value == "["
+            and closing.kind == "OP"
+            and closing.value == "]"
+        )
+
     def _generic_end(self, index):
         """End of an ``array<float>``-style generic starting at ``index``.
 
@@ -590,6 +606,9 @@ class Parser:
             if generic is not None:
                 end = generic
                 break  # `array<float>` is the whole annotation
+            if self._empty_brackets_at(end):
+                end += 2
+                break  # `float[]` is the older spelling of the same thing
 
         # Back off one word at a time: the variable itself may be named after a
         # type, as in `string label = "x"`, and it must survive the scan.

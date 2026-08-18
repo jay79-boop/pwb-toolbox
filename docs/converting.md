@@ -79,6 +79,7 @@ duplicate is pure waste.
 | `input.int/float/bool/string(...)` | entries in `params` |
 | `float x = ...`, `series int n = ...` | the type annotation is dropped |
 | `array<float> b = ...`, `Zone z = ...` | likewise, generics and user types included |
+| `float[] xs = ...` | the older array spelling, read the same way |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
