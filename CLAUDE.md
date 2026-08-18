@@ -3,6 +3,26 @@
 A toolbox library for quant traders: datasets, backtesting (Backtrader), live
 execution, and performance analytics. Requires Python 3.10+.
 
+## Where the work happens
+
+The owner works in **Claude Code running locally on their Windows machine**, in
+this repository, and talks to it in plain English rather than pasting shell
+commands. A cloud session at claude.ai/code is the fallback for when they are
+away from that machine.
+
+The distinction is load-bearing, and getting it wrong cost two days once. A local
+session can touch `C:\Users\Gexio\...`, run their venv, and open the trade
+journal; a cloud session shares only GitHub with them and cannot reach their disk
+at all. Both see this identical repository, which is exactly why the two are easy
+to confuse. `.claude/hooks/session-orient.sh` states the rules at every session
+start, and the `gexio-machine` skill carries the diagnostic for working out which
+one you are in — run it before writing a single command for them.
+
+They do not retain procedures between sittings, and should not have to. The
+orientation hook has every session open with a short unprompted catch-up — branch
+state, unpushed work, open PRs and their CI, anything unfinished, one suggested
+next step — so "where was I" is answered before it has to be asked.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
