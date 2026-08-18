@@ -110,7 +110,27 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    names = _load_names(args.names)
+    # Read every hand-supplied file before touching the network. The kicker used
+    # to be read after the quote pull, so a mistyped path cost a full round of
+    # downloads before failing — and failed with a traceback rather than a
+    # sentence. Both inputs are local and cost nothing to check up front.
+    try:
+        names = _load_names(args.names)
+    except OSError as exc:
+        _log(f"cannot read names file {args.names}: {exc.strerror}")
+        return 2
+    except ValueError as exc:
+        _log(str(exc))
+        return 2
+
+    kicker = None
+    if args.kicker_file is not None:
+        try:
+            kicker = args.kicker_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            _log(f"cannot read kicker file {args.kicker_file}: {exc.strerror}")
+            return 2
+
     if names is not None:
         names = {**market.COMPANY_NAMES, **names}
 
@@ -121,10 +141,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         facts = collect(names=names)
         if args.date is not None:
             facts.session_date = args.date
-
-    kicker = None
-    if args.kicker_file is not None:
-        kicker = args.kicker_file.read_text(encoding="utf-8")
 
     if args.preview:
         text = script.preview(facts)
