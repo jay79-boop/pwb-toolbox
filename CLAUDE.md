@@ -7,15 +7,20 @@ execution, and performance analytics. Requires Python 3.10+.
 
 The owner works in **Claude Code running locally on their Windows machine**, in
 this repository, and talks to it in plain English rather than pasting shell
-commands. A cloud session at claude.ai/code is the fallback for when they are
-away from that machine.
+commands. Away from the desk they do not start a session somewhere else — they
+reach that same local session from their phone, over Remote Control, which is
+what lets them approve things without being at the keyboard. A scheduled task,
+`\ClaudeRemoteControl`, keeps one alive from logon so there is always something
+to attach to.
 
-The distinction is load-bearing, and getting it wrong cost two days once. A local
-session can touch `C:\Users\Gexio\...`, run their venv, and open the trade
-journal; a cloud session shares only GitHub with them and cannot reach their disk
-at all. Both see this identical repository, which is exactly why the two are easy
-to confuse. `.claude/hooks/session-orient.sh` states the rules at every session
-start, and the `gexio-machine` skill carries the diagnostic for working out which
+Cloud sessions do still exist, and this file is read by them, so the capability
+gap between the two is load-bearing — getting it wrong cost two days once. A
+local session can touch `C:\Users\Gexio\...`, run their venv, and open the
+trade journal. A cloud session shares only GitHub with them: it cannot read
+their disk, their scheduled tasks or their skills directory, and everything on
+that side has to be done by handing them a command and waiting for the output.
+Both see this identical repository, which is exactly why the two are easy to
+confuse. The `gexio-machine` skill carries the diagnostic for working out which
 one you are in — run it before writing a single command for them.
 
 They do not retain procedures between sittings, and should not have to. The
