@@ -19,6 +19,22 @@ strategies.
 A crash is reported separately and loudly. `convert` is contracted never to
 raise -- it reports what it cannot handle -- so a non-zero crash count is a bug
 in the converter itself, not a fact about the corpus.
+
+What the counts are, and are not
+--------------------------------
+
+Every number here is a *frontier*, not a total. The converter reports the gaps
+it reaches, and a gap it never reaches is a gap it never reports: a failed
+inline takes the rest of that expression with it, and the names downstream then
+read as undefined rather than as whatever would have blocked them next. So a
+script showing one gap is one gap from *the next wall*, not one gap from
+converting.
+
+That matters when picking work. "Appears in 9 scripts" is a count of scripts
+this is currently in front of, and fixing it converts none of them unless it
+was also the last thing in the way. `--by-script` shows each blocked script
+with the gaps visible on it right now, which is the closest thing to a cost
+estimate available without doing the fix and looking again.
 """
 
 import argparse
@@ -59,6 +75,7 @@ def sweep(root: pathlib.Path, strategies_only: bool = False):
     """Convert every `.pine` under `root`, returning (clean, crashes, reasons)."""
     reasons = collections.Counter()
     sole_blocker = collections.Counter()
+    per_script = []
     crashes = []
     considered = 0
     clean = 0
@@ -81,10 +98,12 @@ def sweep(root: pathlib.Path, strategies_only: bool = False):
             continue
         gaps = {normalise(item) for item in result.unsupported}
         reasons.update(gaps)
+        per_script.append((len(gaps), path.name, sorted(gaps)))
         if len(gaps) == 1:
             sole_blocker[next(iter(gaps))] += 1
 
-    return considered, clean, crashes, reasons, sole_blocker
+    per_script.sort()
+    return considered, clean, crashes, reasons, sole_blocker, per_script
 
 
 def main(argv=None):
@@ -96,9 +115,14 @@ def main(argv=None):
         help="only files declaring strategy(...), which is what this converter targets",
     )
     parser.add_argument("--top", type=int, default=25)
+    parser.add_argument(
+        "--by-script",
+        action="store_true",
+        help="list each blocked script with the gaps visible on it, closest first",
+    )
     args = parser.parse_args(argv)
 
-    considered, clean, crashes, reasons, sole = sweep(
+    considered, clean, crashes, reasons, sole, per_script = sweep(
         args.corpus, strategies_only=args.strategies_only
     )
     if not considered:
@@ -118,11 +142,31 @@ def main(argv=None):
 
     blocked = considered - clean - len(crashes)
     if blocked:
-        print(f"\nwhat blocks the other {blocked}, by scripts affected:")
-        for reason, count in reasons.most_common(args.top):
+        print(f"\nwhat blocks the other {blocked}, by scripts it is in front of:")
+        # Sole blockers first: they are the only entries where a fix can
+        # convert anything today. Everything below them is a frontier that
+        # another gap sits behind.
+        ranked = sorted(
+            reasons.items(),
+            key=lambda item: (-sole.get(item[0], 0), -item[1], item[0]),
+        )
+        for reason, count in ranked[: args.top]:
             alone = sole.get(reason, 0)
-            note = f"   ({alone} blocked by this alone)" if alone else ""
+            note = f"   <- the last gap on {alone}" if alone else ""
             print(f"  {count:4}  {reason}{note}")
+
+        if not sole:
+            print(
+                "\n  nothing here is the last gap on any script, so no single "
+                "fix\n  converts one. Counts are frontiers: see --by-script."
+            )
+
+    if args.by_script and per_script:
+        print("\nblocked scripts, by gaps visible now (another may sit behind):")
+        for count, name, gaps in per_script:
+            print(f"\n  [{count:2}] {name}")
+            for gap in gaps:
+                print(f"       - {gap}")
 
     return 1 if crashes else 0
 

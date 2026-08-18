@@ -5,6 +5,7 @@ through a real Backtrader `cerebro` on synthetic bars, so "it converted" is
 never mistaken for "it works".
 """
 
+import calendar
 import datetime
 import random
 
@@ -3115,3 +3116,434 @@ def test_generated_wavetrend_responds_to_its_inputs():
     _, fast = _run(WAVETREND, chLen=4, avgLen=5)
     _, slow = _run(WAVETREND, chLen=30, avgLen=40)
     assert fast != slow
+
+
+# --- the clock: timeframe.period and time() ---------------------------------
+
+
+def _intraday_frame(bars=96, minutes=60, seed=11):
+    """Hourly bars from midnight, so a 4-hour bucket turns over inside the run."""
+    rng = random.Random(seed)
+    price = 100.0
+    start = datetime.datetime(2022, 1, 1, 0, 0)
+    rows = []
+    for i in range(bars):
+        price *= 1 + rng.gauss(0, 0.01)
+        rows.append(
+            {
+                "datetime": start + datetime.timedelta(minutes=minutes * i),
+                "open": price,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": 1000,
+            }
+        )
+    return pd.DataFrame(rows).set_index("datetime")
+
+
+def _instance(source, frame=None, **feed_kwargs):
+    """Run a converted strategy and hand back the instance, for reading state."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    frame = _intraday_frame() if frame is None else frame
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame, **feed_kwargs))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0]
+
+
+@pytest.mark.parametrize(
+    "text,seconds",
+    [("240", 14400), ("15", 900), ("D", 86400), ("2D", 172800), ("S", 1), ("30S", 30)],
+)
+def test_a_resolution_that_tiles_the_epoch_has_a_second_count(text, seconds):
+    from pwb_toolbox.converting.backtrader import timeframe_seconds
+
+    assert timeframe_seconds(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["", "W", "3W", "M", "12M", "nonsense", None])
+def test_a_resolution_that_does_not_tile_the_epoch_has_none(text):
+    """A week floored by modulo starts on a Thursday and a month has no fixed
+    length, so both are refused rather than quietly rounded to the wrong bar."""
+    from pwb_toolbox.converting.backtrader import timeframe_seconds
+
+    assert timeframe_seconds(text) is None
+
+
+def test_timeframe_period_reads_the_feed_it_was_given():
+    """Pine asks the chart; the converted class asks the feed, which is the
+    same question once the caller has chosen a timeframe for the data."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'if timeframe.period == "60"\n    strategy.entry("L", strategy.long)\n'
+    )
+    strategy = _instance(source, timeframe=bt.TimeFrame.Minutes, compression=60)
+    assert strategy.position.size > 0
+
+
+def test_timeframe_period_on_a_daily_feed_spells_it_the_way_pine_does():
+    """One of a unit is the bare letter in Pine: `D`, never `1D`."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'if timeframe.period == "D"\n    strategy.entry("L", strategy.long)\n'
+    )
+    strategy = _instance(
+        source, frame=_price_frame(bars=40), timeframe=bt.TimeFrame.Days, compression=1
+    )
+    assert strategy.position.size > 0
+
+
+def test_change_of_time_fires_once_per_higher_timeframe_bar():
+    """`ta.change(time(res)) != 0` is Pine's idiom for "a new res bar just
+    started". On hourly bars a 4-hour bucket turns over every fourth bar."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if ta.change(time("240")) != 0\n    seen := seen + 1\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=96, minutes=60))
+    # 96 hourly bars span 24 four-hour buckets. The first bar has no previous
+    # bar to differ from, so Backtrader's `[1]` repeats it and it does not count.
+    assert strategy.seen == 23
+
+
+def test_time_floors_to_the_resolution_not_to_the_bar():
+    """Every bar inside one 4-hour bucket reports that bucket's opening time."""
+    source = (
+        '//@version=6\nstrategy("S")\n' "var int stamp = 0\n" 'stamp := time("240")\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=4, minutes=60))
+    assert strategy.stamp == calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_time_with_a_session_is_reported_rather_than_approximated():
+    """The session argument needs the exchange calendar. The feed has none, and
+    guessing one would move every bucket boundary."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'x = time("240", "0930-1600")\n'
+        "if x > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("exchange calendar" in item for item in result.unsupported)
+
+
+def test_a_weekly_resolution_for_time_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'x = time("W")\n'
+        "if x > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("does not floor" in item for item in result.unsupported)
+
+
+def test_change_of_a_source_without_history_is_reported():
+    """Regression. `ta.change` built its previous value by re-evaluating the
+    source when that source was not a name, so the difference was the value
+    minus itself: a condition that compiled, ran, and never once fired."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "if ta.change(math.max(high, low)) != 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs bar history" in item for item in result.unsupported)
+
+
+# --- an `if` that picks a value across branches ------------------------------
+
+
+def test_an_if_that_writes_one_name_folds_into_the_substitution():
+    """The shape a Pine function uses to choose a value over several branches:
+    assign a default, overwrite it in whichever branch applies, hand it back."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 0\n"
+        "    if x > 2\n"
+        "        out := 10\n"
+        "    else if x > 1\n"
+        "        out := 20\n"
+        "    else\n"
+        "        out := 30\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 20
+
+
+def test_an_if_with_no_else_leaves_the_name_alone():
+    """Pine does not blank a variable when no branch runs, so neither does
+    this. `_if_as_expression` would have to answer na here; binding the name
+    to itself and substituting gives back whatever it last held."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 7\n"
+        "    if x > 100\n"
+        "        out := 1\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 7
+
+
+def test_a_later_branch_can_read_the_name_it_is_writing():
+    """`out := out + 1` reads the value from before the block, because the
+    whole conditional is substituted against the bindings as they stood."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 5\n"
+        "    if x > 1\n"
+        "        out := out + 1\n"
+        "    else\n"
+        "        out := out - 1\n"
+        "    out\n"
+        "var int got = 0\n"
+        "got := pick(2)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 6
+
+
+def test_branches_writing_different_names_are_reported():
+    """Two names is two assignments, and only one of them can be the value
+    carried forward. Folding it would silently drop the other."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    a = 0\n"
+        "    b = 0\n"
+        "    if x > 1\n"
+        "        a := 1\n"
+        "    else\n"
+        "        b := 2\n"
+        "    a\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("write one name in every branch" in i for i in result.unsupported)
+
+
+def test_a_name_first_assigned_inside_an_if_is_reported():
+    """Without a prior value there is nothing for the untaken branch to keep,
+    and Pine's answer there is na rather than a number."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    if x > 1\n"
+        "        out := 1\n"
+        "    else\n"
+        "        out := 2\n"
+        "    out\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("assigned only inside" in i for i in result.unsupported)
+
+
+def test_a_branch_carrying_two_statements_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    out = 0\n"
+        "    if x > 1\n"
+        "        tmp = x * 2\n"
+        "        out := tmp\n"
+        "    else\n"
+        "        out := 3\n"
+        "    out\n"
+        "if pick(2) > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("one name in every branch" in i for i in result.unsupported)
+
+
+def test_a_trailing_if_without_an_assignment_still_reads_as_the_value():
+    """The older reading is still there for a block whose branches are bare
+    expressions rather than assignments."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "pick(x) =>\n"
+        "    if x > 1\n"
+        "        11\n"
+        "    else\n"
+        "        22\n"
+        "var int got = 0\n"
+        "got := pick(0)\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=20))
+    assert strategy.got == 22
+
+
+# --- naming an intermediate instead of copying it ----------------------------
+
+
+_BIG_LOCAL = " + ".join(f"close[{i}] * {i}" for i in range(1, 40))
+
+
+def test_a_large_body_local_is_named_rather_than_copied():
+    """Substitution has nowhere to put an intermediate, so a local read more
+    than once used to be copied into every read and blow the node budget.
+    Naming it is what the reject message was asking for all along."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d + d + d\n"
+        "    e\n"
+        "if f(5) > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    # One scalar assignment in next(), not three copies of a forty-term sum.
+    body = result.code.split("def next(self):")[1]
+    assert body.count("close[-39]") == 1
+
+
+def test_a_named_intermediate_can_feed_an_indicator():
+    """`ta.ema(d, p)` needs a line, and a substituted expression tree is not
+    one. The name lands in `_computed`, which is what `_promote` reads, so the
+    same expression is built a second time in `__init__` as an indicator
+    source while `next()` keeps the scalar."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = ta.ema(d, p)\n"
+        "    e\n"
+        "if f(5) > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+
+    setup, body = result.code.split("def next(self):")
+    # Built on the promoted line, not on a bare price series.
+    assert "bt.indicators.EMA(self._line_" in setup
+    assert "close(-39)" in setup
+    # And it survives a real cerebro. An expression tree handed to an
+    # indicator converts cleanly and then dies on the first bar, so running it
+    # is the part of this test that would catch a wrong source.
+    value, _ = _run(source)
+    assert isinstance(value, float)
+
+
+def test_a_named_intermediate_can_carry_history():
+    """`d[1]` off an expression tree has no previous bar to read. Off a name
+    it does, by the same route any computed value takes."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f() =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d - d[1]\n"
+        "    e\n"
+        "var float got = 0.0\n"
+        "got := f()\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.got != 0.0
+
+
+def test_a_named_intermediate_may_be_computed_under_an_if():
+    """A value is not a state machine. `var` updates have to run every bar
+    wherever the call sits, and are still refused under an `if`; a named
+    intermediate computed only on the bars that read it is the same strategy."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f(p) =>\n"
+        f"    d = {_BIG_LOCAL}\n"
+        "    e = d + d\n"
+        "    e\n"
+        "if close > open\n"
+        "    if f(5) > 0\n        strategy.close()\n"
+    )
+    assert convert(source).ok
+
+
+def test_a_function_that_keeps_state_is_still_refused_under_an_if():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "f() =>\n"
+        "    var int n = 0\n"
+        "    n := n + 1\n"
+        "    n\n"
+        "if close > open\n"
+        "    if f() > 0\n        strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("every bar" in item for item in result.unsupported)
+
+
+def test_history_of_an_indicator_call_reads_the_line_at_an_offset():
+    """`ta.ema(close, 20)[1]` is the previous bar of a line that has to exist
+    for the current bar to be readable at all."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float got = 0.0\n"
+        "got := ta.ema(close, 5)[1]\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.got > 0.0
+
+
+def test_history_of_an_indicator_call_is_the_previous_bar():
+    """Pinned against the line read directly, so an off-by-one here shows up
+    as a difference rather than as a plausible number."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float now = 0.0\n"
+        "var float before = 0.0\n"
+        "now := ta.ema(close, 5)\n"
+        "before := ta.ema(close, 5)[1]\n"
+    )
+    strategy = _instance(source, frame=_price_frame(bars=60))
+    assert strategy.now != strategy.before
+
+
+# --- lookahead ---------------------------------------------------------------
+
+
+_SECURITY = (
+    '//@version=6\nstrategy("S")\n'
+    'x = request.security(syminfo.tickerid, "240", close, {settings})\n'
+    "if x > 0\n    strategy.close()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "lookahead=barmerge.lookahead_on",
+        "barmerge.gaps_off, barmerge.lookahead_on",
+        "barmerge.gaps_on, barmerge.lookahead_on",
+    ],
+)
+def test_lookahead_on_is_refused_wherever_it_sits(settings):
+    """Regression, and the worst kind this converter can have. Pine takes
+    `lookahead` positionally as well as by name, and only the keyword form was
+    checked -- so the positional spelling converted clean and read the
+    higher-timeframe bar before it closed. That is a backtest that cannot lose,
+    on data the strategy could not have had."""
+    result = convert(_SECURITY.format(settings=settings))
+    assert not result.ok
+    assert any("before it closes" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    ["barmerge.gaps_off, barmerge.lookahead_off", "lookahead=barmerge.lookahead_off"],
+)
+def test_lookahead_off_is_the_normal_case_and_still_converts(settings):
+    assert convert(_SECURITY.format(settings=settings)).ok
