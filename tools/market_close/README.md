@@ -6,7 +6,6 @@ renders a script with Eleven v3 audio tags — with every number already spelled
 way it should be spoken.
 
 ```bash
-python -m tools.market_close --intro                       # fixed channel intro, no data
 python -m tools.market_close --demo                        # canned session, no credentials
 python -m tools.market_close --free --preview              # live data, no credentials
 python -m tools.market_close --preview                     # tape and movers only
@@ -58,28 +57,6 @@ makes it usable as a guard in a scheduled run.
 Rendering segment by segment is not fussiness. v3 holds a performance together
 better across a few sentences than across a whole broadcast, and a bad take on the
 kicker should cost you one re-roll rather than the night's work.
-
-## The channel intro
-
-`--intro` emits something else entirely: the fixed intro video that sits at the top
-of the feed and explains what the show is. It is evergreen copy rather than a render
-of anything — the same text every time — so you write it once, record it once, and
-reuse it until the format itself changes.
-
-```bash
-python -m tools.market_close --intro --segments intro/
-```
-
-Because it asserts no figures it needs no market data, which makes it the one script
-here that runs with no `PWB_API_KEY`, no Hugging Face login and no network at all;
-`--demo` and `--free` have nothing to fall back from. It mirrors the episode's own
-shape — cold open, body, straight beat, sign-off — so it teaches the format by being
-the format, and it carries the same commitments as the daily straight beat.
-
-`--anchor` and `--show` do not reach it: the copy names Toadchu Yall and the Market
-Close inside its own sentences, so there is nothing to substitute. `--kicker-file` is
-ignored. `--out`, `--segments` and the digit check work exactly as they do for a
-daily script.
 
 ## Noise or news
 
@@ -165,7 +142,6 @@ string concatenation rather than wrapping for source readability.
 
 | flag | effect |
 |------|--------|
-| `--intro` | the fixed channel intro instead of a daily script; no data, no network |
 | `--demo` | canned session; no network, no `PWB_API_KEY` |
 | `--free` | live data from Yahoo; no API key or login needed |
 | `--date YYYY-MM-DD` | override the session date, which also reseeds the rotation |
