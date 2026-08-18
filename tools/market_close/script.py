@@ -100,6 +100,16 @@ BREADTH_NARROW = [
     "[pause] because it doesn't fit in the headline.",
 ]
 
+BREADTH_EVEN = [
+    "Roughly as many names fell as rose. [pause] Which tomorrow's headline will "
+    "call either a rally or a selloff, [pause] depending entirely on the "
+    "headline.",
+    "It was an even split. [pause] Half the market disagreed with the other "
+    "half, and the index quietly averaged them into one number.",
+    "Breadth was a coin flip. [pause] There is probably a lesson in that. "
+    "[exhales] I'm not going to go looking for it.",
+]
+
 BREADTH_BROAD = [
     "Breadth was healthy — most names participated. [pause] That's rarer "
     "than it sounds, and nobody will mention it tomorrow.",
@@ -109,6 +119,12 @@ BREADTH_BROAD = [
     "[pause] and which is usually just everyone reading the same screen.",
     "Participation was wide tonight. [pause] Enjoy it. [pause] It doesn't " "last.",
 ]
+
+BREADTH_BANKS = {
+    "narrow": BREADTH_NARROW,
+    "even": BREADTH_EVEN,
+    "broad": BREADTH_BROAD,
+}
 
 GAINER_JOKES = [
     "[pause] By tomorrow morning there will be nine explanations for that, "
@@ -265,15 +281,17 @@ def tape(facts: MarketFacts) -> str | None:
     ]
     body = ". ".join(_capitalize(clause) for clause in clauses) + "."
 
-    bank = BREADTH_NARROW if facts.is_narrow else BREADTH_BROAD
-    joke = pick(bank, facts.session_date, "breadth")
+    state = facts.breadth_state
+    if state is None:
+        # Too few names to characterise breadth. Drop the line rather than
+        # assert something the data doesn't support.
+        return f"[THE TAPE]\n\n{body}"
 
-    counts = ""
-    if facts.breadth_total >= 20:
-        counts = (
-            f"[pause] {_capitalize(spoken.int_to_words(facts.advancers))} names "
-            f"rose, {spoken.int_to_words(facts.decliners)} fell.\n"
-        )
+    counts = (
+        f"[pause] {_capitalize(spoken.int_to_words(facts.advancers))} names "
+        f"rose, {spoken.int_to_words(facts.decliners)} fell.\n"
+    )
+    joke = pick(BREADTH_BANKS[state], facts.session_date, "breadth")
 
     return f"[THE TAPE]\n\n{body}\n{counts}[pause] {joke}"
 

@@ -7,10 +7,34 @@ way it should be spoken.
 
 ```bash
 python -m tools.market_close --demo                        # canned session, no credentials
+python -m tools.market_close --free --preview              # live data, no credentials
 python -m tools.market_close --preview                     # tape and movers only
 python -m tools.market_close --kicker-file kicker.txt --out close.txt
 python -m tools.market_close --segments render/            # one file per block
 ```
+
+## Credentials, and doing without them
+
+By default the data comes from `pwb_toolbox.datasets`, which wants a `PWB_API_KEY`
+or an `HF_ACCESS_TOKEN`. Without one, `load_dataset` falls back to yfinance for only
+four dataset families — stocks, ETFs, crypto and forex — so the tape, the rates line
+and crude have no free path at all, and movers costs one full-history request per
+symbol.
+
+`--free` skips that layer and goes to Yahoo directly, in two batched requests:
+
+| segment | default source | `--free` source |
+|---|---|---|
+| tape | SPX, CCMP, INDU | SPY, QQQ, DIA |
+| movers | S&P 500 | 40 mega caps |
+| rates | US10Y | `^TNX` |
+| crude | CL1 | `CL=F` |
+| bitcoin | BTC | `BTC-USD` |
+
+**Free mode names the proxies for what they are.** SPY is not the S&P 500 — it tracks
+it, and on a given day the two differ by a basis point or two, so the script says "the
+S and P five hundred E T F" rather than quoting a fund's move as the index's. Same rule
+as everywhere else here: report what you measured. It's a cheaper seat and it says so.
 
 ## The daily loop
 
@@ -90,6 +114,7 @@ string concatenation rather than wrapping for source readability.
 | flag | effect |
 |------|--------|
 | `--demo` | canned session; no network, no `PWB_API_KEY` |
+| `--free` | live data from Yahoo; no API key or login needed |
 | `--date YYYY-MM-DD` | override the session date, which also reseeds the rotation |
 | `--kicker-file PATH` | hand-written kicker for the `[KICKER]` slot |
 | `--names PATH` | JSON `{"TICKER": "spoken name"}`, merged over the built-ins |

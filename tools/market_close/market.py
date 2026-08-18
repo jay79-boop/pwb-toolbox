@@ -143,15 +143,30 @@ class MarketFacts:
         return self.advancers + self.decliners
 
     @property
-    def is_narrow(self) -> bool:
-        """True when the session's gains were carried by a minority of names.
+    def breadth_state(self) -> str | None:
+        """``narrow``, ``even`` or ``broad`` — ``None`` when the sample is thin.
 
-        Backs the "breadth was narrow" line with something real, so the joke
-        about calling it broad-based only fires when it is actually earned.
+        Backs the breadth line with something real, so "breadth was narrow" and
+        "most names participated" each only fire when earned. The middle band
+        matters: at a near-even split neither claim is true, and asserting one
+        would be the same failure as inventing a cause for a move.
+
+        ``None`` below twenty names — too small a sample to characterise, so the
+        renderer drops the line rather than guessing.
         """
         if self.breadth_total < 20:
-            return False
-        return self.advancers < 0.45 * self.breadth_total
+            return None
+        share = self.advancers / self.breadth_total
+        if share < 0.45:
+            return "narrow"
+        if share > 0.55:
+            return "broad"
+        return "even"
+
+    @property
+    def is_narrow(self) -> bool:
+        """True when the session's gains were carried by a minority of names."""
+        return self.breadth_state == "narrow"
 
     @property
     def direction(self) -> str:
