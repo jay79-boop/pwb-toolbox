@@ -2792,10 +2792,11 @@ def test_pivot_argument_forms(call, expected):
     ],
 )
 def test_pivot_calls_outside_the_subset_are_reported(call, reason):
+    """`osc` and `n` are conditional here, which no single line can be."""
     source = (
         '//@version=6\nstrategy("S")\n'
-        "osc = close - open\n"
-        "n = 3 + 2\n"
+        "osc = close > open ? high : low\n"
+        "n = close > open ? 3 : 5\n"
         f"v = {call}\n"
         "if not na(v)\n    strategy.close()\n"
     )
@@ -2820,3 +2821,169 @@ def test_generated_pivot_strategy_responds_to_its_bar_counts():
     _, tight = _run(PIVOT_STRATEGY, leftBars=2, rightBars=2)
     _, wide = _run(PIVOT_STRATEGY, leftBars=15, rightBars=15)
     assert tight != wide
+
+
+# --- computed values as indicator sources ------------------------------------
+
+WAVETREND = """//@version=6
+strategy("WaveTrend")
+chLen = input.int(9, "Channel")
+avgLen = input.int(12, "Average")
+esa = ta.ema(hlc3, chLen)
+d = ta.ema(math.abs(hlc3 - esa), chLen)
+ci = (hlc3 - esa) / (0.015 * d)
+wt1 = ta.ema(ci, avgLen)
+wt2 = ta.sma(wt1, 4)
+if ta.crossover(wt1, wt2)
+    strategy.entry("l", strategy.long)
+if ta.crossunder(wt1, wt2)
+    strategy.close()
+"""
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("hlc3", "(self.data.high + self.data.low + self.data.close) / 3"),
+        ("hl2", "(self.data.high + self.data.low) / 2"),
+        ("close - open", "(self.data.close - self.data.open)"),
+        ("close * 2", "(self.data.close * 2)"),
+        ("-close", "(-self.data.close)"),
+        ("close[1]", "self.data.close(-1)"),
+        ("math.abs(close - open)", "abs((self.data.close - self.data.open))"),
+    ],
+)
+def test_an_expression_can_be_an_indicator_source(source, expected):
+    """Backtrader overloads arithmetic on lines, so a composition is a line.
+
+    Note `close[1]` becomes `close(-1)`, the line delayed by a bar, and not
+    `close[-1]`, which would be a *read* -- and `__init__` runs before there
+    is a bar to read.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        f"ma = ta.sma({source}, 10)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert expected in result.code
+
+
+def test_a_computed_local_is_promoted_to_a_line_when_one_is_needed():
+    """`ci = ...` then `ta.ema(ci, n)` is the commonest shape in the corpus."""
+    result = convert(WAVETREND)
+    assert result.ok, result.unsupported
+    setup = result.code.split("def __init__")[1].split("def ")[0]
+    assert "self._line_ci_3 = ((((self.data.high" in setup
+    assert "bt.indicators.EMA(self._line_ci_3, period=self.p.avgLen)" in setup
+
+
+def test_the_promoted_line_and_the_scalar_agree():
+    """The same expression is lowered twice, so the two must not diverge.
+
+    One reads per-bar values in `next()`, the other is composed by Backtrader
+    from the same lines. If they disagreed, which one a strategy saw would
+    depend on whether anything happened to ask for a line.
+    """
+    result = convert(WAVETREND)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            if len(self) > 60:
+                high, low, close = (
+                    self.data.high[0],
+                    self.data.low[0],
+                    self.data.close[0],
+                )
+                hlc3 = (high + low + close) / 3
+                hand = (hlc3 - self._ema_1[0]) / (0.015 * self._ema_2[0])
+                seen.append((self._line_ci_3[0], hand))
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(Watched)
+    cerebro.run()
+
+    assert len(seen) > 100
+    for line_value, hand_value in seen:
+        assert line_value == pytest.approx(hand_value, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # A conditional value is not one line.
+        "osc = close > open ? high : low\n",
+        # Reassigned, so it is a different value later.
+        "osc = 0.0\nif close > open\n    osc := high - low\n",
+        # A var is one number carried forward, not a series.
+        "var float osc = 0.0\nosc := high - low\n",
+        "osc = high - low\nosc := osc * 2\n",
+        # Written on some bars only: a line would compute it on every one.
+        "if close > open\n    osc = high - low\n",
+        # Two assignments mean two different things.
+        "osc = high - low\nosc = close - open\n",
+    ],
+)
+def test_a_value_that_is_not_one_series_is_not_promoted(setup):
+    """Promotion has to be refused wherever a single line would be a lie.
+
+    Each case here trips a *different* rule. An earlier version of this test
+    looked broad but every case was rejected by the same one, and loosening
+    either of the others passed the whole suite.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n' + setup + "ma = ta.sma(osc, 10)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("not a plain series" in item for item in result.unsupported)
+
+
+def test_a_ternary_is_not_lowered_to_a_line():
+    """`bt.If` evaluates both branches, which defeats a divide-by-zero guard.
+
+    `d != 0 ? x / d : 0` is written precisely so the division does not happen
+    when `d` is zero. As a line operation both arms are computed every bar and
+    it raises, so this stays a per-bar conditional in `next()` instead.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "d = high - low\n"
+        "safe = d != 0 ? (close - open) / d : 0.0\n"
+        "ma = ta.sma(safe, 10)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("not a plain series" in item for item in result.unsupported)
+
+
+def test_the_two_derived_series_spellings_stay_in_step():
+    """One definition, two renderings -- a drift between them is a wrong number."""
+    from pwb_toolbox.converting.backtrader import DERIVED_LINES, DERIVED_SERIES
+
+    assert set(DERIVED_LINES) == set(DERIVED_SERIES)
+    for name, line in DERIVED_LINES.items():
+        assert DERIVED_SERIES[name] == line.replace(".high", ".high[{i}]").replace(
+            ".low", ".low[{i}]"
+        ).replace(".close", ".close[{i}]").replace(".open", ".open[{i}]")
+
+
+def test_generated_wavetrend_runs_and_trades():
+    """The whole WaveTrend core, which none of this could convert before."""
+    value, closed = _run(WAVETREND)
+    assert closed > 0
+    assert value != 10_000.0
+
+
+def test_generated_wavetrend_responds_to_its_inputs():
+    _, fast = _run(WAVETREND, chLen=4, avgLen=5)
+    _, slow = _run(WAVETREND, chLen=30, avgLen=40)
+    assert fast != slow

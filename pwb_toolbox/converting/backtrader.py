@@ -77,7 +77,13 @@ Pine's trade counters are the seventh. Backtrader keeps no ledger of closed
 trades, so one is built from ``notify_trade`` -- but only in strategies that
 ask for it. See ``_TRADES_HELPER``.
 
-``ta.pivothigh`` and ``ta.pivotlow`` are the eighth. Backtrader has no pivot
+Composed expressions as indicator sources are the eighth. Backtrader overloads
+arithmetic on lines, so ``ta.ema(hlc3 - close, n)`` is a line fed to an
+indicator -- and a value the script assigned as an ordinary number is lowered a
+second time, as a line, when something asks for it as a source. See
+:meth:`_Generator._line_expr` and :meth:`_Generator._promote`.
+
+``ta.pivothigh`` and ``ta.pivotlow`` are the ninth. Backtrader has no pivot
 indicator, so one is emitted alongside the strategy. The bar under test is
 ``right`` bars back, which is what keeps it causal: a pivot is reported only
 once that many further bars have closed and confirmed it. See
@@ -87,6 +93,7 @@ A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
 """
 
+import collections
 import keyword
 import re
 from dataclasses import dataclass, field
@@ -144,6 +151,15 @@ INDICATORS = {
 #: recovers the direction Pine means.
 PIVOTS = ("ta.pivothigh", "ta.pivotlow")
 
+#: Operators Backtrader overloads on line objects to give another line.
+#: Comparisons are deliberately absent: a truth value is not a source, and
+#: `bt.If` evaluates both branches, which would defeat the `d != 0 ? x / d : 0`
+#: guard scripts write precisely to avoid dividing by zero.
+_LINE_OPS = ("+", "-", "*", "/", "%")
+
+#: Math that composes on lines rather than on numbers.
+_LINE_MATH = {"math.abs": "abs", "math.max": "bt.Max", "math.min": "bt.Min"}
+
 CROSSES = {
     "ta.crossover": "> 0",
     "ta.crossunder": "< 0",
@@ -162,11 +178,20 @@ PRICE_SERIES = {
 }
 
 #: Pine's derived price series, which Backtrader has no line for. ``{d}`` is
-#: the feed, ``{i}`` the bar offset.
+#: the feed. Composed of whole lines, so this is itself a line and can be fed
+#: to an indicator.
+DERIVED_LINES = {
+    "hl2": "({d}.high + {d}.low) / 2",
+    "hlc3": "({d}.high + {d}.low + {d}.close) / 3",
+    "ohlc4": "({d}.open + {d}.high + {d}.low + {d}.close) / 4",
+}
+
+#: The same, as per-bar reads for ``next()``, with ``{i}`` the bar offset.
+#: Derived rather than written twice: two spellings of one definition drift,
+#: and a mismatch between them would be a wrong number, not a failure.
 DERIVED_SERIES = {
-    "hl2": "({d}.high[{i}] + {d}.low[{i}]) / 2",
-    "hlc3": "({d}.high[{i}] + {d}.low[{i}] + {d}.close[{i}]) / 3",
-    "ohlc4": ("({d}.open[{i}] + {d}.high[{i}] " "+ {d}.low[{i}] + {d}.close[{i}]) / 4"),
+    name: re.sub(r"(\{d\}\.\w+)", r"\1[{i}]", expression)
+    for name, expression in DERIVED_LINES.items()
 }
 
 #: Pine timeframe strings mapped to a Backtrader (timeframe, compression).
@@ -759,6 +784,12 @@ class _Generator:
         self._uses_trades = False
         self._uses_entry = False
         self._uses_pivot = False
+        #: Pine name -> the expression it was assigned, for top-level plain
+        #: assignments only. Read by `_promote` when one is wanted as a line.
+        self._computed = {}
+        self._promoted = {}
+        self._promoting = set()
+        self._promotable = self._promotable_names()
         self.functions = program.functions
         #: Names currently being inlined, so recursion is caught rather than
         #: followed. A stack catches mutual recursion as well as direct.
@@ -1130,24 +1161,99 @@ class _Generator:
     def _line_expr(self, node):
         """Lower an expression for ``__init__``, where values are line objects.
 
+        Backtrader overloads arithmetic on lines, so a composed expression is
+        a line too and can be fed straight to an indicator. That is what lets
+        ``ta.ema(hlc3 - close, 10)`` work at all: the operators here mean the
+        same thing they mean in :meth:`_value_expr`, evaluated per bar by
+        Backtrader rather than by the generated ``next()``.
+
         Returns ``None`` when the expression cannot be expressed as a line.
         """
         if isinstance(node, Name):
             if node.id in PRICE_SERIES:
                 return f"{self._feed}.{PRICE_SERIES[node.id]}"
+            if node.id in DERIVED_LINES:
+                # `hlc3` is arithmetic over three lines, which is a line.
+                return "(" + DERIVED_LINES[node.id].format(d=self._feed) + ")"
             if node.id in self.series:
                 return f"self.{self.series[node.id]}"
             if node.id in self.param_names:
                 return f"self.p.{_safe(node.id)}"
-            return None
+            return self._promote(node.id)
         if isinstance(node, Num):
             return repr(_literal(node))
+        if isinstance(node, Index):
+            offset = _literal(node.offset)
+            if not isinstance(offset, int):
+                return None
+            base = self._line_expr(node.base)
+            # `close(-1)` is the line delayed by a bar. `close[-1]` would be a
+            # read, and __init__ runs before there is a bar to read.
+            return None if base is None else f"{base}({-offset})"
+        if isinstance(node, Unary):
+            if node.op != "-":
+                return None
+            operand = self._line_expr(node.operand)
+            return None if operand is None else f"(-{operand})"
+        if isinstance(node, Binary):
+            if node.op not in _LINE_OPS:
+                # Comparisons and `and`/`or` do have Backtrader equivalents,
+                # but a truth value is not a source, and `bt.If` evaluates
+                # both of its branches -- see `_promote`.
+                return None
+            left = self._line_expr(node.left)
+            right = self._line_expr(node.right)
+            if left is None or right is None:
+                return None
+            return f"({left} {node.op} {right})"
         if isinstance(node, Call):
             if node.func in self.functions:
                 inlined = self._inline_call(node)
                 return None if inlined is None else self._line_expr(inlined)
+            if node.func in _LINE_MATH or node.func in ("math.pow", "math.avg"):
+                parts = [self._line_expr(arg) for arg in node.args]
+                if not parts or any(part is None for part in parts):
+                    return None
+                if node.func == "math.pow":
+                    if len(parts) != 2:
+                        return None
+                    # `**` rather than math.pow, matching what `_value_expr`
+                    # emits: the two must not disagree about the same call.
+                    return f"({parts[0]} ** {parts[1]})"
+                if node.func == "math.avg":
+                    return f"(({' + '.join(parts)}) / {len(parts)})"
+                return f"{_LINE_MATH[node.func]}({', '.join(parts)})"
             return self._hoist_indicator(node)
         return None
+
+    def _promote(self, name):
+        """Build a line for a value that was computed as a scalar in ``next()``.
+
+        ``_ci = (hlc3 - _esa) / (0.015 * _d)`` followed by ``ta.sma(_ci, n)``
+        is the commonest shape in the corpus, and the assignment on its own
+        gives a number per bar rather than a line to hand an indicator. The
+        expression is lowered a second time, as a line, and cached.
+
+        Only an unconditional single assignment qualifies. One made inside an
+        ``if`` holds a value on some bars and not others, and one that is
+        reassigned with ``:=`` is a different value later -- a line built from
+        either would be right only by accident.
+        """
+        if name in self._promoted:
+            return self._promoted[name]
+        node = self._computed.get(name)
+        if node is None or name in self._promoting:
+            return None
+        self._promoting.add(name)
+        try:
+            lowered = self._line_expr(node)
+        finally:
+            self._promoting.discard(name)
+        if lowered is None:
+            return None
+        handle = self._hoist(f"line_{_safe(name)}", lowered)
+        self._promoted[name] = handle
+        return handle
 
     def _hoist_indicator(self, call):
         """Build a Backtrader indicator in ``__init__`` and return its handle."""
@@ -1810,6 +1916,10 @@ class _Generator:
 
         value = self._value_expr(statement.value)
         self.scalars.add(statement.target)
+        if statement.target in self._promotable:
+            # Kept so `ta.sma(thisName, n)` later on can build the same
+            # expression as a line; see `_promote`.
+            self._computed[statement.target] = statement.value
         self.next_lines.append(f"{pad}{_safe(statement.target)} = {value}")
 
     def _declare_state(self, statement):
@@ -1895,6 +2005,40 @@ class _Generator:
         self.next_lines.append(f"{pad}self._pine_entry({arguments})")
 
     # --- assembly ------------------------------------------------------------
+
+    def _promotable_names(self):
+        """Names whose one top-level assignment can stand for them everywhere.
+
+        A name assigned twice, or reassigned with ``:=``, or assigned inside a
+        block, means different things on different bars. A single line object
+        cannot say that, so those are left as the per-bar scalars they are.
+        """
+        assigned = collections.Counter()
+        barred = set()
+
+        def scan(statements, nested):
+            for statement in statements:
+                if isinstance(statement, If):
+                    # Anything written under a condition is conditional.
+                    scan(statement.body, True)
+                    scan(statement.orelse, True)
+                    continue
+                if isinstance(statement, TupleAssign):
+                    barred.update(statement.targets)
+                    continue
+                if not isinstance(statement, Assign):
+                    continue
+                if nested or statement.qualifier:
+                    barred.add(statement.target)
+                else:
+                    assigned[statement.target] += 1
+
+        scan(self.program.body, False)
+        return {
+            name
+            for name, count in assigned.items()
+            if count == 1 and name not in barred
+        }
 
     def _check_declaration(self):
         """Report declaration settings the translation cannot honour.
