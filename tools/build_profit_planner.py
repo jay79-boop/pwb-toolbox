@@ -110,20 +110,21 @@ TP_HEADER = 12
 TP_RUNG_FIRST = 13
 TP_RUNG_LAST = 26
 
-# (gain above your average cost, share of the position sold at that rung).
-# Sums to 95%, leaving a deliberate 5% riding rather than mechanically
-# closing the whole position at the top rung.
+# (gain above your average cost, share of what is still held at that rung).
+# Shares of the remainder rather than of the original position, so the plan
+# cannot oversell and every rung re-sizes when one above it changes. They
+# compound to roughly 90% sold, leaving a tenth of the position riding.
 TP_RUNGS = [
     (0.05, 0.10),
-    (0.10, 0.15),
+    (0.10, 0.10),
     (0.15, 0.15),
     (0.20, 0.15),
-    (0.25, 0.10),
-    (0.30, 0.10),
-    (0.40, 0.05),
-    (0.50, 0.05),
-    (0.75, 0.05),
-    (1.00, 0.05),
+    (0.25, 0.20),
+    (0.30, 0.20),
+    (0.40, 0.25),
+    (0.50, 0.25),
+    (0.75, 0.30),
+    (1.00, 0.33),
 ]
 
 
@@ -270,25 +271,25 @@ LADDERS: list[Ladder] = [
     Ladder(
         "Gala",
         [
-            Rung(0.06, 0.10),
+            Rung(0.06, 0.15),
             Rung(0.08, 0.20),
             Rung(0.10, 0.25),
-            Rung(0.12, 0.25),
-            Rung(0.14, 0.20),
+            Rung(0.12, 0.30),
+            Rung(0.14, 0.40),
         ],
         "Price targets are the old sheet's. The old ladder sold 3,563 coins at "
         "the last rung when only 891 were left, booking ~$374 of profit on "
-        "coins it had already sold; percentages here are of the original "
-        "position and column P checks they total 100%.",
+        "coins it had already sold. Each rung here is a share of what is still "
+        "held when it is reached, so the plan cannot oversell itself.",
     ),
     Ladder(
         "Cardano",
         [
-            Rung(1.25, 0.10),
+            Rung(1.25, 0.15),
             Rung(2.00, 0.20),
             Rung(2.50, 0.25),
-            Rung(2.75, 0.25),
-            Rung(3.09, 0.20),
+            Rung(2.75, 0.30),
+            Rung(3.09, 0.40),
         ],
         "Price targets are the old sheet's. The old sheet held three identical "
         "copies of this ladder on one tab; this is the one copy.",
@@ -790,7 +791,7 @@ def build_ladder(wb: Workbook):
         "Target price",
         "Multiple",
         "Units to sell",
-        "% of position",
+        "% of remainder",
         "Gross",
         "Fees",
         "Est. tax",
@@ -838,10 +839,22 @@ def build_ladder(wb: Workbook):
         # Same rule as Ticker Plan: the quantity is what you type and the
         # percentage is what you read. It arrives as a live share of the
         # position and is yours to overwrite.
+        sold_before = (
+            "0"
+            if row == LADDER_FIRST
+            else (
+                f"SUMIFS($H${LADDER_FIRST}:$H{row - 1},"
+                f"$A${LADDER_FIRST}:$A{row - 1},$A{row})"
+            )
+        )
         qty = ws.cell(
             row=row,
             column=8,
-            value=f"=ROUND({seed[2].pct}*$B{row},6)" if seed else None,
+            value=(
+                f"=ROUND({seed[2].pct}*MAX(0,$B{row}-{sold_before}),6)"
+                if seed
+                else None
+            ),
         )
         qty.number_format = QTY
 
@@ -868,20 +881,15 @@ def build_ladder(wb: Workbook):
         empty = f'OR({blank},$B{row}="",$C{row}="",$F{row}="",$H{row}="")'
         # No rung may sell what the rungs above it already sold. Scoped to the
         # asset, so ladders for different coins can be interleaved.
-        sold_above = (
-            "0"
-            if row == LADDER_FIRST
-            else (
-                f"SUMIFS($H${LADDER_FIRST}:$H{row - 1},"
-                f"$A${LADDER_FIRST}:$A{row - 1},$A{row})"
-            )
-        )
-        used = f"MIN($H{row},MAX(0,$B{row}-{sold_above}))"
+        remaining = f"MAX(0,$B{row}-{sold_before})"
+        used = f"MIN($H{row},{remaining})"
         ws.cell(
             row=row, column=7, value=f'=IF(OR({empty},$C{row}=0),"",$F{row}/$C{row})'
         ).number_format = MULT
         ws.cell(
-            row=row, column=9, value=f'=IF(OR({empty},$B{row}=0),"",{used}/$B{row})'
+            row=row,
+            column=9,
+            value=f'=IF(OR({empty},{remaining}=0),"",{used}/{remaining})',
         ).number_format = PCT
         ws.cell(
             row=row, column=10, value=f'=IF({empty},"",{used}*$F{row})'
@@ -1044,12 +1052,12 @@ def build_ticker_plan(wb: Workbook):
         (3, "Units held", 1000, QTY, True),
         (4, "Average cost", 1.00, MONEY, True),
         (5, "Price mode", "Auto", None, True),
-        (6, "Manual price", 1.00, MONEY, True),
+        (6, "Your price", 1.00, MONEY, True),
         # Manual has to be able to win. As a fallback only, a coin the feed
         # does carry ignored the price typed beside it with nothing to say so.
         (
             7,
-            "Live price",
+            "Price used",
             f'=IF({mode}="Manual",{manual},IFERROR(GOOGLEFINANCE({ticker}),{manual}))',
             MONEY,
             False,
@@ -1204,7 +1212,7 @@ def build_ticker_plan(wb: Workbook):
         "Net cash",
         "Net profit",
         "Units to sell",
-        "% of position",
+        "% of remainder",
         "Gross",
         "Net cash",
         "Cash so far",
@@ -1234,17 +1242,18 @@ def build_ticker_plan(wb: Workbook):
 
         gain = ws.cell(row=r, column=2, value=seed[0] if seed else None)
         gain.number_format = PCT0
-        # Amber and pre-filled: a live default share of the position until you
-        # type a number of your own over it.
+        sold_above = "0" if r == first else f"SUM($H${first}:$H{r - 1})"
+        # Each rung is a share of what the rungs above it left, not of the
+        # original position. Change any quantity and every rung below re-sizes
+        # against the units that actually remain.
+        remaining = f"MAX(0,{units}-{sold_above})"
+        used = f"MIN($H{r},{remaining})"
         qty = ws.cell(
             row=r,
             column=8,
-            value=f"=ROUND({seed[1]}*{units},6)" if seed else None,
+            value=f"=ROUND({seed[1]}*{remaining},6)" if seed else None,
         )
         qty.number_format = QTY
-
-        sold_above = "0" if r == first else f"SUM($H${first}:$H{r - 1})"
-        used = f"MIN($H{r},MAX(0,{units}-{sold_above}))"
         blank = f'$B{r}=""'
         noqty = f'OR($B{r}="",$H{r}="")'
 
@@ -1271,7 +1280,7 @@ def build_ticker_plan(wb: Workbook):
         ws.cell(
             row=r,
             column=9,
-            value=f'=IF(OR({noqty},{units}=0),"",{used}/{units})',
+            value=f'=IF(OR({noqty},{remaining}=0),"",{used}/{remaining})',
         ).number_format = PCT
         ws.cell(
             row=r, column=10, value=f'=IF({noqty},"",{used}*$C{r})'
@@ -1386,12 +1395,15 @@ def build_ticker_plan(wb: Workbook):
         row=last + 2,
         column=2,
         value=(
-            "Type units, read percentages. Every unit cell starts as a share of "
-            "the position and is yours to overwrite. No rung can sell what the "
-            "rungs above it already sold — go past what you hold and the status "
-            "reads Oversold, the tiles turn red, and the cash stops counting "
-            "units that are gone. Set Price mode to Manual to pin a price the "
-            "feed would otherwise overrule."
+            "Type units, read percentages. Every unit cell is a share of what "
+            "the rungs above it left, so changing one re-sizes every rung "
+            "below it against the units that actually remain — and the plan "
+            "cannot sell what you no longer hold.\n"
+            "Price mode decides where Price used comes from. On Auto it is "
+            "the live feed, and Your price is only the fallback for a ticker "
+            "the feed does not carry. On Manual, Your price wins outright — "
+            "which is how you ask what the plan looks like if this thing "
+            "reaches $3, without waiting for the market to get there."
         ),
     )
     note.font = SMALL_F

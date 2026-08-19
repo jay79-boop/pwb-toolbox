@@ -91,10 +91,15 @@ def test_position_sectors_are_in_the_dropdown_list():
 
 
 def test_ladders_never_sell_more_than_the_position():
-    """The old Gala ladder sold 3,563 coins with 891 left."""
+    """The old Gala ladder sold 3,563 coins with 891 left.
+
+    Shares of the remainder cannot add up past the position however many rungs
+    there are, which removes the failure by construction rather than by check.
+    """
     for ladder in LADDERS:
-        total = sum(rung.pct for rung in ladder.rungs)
-        assert total == pytest.approx(1.0), f"{ladder.asset} sells {total:.0%}"
+        shares = [rung.pct for rung in ladder.rungs]
+        assert all(0 < pct <= 1 for pct in shares), ladder.asset
+        assert 0 < _riding(shares) < 0.5, ladder.asset
 
 
 def test_ladder_targets_rise_monotonically():
@@ -191,13 +196,23 @@ def test_workbook_saves(wb, tmp_path):
     assert reopened.sheetnames == wb.sheetnames
 
 
+def _riding(pcts):
+    """What is left after every rung takes its share of the remainder."""
+    left = 1.0
+    for pct in pcts:
+        left *= 1 - pct
+    return left
+
+
 def test_ticker_plan_rungs_rise_and_do_not_oversell():
     gains = [gain for gain, _ in TP_RUNGS]
     assert gains == sorted(gains)
     assert all(gain > 0 for gain in gains)
-    sold = sum(pct for _, pct in TP_RUNGS)
-    assert sold <= 1.0, f"the seeded plan sells {sold:.0%} of the position"
-    assert sold > 0.5, "a plan that sells almost nothing is not a plan"
+    shares = [pct for _, pct in TP_RUNGS]
+    assert all(0 < pct <= 1 for pct in shares), "a share of the remainder"
+    riding = _riding(shares)
+    assert riding < 0.5, f"the seeded plan leaves {riding:.0%} riding"
+    assert riding > 0, "a plan that closes the position completely keeps no tail"
 
 
 def test_ticker_plan_fits_its_rows():
@@ -442,3 +457,32 @@ def test_an_oversold_plan_says_so(wb):
     ws = wb["Ticker Plan"]
     for row in range(TP_RUNG_FIRST, TP_RUNG_LAST + 1):
         assert '"Oversold"' in ws.cell(row=row, column=14).value
+
+
+def test_each_rung_resizes_against_what_is_left(wb):
+    """Changing one quantity has to move every rung below it.
+
+    A default that is a share of the original position ignores what the rungs
+    above it did — type four hundred into the first rung and the second still
+    asks for its original hundred and fifty.
+    """
+    for sheet, first, last in (
+        ("Ticker Plan", TP_RUNG_FIRST, TP_RUNG_LAST),
+        ("Exit Ladder", LADDER_FIRST, LADDER_LAST),
+    ):
+        ws = wb[sheet]
+        seeded = [
+            ws.cell(row=row, column=8).value
+            for row in range(first, last + 1)
+            if ws.cell(row=row, column=8).value
+        ]
+        assert seeded, sheet
+        for row_offset, formula in enumerate(seeded):
+            assert formula.startswith("=ROUND("), sheet
+            assert (
+                "MAX(0," in formula
+            ), f"{sheet} rung {row_offset} ignores the remainder"
+            if row_offset:
+                assert (
+                    "SUM($H$" in formula or "SUMIFS($H$" in formula
+                ), f"{sheet} rung {row_offset} ignores the rungs above it"
