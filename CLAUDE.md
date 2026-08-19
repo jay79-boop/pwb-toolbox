@@ -45,6 +45,13 @@ questions and make them count — use `AskUserQuestion` so they can click rather
 than type, lead each option list with a recommendation, and say which one you
 would pick and why.
 
+**Put it in a box they can click.** Anything that can be a choice should be one:
+`multiSelect: true` wherever more than one answer can be true at once, so they
+tick what they want instead of composing a reply. Their answers are often
+combinations — "do 1 but incorporate 2 and 3" — and a checkbox list gets that in
+one click. Prose is for the two cases a box cannot carry: a PowerShell step they
+have to run themselves, and an answer only they hold, like a number or a URL.
+
 **Push back.** They want the disagreement, not the compliance. If their framing
 has a flaw, say so before building to it. If something they asked for last week
 is now dead weight — an empty tab, a feature nothing reads — raise it rather than
