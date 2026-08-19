@@ -236,6 +236,57 @@ def test_a_login_page_is_not_read_as_an_empty_portfolio(tmp_path):
     assert "wants a login" in str(problem.value)
 
 
+UNFILLED_CSV = """Watch
+Plan,Holding,Ticker,Feed,Units held,Avg cost,Price,Weight,Next rung,Target price,Away,Units to sell,Net cash
+Plan 1,,,,,,,,,,,,
+Holdings
+Holding,Ticker,Class,Status,Feed,Units,Avg cost,Price,Market value,Weight,Unrealised %
+Bitcoin,CURRENCY:BTCUSD,Crypto,Active,live,0,$0.00,"$68,378.91",$0.00,0.0%,0.0%
+Ethereum,CURRENCY:ETHUSD,Crypto,Active,live,0,$0.00,"$2,096.18",$0.00,0.0%,0.0%
+"""
+
+
+def unfilled_rows():
+    import csv
+    import io
+
+    return list(csv.reader(io.StringIO(UNFILLED_CSV)))
+
+
+def test_a_live_price_on_nothing_held_is_not_a_calm_portfolio():
+    """The workbook opened, the prices arrived, and no position was entered.
+
+    Weight is 0.0, which is falsy, so the limit check short-circuits before it
+    compares anything; market value is 0 and movement has no history. Every
+    rule declines in silence and the run reads as an all-clear.
+    """
+    plans, holdings = parse(unfilled_rows())
+    report = check(plans, holdings, {}, max_weight=0.20)
+    assert not report.alerts
+    assert report.unfilled == ["Bitcoin", "Ethereum"]
+    assert "2 with a live price but no quantity" in report.text()
+    assert "Bitcoin, Ethereum" in report.text()
+    assert (
+        report.prices == {}
+    ), "a price for something you do not hold is not worth remembering"
+
+
+def test_no_plan_rows_says_the_rung_rule_cannot_fire():
+    plans, holdings = parse(unfilled_rows())
+    report = check(plans, holdings, {})
+    assert report.no_plans
+    assert "No plan rows to watch" in report.text()
+
+
+def test_a_filled_workbook_says_none_of_that():
+    plans, holdings = parse(rows())
+    report = check(plans, holdings, {}, max_weight=0.99)
+    assert not report.unfilled, "every fixture holding has a quantity"
+    assert not report.no_plans
+    assert "no quantity" not in report.text()
+    assert "No plan rows" not in report.text()
+
+
 def test_the_example_row_is_not_a_position():
     """It ships filled in to show the shape of a complete holding.
 
