@@ -397,6 +397,22 @@ def test_the_curve_of_2026_08_17_favours_holding_at_every_maturity_but_one():
 # --------------------------------------------------------------------------
 
 
+class _NetworkGuard:
+    """Stands in for ``fetch_curve`` and counts attempts.
+
+    Counting matters more than raising: the commands catch a failed fetch and
+    carry on with the rates they were given, so a stub that only raised would
+    be swallowed and the test would pass against the very bug it is here for.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, **kwargs):
+        self.calls += 1
+        raise AssertionError("the tests must not reach the network")
+
+
 def _live_available():
     curve = parse_bill_csv(LIVE_CSV)
     return {curve.days(w): r for w, r in curve.rates.items()}
@@ -515,13 +531,55 @@ def test_ladder_command_reports_the_real_seeds_and_the_build_cost(monkeypatch):
     assert "7.58" in result.output
 
 
-def test_ladder_command_does_not_pass_ideal_maturities_off_as_buyable():
+def test_ladder_command_does_not_pass_ideal_maturities_off_as_buyable(monkeypatch):
     # Offline the seeds are arithmetic, and saying otherwise would send someone
     # looking for a 23-day bill.
+    #
+    # The fetch is stubbed to fail rather than left to whether this machine can
+    # reach Treasury. An earlier version of this test relied on the latter: it
+    # passed in a container with no egress and failed on CI, which can reach
+    # home.treasury.gov and so took the online path. A test whose branch depends
+    # on the network is not testing the branch it names.
+    guard = _NetworkGuard()
+    monkeypatch.setattr(bill_ladder, "fetch_curve", guard)
     result = CliRunner().invoke(cli, ["ladder", "--rate", "3.81"])
     assert result.exit_code == 0, result.output
+    assert guard.calls == 0
     assert "not purchasable bills" in result.output
     assert "Unknown without the curve" in result.output
+
+
+def test_supplying_rates_never_reaches_for_the_curve(monkeypatch):
+    # The repo's rule is that tests need no network; the reason it holds for
+    # this tool is that every command runs on rates you can pass it. This is
+    # that promise as an assertion — the stub raises if anything dials out.
+    #
+    # `ladder` broke it: it fetched whenever --short-rate was omitted, so
+    # supplying --rate was not enough to stay offline.
+    guard = _NetworkGuard()
+    monkeypatch.setattr(bill_ladder, "fetch_curve", guard)
+    invocations = [
+        ["compare", "--roll-rate", "3.70", "--hold-rate", "3.81"],
+        ["ladder", "--rate", "3.81"],
+        ["ladder", "--rate", "3.81", "--short-rate", "3.70"],
+        ["savings", "--bill-rate", "3.81", "--savings-apy", "3.90"],
+    ]
+    for args in invocations:
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == 0, (args, result.output)
+        assert guard.calls == 0, f"{args} reached for the network"
+
+
+def test_the_live_flag_still_fetches(monkeypatch):
+    # The escape hatch has to keep working, or "offline by default" quietly
+    # becomes "offline always".
+    monkeypatch.setattr(
+        bill_ladder, "fetch_curve", lambda **kw: parse_bill_csv(LIVE_CSV)
+    )
+    result = CliRunner().invoke(cli, ["ladder", "--rate", "3.81", "--live"])
+    assert result.exit_code == 0, result.output
+    assert "2026-08-17" in result.output
+    assert "28d" in result.output
 
 
 def test_ladder_command_does_not_claim_liquidity_it_does_not_have(monkeypatch):

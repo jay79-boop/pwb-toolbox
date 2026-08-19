@@ -800,6 +800,7 @@ def savings(
     type=float,
     help="Shortest bill's rate, percent, to compare rolling against.",
 )
+@click.option("--live", is_flag=True, help="Force a fetch even if rates were given.")
 @click.option("--year", type=int)
 def ladder(
     weeks: int,
@@ -807,6 +808,7 @@ def ladder(
     principal: float,
     rate: float | None,
     short_rate: float | None,
+    live: bool,
     year: int | None,
 ) -> None:
     """Size a bill ladder: rungs, cadence, steady-state yield, cost to build.
@@ -815,8 +817,13 @@ def ladder(
     is a way to hold that maturity's yield while still having money come due on
     a schedule, so nothing has to be sold early to reach cash.
     """
+    # Fetch only for what the command genuinely cannot do without. --short-rate
+    # is an optional extra, and letting its absence pull the curve down made
+    # `--rate 3.81` quietly hit the network — which is both a surprise to anyone
+    # who supplied a rate precisely to avoid that, and a test that passes or
+    # fails depending on whether the machine running it can reach Treasury.
     bills = None
-    if rate is None or short_rate is None:
+    if rate is None or live:
         try:
             bills = fetch_curve(year=year)
         except Exception as exc:
