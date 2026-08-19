@@ -100,7 +100,10 @@ A worked example, for this repo's 21st MCP key:
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
-  `index.html` (the published landing page; see "Design tooling" below)
+  `index.html` (the published landing page; see "Design tooling" below) and
+  `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
+  DevTools Protocol — unrelated to the library, written down because the setup has
+  traps that otherwise get rediscovered every time)
 
 ## Environment
 
