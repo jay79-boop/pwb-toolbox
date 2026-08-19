@@ -7,15 +7,20 @@ execution, and performance analytics. Requires Python 3.10+.
 
 The owner works in **Claude Code running locally on their Windows machine**, in
 this repository, and talks to it in plain English rather than pasting shell
-commands. A cloud session at claude.ai/code is the fallback for when they are
-away from that machine.
+commands. Away from the desk they do not start a session somewhere else — they
+reach that same local session from their phone, over Remote Control, which is
+what lets them approve things without being at the keyboard. A scheduled task,
+`\ClaudeRemoteControl`, keeps one alive from logon so there is always something
+to attach to.
 
-The distinction is load-bearing, and getting it wrong cost two days once. A local
-session can touch `C:\Users\Gexio\...`, run their venv, and open the trade
-journal; a cloud session shares only GitHub with them and cannot reach their disk
-at all. Both see this identical repository, which is exactly why the two are easy
-to confuse. `.claude/hooks/session-orient.sh` states the rules at every session
-start, and the `gexio-machine` skill carries the diagnostic for working out which
+Cloud sessions do still exist, and this file is read by them, so the capability
+gap between the two is load-bearing — getting it wrong cost two days once. A
+local session can touch `C:\Users\Gexio\...`, run their venv, and open the
+trade journal. A cloud session shares only GitHub with them: it cannot read
+their disk, their scheduled tasks or their skills directory, and everything on
+that side has to be done by handing them a command and waiting for the output.
+Both see this identical repository, which is exactly why the two are easy to
+confuse. The `gexio-machine` skill carries the diagnostic for working out which
 one you are in — run it before writing a single command for them.
 
 They do not retain procedures between sittings, and should not have to. The
@@ -248,10 +253,60 @@ Two consequences worth knowing before working on it:
 
 Windows, PowerShell 5.1, at `C:\Users\Gexio\OneDrive\pwb-toolbox`, Python 3.12.
 
-**`origin` is `paperswithbacktest/pwb-toolbox`, the upstream project — not their
-fork.** Their fork is `jay79-boop/pwb-toolbox`, added as the remote `jay`.
-Telling them to `git pull origin main` pulls upstream and conflicts; branches
-pushed from here arrive via `git fetch jay <branch>`.
+**A second checkout exists at `C:\Users\Gexio\pwb-toolbox`, without the
+`OneDrive`, and the OneDrive one is canonical.** It holds the live feature
+branches and sits in a folder with version history behind it. Sessions have
+landed work in the other one by mistake, so always spell the OneDrive path out
+in a command rather than assuming the shell's working directory.
+
+**Do not read staleness out of an ahead/behind count.** An earlier version of
+this note recorded the OneDrive checkout as "sixteen files and 1,834 lines
+behind", and that was an artifact, not a fact — it was sitting on a feature
+branch whose `main` had simply never been fast-forwarded, and every file the
+note called missing was in fact present. Ahead/behind compares two refs, not two
+working trees, and it means nothing about currency when the refs are a feature
+branch and someone else's `main`. It is the same trap as the `[ahead 113,
+behind 1]` reading below. Check `git log` and the actual files before believing
+either.
+
+If you end up in that second checkout anyway, know that **its `.venv` is nearly
+empty**: the suite reads as broken when it is merely uninstalled, which sends you
+hunting a bug that does not exist. Install first, then run tests through the venv's
+own interpreter rather than a bare `pytest`:
+
+```
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+If teardown throws `PermissionError` on `pytest-current`, add
+`--basetemp="$TEMP/pwbtest"`. That is Windows symlink cleanup, not a test failure —
+worth saying because the traceback looks exactly like one.
+
+Separately, `.claude/settings.local.json` regrows dead permission entries on its
+own, so cleaning it is never a one-time fix. That is Claude Code behaviour rather
+than a fact about this repository, so it lives in the `gexio-machine` skill along
+with the fix — not restated here, for the same reason the NEEDS YOU rules are not.
+
+**`jay` and `upstream` now mean the same thing in both checkouts. `origin` does
+not.** As of 2026-08-18, both directories have `jay` = the fork
+(`jay79-boop/pwb-toolbox`) and `upstream` = the upstream project
+(`paperswithbacktest/pwb-toolbox`). `origin` is the one that still differs: it is
+**upstream** in the OneDrive checkout and **the fork** in the other, so a bare
+`git pull origin main` means two different things depending on which directory
+the shell happens to be in, and fails by succeeding against the wrong project
+rather than by erroring.
+
+**So use `jay` and `upstream` explicitly and never write a bare `origin`
+command.** `git fetch jay <branch>` now works identically in both — which was not
+true before: the second checkout had no `jay` remote at all, so the command this
+file documented silently failed there. It also had no route to upstream, which is
+why the OneDrive checkout was the only one that could open an upstream PR.
+
+Check what `main` tracks before reading anything into `git status`. Where it
+tracks `origin` and `origin` is upstream, the ahead/behind counts measure the
+fork against upstream and say nothing about whether the checkout is current — the
+`[ahead 113, behind 1]` seen on 2026-08-18 is that reading, not a health report.
 
 Running only `pwb_toolbox.scraping` and `pwb_toolbox.converting` needs six
 packages, not all of `requirements-dev.txt` (which drags in `transformers`,
