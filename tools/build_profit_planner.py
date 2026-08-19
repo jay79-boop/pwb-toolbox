@@ -729,9 +729,9 @@ def build_plan_tab(wb: Workbook, index: int):
     sheet_title(
         ws,
         f"Plan {index}",
-        "Pick a holding and the register fills the rest in. Amber cells are "
-        "yours to change. Right-click the tab and Duplicate it for a seventh "
-        "coin.",
+        "HOLDING is the name of a row on your Positions tab — pick one and the "
+        "ticker, quantity and cost arrive from it. Amber cells are yours to "
+        "change. Duplicate this tab for a seventh coin.",
         20,
     )
 
@@ -753,7 +753,9 @@ def build_plan_tab(wb: Workbook, index: int):
         return f'IFERROR({pos_lookup(column, holding)},"")'
 
     strip = [
-        (2, "Holding", None, None, True),
+        # Plan 1 opens already pointing at the example row: a dropdown nobody
+        # has used yet does not explain what it wants.
+        (2, "Holding", POSITIONS[0].asset if index == 1 else None, None, True),
         (3, "Ticker", f'=IF({holding}="","",{from_register("B")})', None, False),
         (4, "Units held", f'=IF({holding}="","",{from_register("G")})', QTY, True),
         (5, "Average cost", f'=IF({holding}="","",{from_register("H")})', MONEY, True),
@@ -808,6 +810,12 @@ def build_plan_tab(wb: Workbook, index: int):
         type="list",
         formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
         allow_blank=True,
+        promptTitle="Which holding?",
+        prompt=(
+            "The name of a row on the Positions tab. Pick one and this plan "
+            "reads its ticker, quantity and average cost."
+        ),
+        showInputMessage=True,
     )
     mode_dv = DataValidation(type="list", formula1='"Auto,Manual"', allow_blank=True)
     for dv, column in ((holding_dv, 2), (mode_dv, 6)):

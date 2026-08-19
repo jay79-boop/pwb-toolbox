@@ -8,8 +8,12 @@ therefore about when the watcher says nothing.
 
 import json
 
+import pytest
+
 from tools.planner_watch import (
+    Unreadable,
     _number,
+    csv_url,
     check,
     load_state,
     parse,
@@ -180,3 +184,52 @@ def test_prices_are_remembered_only_for_what_was_checked():
     report = check(plans, holdings, {})
     assert set(report.prices) == {"XRP", "Cardano"}
     assert json.loads(json.dumps(report.prices)) == report.prices
+
+
+SHEET = "https://docs.google.com/spreadsheets/d/1Jj0AlILnoTrUCs52aTaJNUAjRFSMTl4Xak-ri-aOqgI"
+
+
+def test_the_link_from_the_address_bar_is_turned_into_data():
+    """What a browser puts on the clipboard is an editor page.
+
+    Fetching it returns HTML or a 401, which surfaced as a traceback ending in
+    urllib rather than as anything a person could act on.
+    """
+    assert csv_url(f"{SHEET}/edit#gid=737126113").endswith(
+        "/export?format=csv&gid=737126113"
+    )
+    assert csv_url(f"{SHEET}/edit?usp=sharing", "42").endswith("gid=42")
+
+
+def test_a_published_csv_link_is_left_alone():
+    published = (
+        "https://docs.google.com/spreadsheets/d/e/2PACX-1vABC/pub"
+        "?gid=737126113&single=true&output=csv"
+    )
+    assert csv_url(published) == published
+
+
+def test_a_link_with_no_tab_says_which_part_is_missing():
+    with pytest.raises(Unreadable) as problem:
+        csv_url(f"{SHEET}/edit?usp=sharing")
+    assert "does not say which tab" in str(problem.value)
+    assert "--gid" in str(problem.value)
+
+
+def test_something_that_is_not_a_sheet_says_so():
+    with pytest.raises(Unreadable) as problem:
+        csv_url("https://example.com/whatever")
+    assert "does not look like a Google Sheets link" in str(problem.value)
+
+
+def test_a_login_page_is_not_read_as_an_empty_portfolio(tmp_path):
+    """HTML parsed as CSV is a nonsense row, not an error.
+
+    Left alone it would report no holdings and no alerts, which reads exactly
+    like a calm portfolio.
+    """
+    path = tmp_path / "login.csv"
+    path.write_text("<!DOCTYPE html><html><body>Sign in</body></html>")
+    with pytest.raises(Unreadable) as problem:
+        read_csv(url=None, path=str(path))
+    assert "wants a login" in str(problem.value)

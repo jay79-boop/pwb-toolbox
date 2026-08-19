@@ -29,6 +29,8 @@ import csv
 import io
 import json
 import pathlib
+import re
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -260,12 +262,87 @@ def check(
     return report
 
 
-def read_csv(*, url: str | None, path: str | None) -> list[list[str]]:
+SHEET_ID = re.compile(r"/spreadsheets/d/(?:e/)?([A-Za-z0-9_-]{20,})")
+GID = re.compile(r"[#?&]gid=(\d+)")
+
+
+class Unreadable(Exception):
+    """The sheet could not be fetched, with the reason a person can act on."""
+
+
+def csv_url(raw: str, gid: str | None = None) -> str:
+    """Turn whatever was in the address bar into something that returns CSV.
+
+    The link copied from a browser is an editor page, and asking urllib for it
+    gets HTML or a 401. Both of the URLs Google hands out — the /edit one and
+    the Publish-to-web one — carry the file id, so the export form can be built
+    from either.
+    """
+    raw = raw.strip()
+    if "output=csv" in raw or "format=csv" in raw:
+        return raw
+    match = SHEET_ID.search(raw)
+    if not match:
+        if re.fullmatch(r"[A-Za-z0-9_-]{20,}", raw):
+            match = None
+            file_id = raw
+        else:
+            raise Unreadable(
+                "That does not look like a Google Sheets link. Expected "
+                "something starting https://docs.google.com/spreadsheets/d/"
+            )
+    else:
+        file_id = match.group(1)
+    tab = gid or (GID.search(raw).group(1) if GID.search(raw) else None)
+    if tab is None:
+        raise Unreadable(
+            "That link does not say which tab to read. Open the Watch tab in "
+            "the browser and copy the address again — it ends with #gid=NUMBER "
+            "— or pass the number with --gid."
+        )
+    return (
+        f"https://docs.google.com/spreadsheets/d/{file_id}"
+        f"/export?format=csv&gid={tab}"
+    )
+
+
+def read_csv(
+    *, url: str | None, path: str | None, gid: str | None = None
+) -> list[list[str]]:
     if path:
         text = pathlib.Path(path).read_text(encoding="utf-8-sig")
     else:
-        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
-            text = response.read().decode("utf-8-sig")
+        target = csv_url(url, gid)
+        try:
+            with urllib.request.urlopen(target, timeout=30) as response:  # noqa: S310
+                text = response.read().decode("utf-8-sig")
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise Unreadable(
+                    "Google refused to serve the sheet without a login "
+                    f"(HTTP {error.code}). The watcher signs in as nobody, so "
+                    "the sheet has to be readable by anyone with the link: in "
+                    "the sheet, Share > General access > Anyone with the link "
+                    "> Viewer. Nothing becomes editable, and only whoever has "
+                    "the link can read it."
+                ) from error
+            if error.code == 404:
+                raise Unreadable(
+                    "No such sheet or tab (HTTP 404). Check the --gid matches "
+                    "the Watch tab."
+                ) from error
+            raise Unreadable(
+                f"Could not fetch the sheet (HTTP {error.code})."
+            ) from error
+        except urllib.error.URLError as error:
+            raise Unreadable(f"Could not reach Google: {error.reason}") from error
+    # A login page is HTML, and HTML parsed as CSV is a single nonsense row
+    # rather than an error, which would otherwise read as "no holdings".
+    if text.lstrip()[:1] == "<":
+        raise Unreadable(
+            "Google returned a web page instead of data, which means it wants "
+            "a login. Share the sheet with Anyone with the link > Viewer."
+        )
     return list(csv.reader(io.StringIO(text)))
 
 
@@ -291,6 +368,7 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--url", help="published CSV URL for the Watch tab")
     source.add_argument("--csv", help="a local CSV, for testing")
+    parser.add_argument("--gid", help="the Watch tab's gid, if the URL omits it")
     parser.add_argument("--state", help="where to remember prices between runs")
     parser.add_argument(
         "--near",
@@ -317,7 +395,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    plans, holdings = parse(read_csv(url=args.url, path=args.csv))
+    try:
+        rows = read_csv(url=args.url, path=args.csv, gid=args.gid)
+    except Unreadable as problem:
+        # A traceback tells you where the code gave up. This tells you what to
+        # go and change.
+        raise SystemExit(f"Cannot read the sheet.\n\n{problem}")
+    plans, holdings = parse(rows)
     report = check(
         plans,
         holdings,
