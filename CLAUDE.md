@@ -79,6 +79,11 @@ A worked example, for this repo's 21st MCP key:
 - `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
+- `tools/bill_ladder.py` — settles roll-vs-hold on the T-bill curve, sizes a
+  ladder from the maturities Treasury actually sells, and prices the state-tax
+  exemption against a savings account. Reads Treasury's daily bill CSV, which
+  `home.treasury.gov` blocks from cloud containers — every command takes
+  `--rate` overrides so the math still runs offline
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
@@ -154,6 +159,7 @@ pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
