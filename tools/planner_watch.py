@@ -41,6 +41,11 @@ DEFAULT_MOVE = 0.10
 # else is a number someone typed, however recently.
 LIVE = "live"
 
+# The register ships with one filled-in row to show the shape. It is a teaching
+# aid, not a position, and alerting on it is noise on day one — when it is also
+# the only row with a quantity and therefore 100% of the portfolio.
+EXAMPLE = "example"
+
 
 def _number(raw: str | None) -> float | None:
     """Read a cell the way a person wrote it: $1,234.50, 12%, (44), or blank."""
@@ -208,6 +213,8 @@ def check(
     skipped: set[str] = set()
 
     for plan in plans:
+        if plan.holding.strip().lower().startswith(EXAMPLE):
+            continue
         if not plan.live:
             skipped.add(plan.holding)
             continue
@@ -237,6 +244,8 @@ def check(
         report.alerts.append(headline)
 
     for holding in holdings:
+        if holding.holding.strip().lower().startswith(EXAMPLE):
+            continue
         if not holding.active:
             continue
         if not holding.live or holding.price is None:

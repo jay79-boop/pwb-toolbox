@@ -34,6 +34,7 @@ XRP,CURRENCY:XRPUSD,Crypto,Active,live,"5,000",$0.50,$1.19,"$5,950.00",44.0%,138
 Gala,CURRENCY:GALAUSD,Crypto,Active,no feed — using your price,"13,545",$0.04,$0.04,$541.80,4.0%,-9.1%
 Cardano,CURRENCY:ADAUSD,Crypto,Active,live,250,$0.48,$0.18,$45.00,0.3%,-62.5%
 Old Coin,CURRENCY:XYZUSD,Crypto,Closed,live,100,$1.00,$5.00,$500.00,3.7%,400.0%
+EXAMPLE — overwrite or delete this row,CURRENCY:BTCUSD,Crypto,Active,live,0.05,"$50,000.00","$66,470.52","$3,323.53",100.0%,32.9%
 """
 
 
@@ -56,7 +57,7 @@ def test_reads_numbers_the_way_a_person_wrote_them():
 def test_finds_both_blocks_by_their_headers():
     plans, holdings = parse(rows())
     assert [p.plan for p in plans] == ["Plan 1", "Plan 2"], "an empty plan is not one"
-    assert [h.holding for h in holdings] == ["XRP", "Gala", "Cardano", "Old Coin"]
+    assert [h.holding for h in holdings][:4] == ["XRP", "Gala", "Cardano", "Old Coin"]
     assert plans[0].away == 0.048
     assert holdings[0].weight == 0.44
 
@@ -233,3 +234,24 @@ def test_a_login_page_is_not_read_as_an_empty_portfolio(tmp_path):
     with pytest.raises(Unreadable) as problem:
         read_csv(url=None, path=str(path))
     assert "wants a login" in str(problem.value)
+
+
+def test_the_example_row_is_not_a_position():
+    """It ships filled in to show the shape of a complete holding.
+
+    On day one it is also the only row with a quantity, so it is 100% of the
+    portfolio — and the first thing the watcher ever said was that the example
+    had breached the weight limit.
+    """
+    plans, holdings = parse(rows())
+    assert any(
+        h.holding.startswith("EXAMPLE") for h in holdings
+    ), "still in the fixture"
+    report = check(
+        plans,
+        holdings,
+        {"EXAMPLE — overwrite or delete this row": 1.0},
+        max_weight=0.20,
+    )
+    assert not [a for a in report.alerts if "EXAMPLE" in a]
+    assert not [s for s in report.skipped if "EXAMPLE" in s]

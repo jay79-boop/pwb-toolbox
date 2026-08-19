@@ -729,9 +729,10 @@ def build_plan_tab(wb: Workbook, index: int):
     sheet_title(
         ws,
         f"Plan {index}",
-        "HOLDING is the name of a row on your Positions tab — pick one and the "
-        "ticker, quantity and cost arrive from it. Amber cells are yours to "
-        "change. Duplicate this tab for a seventh coin.",
+        "Click the first amber cell and choose one of your holdings from the "
+        "list. Its ticker, quantity and average cost fill themselves in. If "
+        "the coin you want is not in the list, add it on the Positions tab "
+        "first. Duplicate this tab for a seventh coin.",
         20,
     )
 
@@ -755,7 +756,13 @@ def build_plan_tab(wb: Workbook, index: int):
     strip = [
         # Plan 1 opens already pointing at the example row: a dropdown nobody
         # has used yet does not explain what it wants.
-        (2, "Holding", POSITIONS[0].asset if index == 1 else None, None, True),
+        (
+            2,
+            "Pick from Positions",
+            POSITIONS[0].asset if index == 1 else None,
+            None,
+            True,
+        ),
         (3, "Ticker", f'=IF({holding}="","",{from_register("B")})', None, False),
         (4, "Units held", f'=IF({holding}="","",{from_register("G")})', QTY, True),
         (5, "Average cost", f'=IF({holding}="","",{from_register("H")})', MONEY, True),
@@ -786,8 +793,15 @@ def build_plan_tab(wb: Workbook, index: int):
             14,
             "Matches register",
             (
-                f'=IF({holding}="","",IF(AND(ROUND(N({units}),8)=ROUND(N({from_register("G")}),8),'
-                f'ROUND(N({cost}),8)=ROUND(N({from_register("H")}),8)),"yes","EDITED"))'
+                # A name that is not on the register produced blanks all the
+                # way down and still reported a match, because two empty cells
+                # compare equal. Say it plainly instead.
+                f'=IF({holding}="","",'
+                f"IF(COUNTIF(Positions!$A${POS_FIRST}:$A${POS_LAST},{holding})=0,"
+                f'"NOT ON THE REGISTER — add it on Positions first",'
+                f"IF(AND(ROUND(N({units}),8)=ROUND(N({from_register('G')}),8),"
+                f"ROUND(N({cost}),8)=ROUND(N({from_register('H')}),8)),"
+                f'"yes","EDITED")))'
             ),
             None,
             False,
@@ -810,10 +824,13 @@ def build_plan_tab(wb: Workbook, index: int):
         type="list",
         formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
         allow_blank=True,
-        promptTitle="Which holding?",
+        promptTitle="Choose one of your holdings",
         prompt=(
-            "The name of a row on the Positions tab. Pick one and this plan "
-            "reads its ticker, quantity and average cost."
+            "This is a list of the names on your Positions tab — Bitcoin, "
+            "Ethereum, and anything else you have added there. Choose one and "
+            "this plan reads its ticker, quantity and average cost.\n\n"
+            "Not a coin type, and not a ticker symbol. If what you want is "
+            "not listed, add a row for it on Positions first."
         ),
         showInputMessage=True,
     )
@@ -842,6 +859,14 @@ def build_plan_tab(wb: Workbook, index: int):
             formula=['"EDITED"'],
             font=Font(bold=True, color="92400E"),
             fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"N{TP_INPUT}",
+        FormulaRule(
+            formula=[f'LEFT($N${TP_INPUT},6)="NOT ON"'],
+            font=Font(bold=True, color=BAD),
+            fill=PatternFill("solid", fgColor=BAD_SOFT),
         ),
     )
     ws.conditional_formatting.add(
@@ -1161,10 +1186,12 @@ def build_plan_tab(wb: Workbook, index: int):
         row=last + 2,
         column=2,
         value=(
-            "Pick a holding and quantity, cost and ticker arrive from the "
-            "register. They stay amber, so type over one for a what-if — the "
-            "tab will say EDITED and the Dashboard will count it, which is how "
-            "you avoid planning against numbers you no longer hold.\n"
+            "The first amber cell lists the names on your Positions tab. Pick "
+            "one and this plan reads its ticker, quantity and average cost "
+            "from that row — it is not a coin type and not a ticker symbol, "
+            "it is the name of a row you keep. Type over what it pulls in for "
+            "a what-if and the tab says EDITED; name something that is not on "
+            "Positions and it says so in red.\n"
             "Every unit cell is a share of what the rungs above it left, so "
             "changing one re-sizes the rest against what actually remains. "
             "Price mode on Manual pins Your price over the feed."
