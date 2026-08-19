@@ -1,0 +1,335 @@
+"""Watch the Profit & Exit Planner and say when something needs a decision.
+
+The workbook is a document you have to remember to open. This is the part that
+reaches you: it reads the Watch tab, applies three rules, and writes a message
+that carries the decision rather than a nudge to go and look one up.
+
+    python tools/planner_watch.py --url "<published CSV URL>"
+    python tools/planner_watch.py --csv watch.csv --state watch-state.json
+
+The three rules, chosen deliberately and kept few:
+
+* a plan's next rung is within reach, or has been passed
+* a holding moved more than a set percentage since the last run
+* a holding has grown past the weight limit
+
+And one guard that is not a rule: a holding whose price is not live is skipped
+entirely. A rung alert computed from a price typed months ago is a false alarm,
+and false alarms are how alerting dies. The message says how many were skipped
+so the silence is never mistaken for calm.
+
+Movement needs yesterday's price, which a spreadsheet cannot remember. The
+state file holds the last price seen per holding and nothing else.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import io
+import json
+import pathlib
+import urllib.request
+from dataclasses import dataclass, field
+
+DEFAULT_NEAR = 0.05
+DEFAULT_MOVE = 0.10
+
+# A price is only trusted when the sheet says the feed produced it. Anything
+# else is a number someone typed, however recently.
+LIVE = "live"
+
+
+def _number(raw: str | None) -> float | None:
+    """Read a cell the way a person wrote it: $1,234.50, 12%, (44), or blank."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or text in {"—", "-", "#N/A", "#REF!", "#VALUE!", "#DIV/0!"}:
+        return None
+    negative = text.startswith("(") and text.endswith(")")
+    text = text.strip("()")
+    percent = text.endswith("%")
+    for junk in "$,%":
+        text = text.replace(junk, "")
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    if percent:
+        value /= 100
+    return -value if negative else value
+
+
+@dataclass
+class Plan:
+    plan: str
+    holding: str
+    ticker: str
+    feed: str
+    units: float | None
+    avg_cost: float | None
+    price: float | None
+    weight: float | None
+    next_gain: float | None
+    target: float | None
+    away: float | None
+    units_to_sell: float | None
+    net_cash: float | None
+
+    @property
+    def live(self) -> bool:
+        return self.feed.strip().lower().startswith(LIVE)
+
+
+@dataclass
+class Holding:
+    holding: str
+    ticker: str
+    asset_class: str
+    status: str
+    feed: str
+    units: float | None
+    avg_cost: float | None
+    price: float | None
+    market_value: float | None
+    weight: float | None
+    unrealised: float | None
+
+    @property
+    def live(self) -> bool:
+        return self.feed.strip().lower().startswith(LIVE)
+
+    @property
+    def active(self) -> bool:
+        return self.status.strip().lower() == "active"
+
+
+@dataclass
+class Report:
+    alerts: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    prices: dict[str, float] = field(default_factory=dict)
+
+    def text(self) -> str:
+        if not self.alerts:
+            body = "Nothing needs a decision."
+        else:
+            body = "\n".join(f"- {line}" for line in self.alerts)
+        if self.skipped:
+            names = ", ".join(sorted(self.skipped))
+            body += (
+                f"\n\n{len(self.skipped)} skipped, no live price: {names}. "
+                "Nothing can be said about these until the price updates."
+            )
+        return body
+
+
+def _money(value: float) -> str:
+    return f"${value:,.2f}" if abs(value) < 1000 else f"${value:,.0f}"
+
+
+def _units(value: float) -> str:
+    return f"{value:,.4f}".rstrip("0").rstrip(".") if value % 1 else f"{value:,.0f}"
+
+
+def parse(rows: list[list[str]]) -> tuple[list[Plan], list[Holding]]:
+    """Pull the two blocks out of the Watch tab.
+
+    Found by their header row rather than by position, so inserting a note at
+    the top of the tab does not silently shift every field by one.
+    """
+    plans: list[Plan] = []
+    holdings: list[Holding] = []
+    section = None
+    for row in rows:
+        cells = [c.strip() for c in row] + [""] * 16
+        first = cells[0].lower()
+        if first == "plan" and cells[1].lower() == "holding":
+            section = "plans"
+            continue
+        if first == "holding" and cells[1].lower() == "ticker":
+            section = "holdings"
+            continue
+        if not cells[0] or not cells[1]:
+            continue
+        if section == "plans":
+            plans.append(
+                Plan(
+                    plan=cells[0],
+                    holding=cells[1],
+                    ticker=cells[2],
+                    feed=cells[3],
+                    units=_number(cells[4]),
+                    avg_cost=_number(cells[5]),
+                    price=_number(cells[6]),
+                    weight=_number(cells[7]),
+                    next_gain=_number(cells[8]),
+                    target=_number(cells[9]),
+                    away=_number(cells[10]),
+                    units_to_sell=_number(cells[11]),
+                    net_cash=_number(cells[12]),
+                )
+            )
+        elif section == "holdings":
+            holdings.append(
+                Holding(
+                    holding=cells[0],
+                    ticker=cells[1],
+                    asset_class=cells[2],
+                    status=cells[3],
+                    feed=cells[4],
+                    units=_number(cells[5]),
+                    avg_cost=_number(cells[6]),
+                    price=_number(cells[7]),
+                    market_value=_number(cells[8]),
+                    weight=_number(cells[9]),
+                    unrealised=_number(cells[10]),
+                )
+            )
+    return plans, holdings
+
+
+def check(
+    plans: list[Plan],
+    holdings: list[Holding],
+    previous: dict[str, float],
+    *,
+    near: float = DEFAULT_NEAR,
+    move: float = DEFAULT_MOVE,
+    max_weight: float | None = None,
+) -> Report:
+    report = Report()
+    skipped: set[str] = set()
+
+    for plan in plans:
+        if not plan.live:
+            skipped.add(plan.holding)
+            continue
+        if plan.away is None or plan.target is None or plan.price is None:
+            continue
+        if plan.away <= 0:
+            headline = (
+                f"{plan.holding} is past its "
+                f"{plan.next_gain:+.0%} rung — {_money(plan.target)}, "
+                f"trading at {_money(plan.price)}."
+            )
+        elif plan.away <= near:
+            headline = (
+                f"{plan.holding} is {plan.away:.1%} from its "
+                f"{plan.next_gain:+.0%} rung at {_money(plan.target)} "
+                f"(now {_money(plan.price)})."
+            )
+        else:
+            continue
+        # The decision, not a pointer to where the decision is written down.
+        if plan.units_to_sell and plan.net_cash is not None:
+            left = (plan.units or 0) - plan.units_to_sell
+            headline += (
+                f" Plan says sell {_units(plan.units_to_sell)} for "
+                f"{_money(plan.net_cash)} net, leaving {_units(left)}."
+            )
+        report.alerts.append(headline)
+
+    for holding in holdings:
+        if not holding.active:
+            continue
+        if not holding.live or holding.price is None:
+            if holding.units:
+                skipped.add(holding.holding)
+            continue
+        report.prices[holding.holding] = holding.price
+        was = previous.get(holding.holding)
+        if was:
+            change = holding.price / was - 1
+            if abs(change) >= move:
+                report.alerts.append(
+                    f"{holding.holding} moved {change:+.1%} since the last check, "
+                    f"{_money(was)} to {_money(holding.price)}."
+                )
+        if max_weight and holding.weight and holding.weight > max_weight:
+            report.alerts.append(
+                f"{holding.holding} is {holding.weight:.0%} of the portfolio, "
+                f"past your {max_weight:.0%} limit."
+            )
+
+    report.skipped = sorted(skipped)
+    return report
+
+
+def read_csv(*, url: str | None, path: str | None) -> list[list[str]]:
+    if path:
+        text = pathlib.Path(path).read_text(encoding="utf-8-sig")
+    else:
+        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
+            text = response.read().decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(text)))
+
+
+def load_state(path: str | None) -> dict[str, float]:
+    if not path:
+        return {}
+    file = pathlib.Path(path)
+    if not file.exists():
+        return {}
+    try:
+        return {k: float(v) for k, v in json.loads(file.read_text()).items()}
+    except (ValueError, TypeError):
+        return {}
+
+
+def save_state(path: str | None, prices: dict[str, float]) -> None:
+    if path and prices:
+        pathlib.Path(path).write_text(json.dumps(prices, indent=2, sort_keys=True))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", help="published CSV URL for the Watch tab")
+    source.add_argument("--csv", help="a local CSV, for testing")
+    parser.add_argument("--state", help="where to remember prices between runs")
+    parser.add_argument(
+        "--near",
+        type=float,
+        default=DEFAULT_NEAR,
+        help="how close to a rung counts as worth saying (default 5%%)",
+    )
+    parser.add_argument(
+        "--move",
+        type=float,
+        default=DEFAULT_MOVE,
+        help="a move this big since the last run is worth saying (default 10%%)",
+    )
+    parser.add_argument(
+        "--max-weight",
+        type=float,
+        default=0.20,
+        help="flag a holding above this share of the portfolio (default 20%%)",
+    )
+    parser.add_argument(
+        "--quiet-when-nothing",
+        action="store_true",
+        help="print nothing at all when there is nothing to say",
+    )
+    args = parser.parse_args()
+
+    plans, holdings = parse(read_csv(url=args.url, path=args.csv))
+    report = check(
+        plans,
+        holdings,
+        load_state(args.state),
+        near=args.near,
+        move=args.move,
+        max_weight=args.max_weight,
+    )
+    save_state(args.state, report.prices)
+    if report.alerts or not args.quiet_when_nothing:
+        print(report.text())
+
+
+if __name__ == "__main__":
+    main()

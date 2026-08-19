@@ -305,3 +305,17 @@ def test_watch_covers_every_plan_and_every_register_row(wb):
         assert f"'Plan {index}'!" in ws.cell(row=3 + index, column=2).value
     first_holding = 3 + PLAN_COUNT + 3 + 1
     assert f"Positions!$A${POS_FIRST}" in ws.cell(row=first_holding, column=1).value
+
+
+def test_the_next_rung_never_lands_on_a_blank_row(wb):
+    """A price past every rung used to report no target at all.
+
+    MATCH walked off the end of the seeded rungs onto an empty one, so the
+    Watch tab published a blank target and the watcher had nothing to say
+    about the position that had run furthest.
+    """
+    for index in range(1, PLAN_COUNT + 1):
+        which = wb[f"Plan {index}"].cell(row=TP_RUNG_FIRST + 9, column=18).value
+        assert "MATCH(0," in which
+        assert f"COUNT($C${TP_RUNG_FIRST}" in which, "cap on rungs, not on rows"
+        assert "IFERROR(" in which, "no rung passed yet is not an error"

@@ -1126,7 +1126,11 @@ def build_plan_tab(wb: Workbook, index: int):
     next_block = [
         (
             "which",
-            f"=IFERROR(MIN(MATCH(0,$D${first}:$D${last},1)+1,{last - first + 1}),1)",
+            # Capped at the number of rungs that exist, not the number of rows:
+            # a price past every rung used to land on a blank one and report
+            # no target at all.
+            f"=IFERROR(MIN(MATCH(0,$D${first}:$D${last},1)+1,"
+            f"COUNT($C${first}:$C${last})),1)",
             "0",
         ),
         ("gain", f"=INDEX($B${first}:$B${last},$R{nxt})", PCT0),

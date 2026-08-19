@@ -109,7 +109,13 @@ A worked example, for this repo's 21st MCP key:
 - `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
-- `tools/build_profit_planner.py` — generates the crypto exit-planning workbook; prices go live off `GOOGLEFINANCE` once the file is opened as a Google Sheet
+- `tools/build_profit_planner.py` — generates the exit-planning workbook (six
+  plan tabs bound to one register); prices go live off `GOOGLEFINANCE` once the
+  file is opened as a Google Sheet
+- `tools/planner_watch.py` — reads that workbook's Watch tab, published as CSV,
+  and says when a rung is within reach, a holding has moved, or a position has
+  outgrown its limit. Skips anything without a live price rather than alerting
+  on a number somebody typed months ago
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
