@@ -100,6 +100,11 @@ duplicate is pure waste.
 | a parameter with a type, a default, or both | the type dropped, the default kept |
 | an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | one entry per direction, reversing — see below |
+| `strategy.entry(..., limit=, stop=)` | a resting bracket parent, submitted at bar close — see below |
+| `strategy.exit(..., from_entry, ...)` on a pending entry | the bracket's exit legs, live when the entry fills |
+| `strategy.cancel(id)` | withdraws the unfilled entry with that id |
+| `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
+| `syminfo.mintick` | a `mintick` param, default 0.01 — see below |
 | `strategy.closedtrades`, `opentrades`, `wintrades`, `losstrades`, `eventrades` | counters kept from `notify_trade` |
 | any of those with `[1]` | the previous bar's value |
 | `strategy.closedtrades.entry_price/exit_price/profit/size(i)` | a ledger built as trades close |
@@ -207,6 +212,62 @@ is how a script spells "no level yet", and a stop at NaN would never compare.
 `loss`, `profit` and the `trail_*` family are refused. They are distances
 measured in ticks, and tick size is a property of the instrument rather than
 anything the script states.
+
+## Priced entries
+
+`strategy.entry` with a `limit` or `stop` price is a standing order too: it
+rests until it fills, until the same id is re-issued — which *moves* it — or
+until `strategy.cancel` withdraws it. And the `strategy.exit` that names it
+through `from_entry` is issued on the same bar, while the position is still
+size zero, so translating that exit against the position would place nothing
+and leave the eventual fill unprotected.
+
+The generated class collects priced entries per id while the bar's statements
+run and submits them once, at the end of `next()`, as a Backtrader bracket:
+the entry as parent, the exit's stop and limit as legs that only go live when
+the parent fills, each cancelling the other.
+
+```pinescript
+strategy.entry("L", strategy.long, limit=entryP)
+strategy.exit("Lx", "L", stop=stopP, limit=tgtP)
+// ...bars later, if it never filled...
+strategy.cancel("L")
+```
+
+Re-issuing `"L"` at new levels cancels and replaces the resting bracket; an
+unchanged one is left alone; `strategy.cancel("L")` withdraws it while the
+entry is unfilled and, exactly as in Pine, touches nothing once it has filled —
+the legs keep protecting the open position. A `strategy.exit` re-issued after
+the fill moves those legs rather than stacking a second pair beside them.
+
+Only a literal id works for `strategy.cancel`, because the id is what names
+the pending order; a computed one is reported.
+
+## Sessions and tick size
+
+`time(res, session)` answers na on bars outside the session, which is how
+`not na(time(timeframe.period, sess))` gates entries to market hours. The
+check runs on the feed's own timestamps — Pine consults the exchange calendar
+and timezone, the feed carries neither, and the feed's clock is the one clock
+a backtest has — so data stamped in another timezone than the exchange filters
+at shifted hours. Ranges (`"0930-1600"`, comma-separated, overnight allowed)
+and a day suffix (`":23456"`, Sunday=1, naming the day the session ends on)
+are understood; `input.session` becomes an ordinary string param, so the
+window stays tunable from `addstrategy`.
+
+`syminfo.mintick` becomes a param named `mintick`, defaulting to the 0.01 of a
+US equity. A Backtrader feed does not know its instrument's tick size, so the
+knob is handed to the caller and the report says to set it per instrument.
+
+## Reading history before it exists
+
+`high[2]` on the first bar of a run reads history that is not there. Pine
+answers `na`, and no condition on na fires. Backtrader preloads the feed into
+flat arrays, and the same read wraps around to the *end* of the array — bars
+from the future, silently. So the generated `next()` opens by sitting out the
+bars that lack the deepest history the script reads; the regression test pins
+a tape where only the wraparound could trigger a trade, and asserts it never
+does.
 
 ## A second timeframe
 

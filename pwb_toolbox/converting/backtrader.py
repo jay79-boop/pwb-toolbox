@@ -71,7 +71,13 @@ constants, so they stay live.
 doing the obvious thing. It is not ``self.buy()``: Pine's default
 ``pyramiding=0`` allows one entry per direction, so calling it again while
 already long does nothing, where ``buy()`` adds every time. An entry against
-the position is a reversal. See ``_ENTRY_HELPER``.
+the position is a reversal. See ``_ENTRY_HELPER``. With a ``limit`` or
+``stop`` price it is a pending order rather than a market one: it is collected
+under its id and submitted at the end of the bar as a Backtrader bracket, so a
+``strategy.exit`` naming it through ``from_entry`` rides along as the
+bracket's exit legs, re-issuing the id moves the order rather than stacking
+another, and ``strategy.cancel`` withdraws it while it is still unfilled. See
+``_PENDING_HELPER``.
 
 Pine's trade counters are the seventh. Backtrader keeps no ledger of closed
 trades, so one is built from ``notify_trade`` -- but only in strategies that
@@ -129,11 +135,17 @@ The clock is the eleventh. ``timeframe.period`` and ``time()`` ask what the
 chart is and when this bar opened, and the feed already knows both, so neither
 needs the caller to declare anything. ``time(res)`` floors the bar's stamp to
 ``res``, which is what makes Pine's ``ta.change(time("240")) != 0`` fire on the
-first chart bar of each new four-hour bar. Two things about it are refused
-rather than guessed: a session argument, which needs an exchange calendar the
-feed does not carry, and a weekly or monthly resolution, which does not floor
-by modulo -- the epoch falls on a Thursday. See ``_TIME_HELPER`` and
-:meth:`_Generator._value_time`.
+first chart bar of each new four-hour bar. A session argument filters by the
+bar's own clock: Pine consults the exchange calendar and timezone, the feed
+carries neither, and the feed's own timestamps are the one clock a backtest
+has -- the generated ``_pine_in_session`` states the assumption. A weekly or
+monthly resolution is still refused: it does not floor by modulo -- the epoch
+falls on a Thursday. See ``_TIME_HELPER`` and :meth:`_Generator._value_time`.
+
+``syminfo.mintick`` asks how coarsely the instrument's price moves, and a
+Backtrader feed does not know. It becomes a param -- ``mintick``, defaulting
+to the 0.01 of a US equity -- so the tick size stays where it lives, with the
+instrument, and the report says to set it per instrument.
 
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
@@ -335,12 +347,13 @@ _TIME_HELPER = (
     '                return unit if count == 1 else "%d%s" % (count, unit)',
     '        return ""',
     "",
-    "    def _pine_time(self, seconds=None, ago=0):",
+    "    def _pine_time(self, seconds=None, ago=0, session=None):",
     '        """Opening time in epoch milliseconds, as Pine\'s time() reports it.',
     "",
     "        With no resolution this is the bar's own stamp. With one, it is that",
     "        stamp floored to the resolution, so the value changes exactly when a",
-    "        new higher-timeframe bar begins.",
+    "        new higher-timeframe bar begins. With a session it is NaN -- Pine's",
+    "        na -- on a bar whose clock falls outside the session.",
     "",
     "        The floor runs on a continuous clock from midnight UTC. That is exact",
     "        for a market trading around the clock, and for any whose sessions",
@@ -354,10 +367,69 @@ _TIME_HELPER = (
     "            # difference downstream zero, which is what na produces.",
     "            ago = 0",
     "        when = self.data.datetime.datetime(-ago)",
+    "        if session is not None and not self._pine_in_session(when, session):",
+    "            return float('nan')",
     "        stamp = calendar.timegm(when.utctimetuple())",
     "        if seconds:",
     "            stamp -= stamp % seconds",
     "        return stamp * 1000",
+    "",
+)
+
+
+#: Emitted into a strategy that hands ``time()`` a session argument. Split from
+#: ``_TIME_HELPER`` so a strategy that only floors timestamps does not carry
+#: session parsing it never calls; the check inside ``_pine_time`` is guarded
+#: by ``session is not None``, so it only reaches this method when the
+#: generator also emitted it.
+_SESSION_HELPER = (
+    "    def _pine_in_session(self, when, spec):",
+    '        """Whether the bar\'s clock falls inside a Pine session string.',
+    "",
+    "        The check runs on the feed's own timestamps: Pine consults the",
+    "        exchange calendar and timezone, which the feed does not carry, and",
+    "        the feed's clock is the one clock a backtest has -- so data stamped",
+    "        in another timezone than the exchange filters at shifted hours. A",
+    '        day suffix (":23456", Sunday=1) names the day the session ends on,',
+    "        which for an overnight range is the day after the bar's own.",
+    '        """',
+    "        parsed = self._pine_sessions.get(spec)",
+    "        if parsed is None:",
+    '            text, _, suffix = spec.partition(":")',
+    "            try:",
+    "                ranges = []",
+    '                for part in text.split(","):',
+    '                    start, dash, end = part.partition("-")',
+    "                    if not dash or len(start) != 4 or len(end) != 4:",
+    "                        raise ValueError(part)",
+    "                    ranges.append(",
+    "                        (",
+    "                            int(start[:2]) * 60 + int(start[2:]),",
+    "                            int(end[:2]) * 60 + int(end[2:]),",
+    "                        )",
+    "                    )",
+    "                days = frozenset(int(d) for d in suffix) if suffix else None",
+    "            except ValueError:",
+    "                raise ValueError(",
+    '                    "session %r is not HHMM-HHMM[,...][:days]" % (spec,)',
+    "                ) from None",
+    "            parsed = (ranges, days)",
+    "            self._pine_sessions[spec] = parsed",
+    "        ranges, days = parsed",
+    "        minute = when.hour * 60 + when.minute",
+    "        # Pine numbers days from Sunday=1; Python from Monday=0.",
+    "        day = (when.weekday() + 1) % 7 + 1",
+    "        for start, end in ranges:",
+    "            if start < end:",
+    "                hit, rolls = start <= minute < end, False",
+    "            else:",
+    "                # An overnight session wraps midnight and ends tomorrow.",
+    "                hit, rolls = minute >= start or minute < end, minute >= start",
+    "            if not hit:",
+    "                continue",
+    "            if days is None or (day % 7 + 1 if rolls else day) in days:",
+    "                return True",
+    "        return False",
     "",
 )
 
@@ -422,6 +494,7 @@ INPUT_FUNCS = {
     "input.bool",
     "input.string",
     "input.source",
+    "input.session",
     "input.timeframe",
 }
 
@@ -670,18 +743,131 @@ _EXPR_INDICATOR = (
 #: the new -- which is two orders here rather than one resize, so the entry
 #: size still comes from the strategy's own sizer.
 _ENTRY_HELPER = (
-    "    def _pine_entry(self, long, size=None):",
-    '        """Open or reverse a position, as Pine\'s strategy.entry does."""',
+    "    def _pine_entry(self, long, size=None, tag=None, limit=None, stop=None):",
+    '        """Open or reverse a position, as Pine\'s strategy.entry does.',
+    "",
+    "        A market entry acts now. One with a limit or stop price is a",
+    "        pending order: it is collected under its tag and submitted at the",
+    "        end of the bar by _pine_flush, so a strategy.exit issued later in",
+    "        the same bar attaches its levels as the bracket's exit legs, and",
+    "        re-issuing the tag moves the order rather than stacking another.",
+    '        """',
+    "        # `limit=na` is how a script spells 'no limit after all'.",
+    "        if limit is not None and limit != limit:",
+    "            limit = None",
+    "        if stop is not None and stop != stop:",
+    "            stop = None",
     "        held = self.position.size",
     "        if held > 0 if long else held < 0:",
     "            # pyramiding is 0: Pine allows one entry per direction.",
     "            return",
-    "        if held:",
-    "            self.close()",
-    "        if long:",
-    "            self.buy(size=size)",
-    "        else:",
-    "            self.sell(size=size)",
+    "        if limit is None and stop is None:",
+    "            if held:",
+    "                self.close()",
+    "            if long:",
+    "                self.buy(size=size)",
+    "            else:",
+    "                self.sell(size=size)",
+    "            return",
+    "        self._pine_pending[tag] = {",
+    "            'long': long,",
+    "            'size': size,",
+    "            'limit': limit,",
+    "            'stop': stop,",
+    "            'exit': None,",
+    "        }",
+    "",
+)
+
+#: Emitted into a strategy whose ``strategy.entry`` carries a limit or stop
+#: price, or that calls ``strategy.cancel``.
+#:
+#: A priced entry in Pine is a standing order: it works until it fills, until
+#: the same id is re-issued at new levels -- which *moves* it -- or until
+#: ``strategy.cancel`` withdraws it. The ``strategy.exit`` that names it via
+#: ``from_entry`` is armed with it and only becomes live orders when the entry
+#: fills. Backtrader's bracket orders say exactly that -- a parent plus exit
+#: legs activated on the parent's fill, one cancelling the other -- so pending
+#: entries are collected per tag while the bar's statements run and submitted
+#: once, at the end of ``next()``, with whatever exit the bar attached.
+_PENDING_HELPER = (
+    "",
+    "    def _pine_flush(self):",
+    '        """Place the bar\'s pending priced entries, as Pine does at bar close.',
+    "",
+    "        An unchanged spec whose order is still working is left alone, and",
+    "        a changed one cancels what it replaces before submitting.",
+    "",
+    "        Sizing assumes the position is flat or already this way round",
+    "        when the order fills -- true of the retrace scripts that rest",
+    "        priced entries, which guard on position_size == 0. A fill against",
+    "        an open position nets rather than reversing the way Pine would.",
+    '        """',
+    "        for tag, spec in list(self._pine_pending.items()):",
+    "            del self._pine_pending[tag]",
+    "            state = self._pine_working.get(tag)",
+    "            if state:",
+    "                if state[0] == spec and state[1][0].alive():",
+    "                    continue",
+    "                for order in state[1]:",
+    "                    self.cancel(order)",
+    "            enter = self.buy if spec['long'] else self.sell",
+    "            leave = self.sell if spec['long'] else self.buy",
+    "            if spec['stop'] is not None and spec['limit'] is not None:",
+    "                placement = {",
+    "                    'exectype': bt.Order.StopLimit,",
+    "                    'price': spec['stop'],",
+    "                    'plimit': spec['limit'],",
+    "                }",
+    "            elif spec['stop'] is not None:",
+    "                placement = {'exectype': bt.Order.Stop, 'price': spec['stop']}",
+    "            else:",
+    "                placement = {'exectype': bt.Order.Limit, 'price': spec['limit']}",
+    "            exit_tag, stop, limit = spec['exit'] or (None, None, None)",
+    "            if stop is None and limit is None:",
+    "                entry = enter(size=spec['size'], **placement)",
+    "                self._pine_working[tag] = (spec, [entry])",
+    "                continue",
+    "            parent = enter(size=spec['size'], transmit=False, **placement)",
+    "            quantity = abs(parent.size)",
+    "            legs = []",
+    "            if stop is not None:",
+    "                legs.append(",
+    "                    leave(",
+    "                        size=quantity,",
+    "                        exectype=bt.Order.Stop,",
+    "                        price=stop,",
+    "                        parent=parent,",
+    "                        transmit=limit is None,",
+    "                    )",
+    "                )",
+    "            if limit is not None:",
+    "                legs.append(",
+    "                    leave(",
+    "                        size=quantity,",
+    "                        exectype=bt.Order.Limit,",
+    "                        price=limit,",
+    "                        parent=parent,",
+    "                        transmit=True,",
+    "                    )",
+    "                )",
+    "            self._pine_working[tag] = (spec, [parent] + legs)",
+    "            # Register the legs as the exit tag's standing orders, so a",
+    "            # later strategy.exit moves them instead of doubling them.",
+    "            self._pine_exits[exit_tag] = ((stop, limit), legs)",
+    "",
+    "    def _pine_cancel(self, tag):",
+    '        """Withdraw the unfilled entry with this tag, as strategy.cancel does.',
+    "",
+    "        An entry that has already filled is out of reach, exactly as it is",
+    "        in Pine -- its exit legs keep protecting the open position.",
+    '        """',
+    "        self._pine_pending.pop(tag, None)",
+    "        state = self._pine_working.get(tag)",
+    "        if state and state[1][0].alive():",
+    "            del self._pine_working[tag]",
+    "            for order in state[1]:",
+    "                self.cancel(order)",
     "",
 )
 
@@ -784,7 +970,7 @@ TRADE_FIELDS_UNTRACKED = {
 }
 
 _EXIT_HELPER = (
-    "    def _pine_exit(self, tag, stop=None, limit=None):",
+    "    def _pine_exit(self, tag, from_entry=None, stop=None, limit=None):",
     '        """Keep one exit order set for the open position, as Pine does."""',
     "        # `var float sl = na` is the usual way to spell 'no level yet',",
     "        # and a stop submitted at NaN would never be comparable.",
@@ -792,6 +978,23 @@ _EXIT_HELPER = (
     "            stop = None",
     "        if limit is not None and limit != limit:",
     "            limit = None",
+    "",
+    "        pending = self._pine_pending.get(from_entry)",
+    "        if pending is not None:",
+    "            # The entry this exit names is itself pending, so the levels",
+    "            # ride along as the bracket's exit legs when _pine_flush",
+    "            # submits it at the end of the bar.",
+    "            pending['exit'] = (tag, stop, limit)",
+    "            return",
+    "        working = self._pine_working.get(from_entry)",
+    "        if working is not None and working[1][0].alive():",
+    "            # The entry order is on the book but unfilled. Moving its exit",
+    "            # levels means resubmitting the bracket, which flush will do.",
+    "            spec = dict(working[0])",
+    "            spec['exit'] = (tag, stop, limit)",
+    "            if spec != working[0]:",
+    "                self._pine_pending[from_entry] = spec",
+    "            return",
     "",
     "        state = self._pine_exits.get(tag)",
     "        size = self.position.size",
@@ -1094,10 +1297,20 @@ class _Generator:
         self._uses_math = False
         self._uses_trades = False
         self._uses_entry = False
+        self._uses_pending = False
         self._uses_time = False
+        self._uses_session = False
         self._uses_pivot = False
         self._uses_expr = False
         self._uses_alma = False
+        #: The generated param `syminfo.mintick` reads from, once registered.
+        self._mintick = None
+        #: The deepest `name[k]` history read emitted into ``next()``. Bars
+        #: that do not have that much history yet are skipped outright: Pine
+        #: answers na there, and no condition on na fires, where Backtrader's
+        #: preloaded buffer wraps a read past the start around to the *end* of
+        #: the feed -- bars from the future, silently.
+        self._max_lookback = 0
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
         self._computed = {}
@@ -1150,6 +1363,27 @@ class _Generator:
     def _reject(self, message):
         if message not in self.unsupported:
             self.unsupported.append(message)
+
+    def _mintick_param(self):
+        """``syminfo.mintick`` as a param: the tick size is the instrument's.
+
+        Pine reads it off the symbol. A Backtrader feed carries no tick size,
+        so it becomes a tunable param with the 0.01 of a US equity as its
+        default, and the report says to set it per instrument.
+        """
+        if self._mintick is None:
+            name, suffix = "mintick", 2
+            while name in self.param_names:
+                name, suffix = f"mintick_{suffix}", suffix + 1
+            self.params.append((name, 0.01))
+            self.param_names.add(name)
+            self._mintick = name
+            self._ignore(
+                f"syminfo.mintick became the {self._mintick!r} param (default "
+                "0.01): the tick size is a property of the instrument, so set "
+                "it when adding the strategy"
+            )
+        return f"self.p.{_safe(self._mintick)}"
 
     def _ignore(self, message):
         if message not in self.ignored:
@@ -1548,6 +1782,10 @@ class _Generator:
                 return f"self.{self.series[node.id]}"
             if node.id in self.param_names:
                 return f"self.p.{_safe(node.id)}"
+            if node.id == "syminfo.mintick":
+                # A constant for the run, like a param, so line arithmetic
+                # accepts it wherever it accepts one.
+                return self._mintick_param()
             return self._promote(node.id)
         if isinstance(node, Num):
             return repr(_literal(node))
@@ -1847,6 +2085,7 @@ class _Generator:
                 # at an offset. Backtrader spells that the same way Pine does.
                 lowered = self._line_expr(node.base)
                 if lowered is not None:
+                    self._max_lookback = max(self._max_lookback, offset)
                     return f"{lowered}[{-offset}]"
             if not isinstance(node.base, Name) or not isinstance(offset, int):
                 self._reject("history access is only supported as name[constant]")
@@ -1882,6 +2121,10 @@ class _Generator:
         return "None"
 
     def _value_name(self, name, index):
+        if name in PRICE_SERIES or name in DERIVED_SERIES or name in self.series:
+            # Only line reads wrap; a var, a param or a trade counter is an
+            # attribute, and holds what it holds on every bar.
+            self._max_lookback = max(self._max_lookback, -index)
         if name in PRICE_SERIES:
             return f"{self._feed}.{PRICE_SERIES[name]}[{index}]"
         if name in DERIVED_SERIES:
@@ -1904,6 +2147,7 @@ class _Generator:
                 # line the moment anything asks for its history.
                 handle = self._promote(name)
                 if handle is not None:
+                    self._max_lookback = max(self._max_lookback, -index)
                     return f"{handle}[{index}]"
                 self._reject(
                     f"{name}: history of a computed value needs a Backtrader line"
@@ -1939,6 +2183,10 @@ class _Generator:
             if BUILTIN_VALUES[name].startswith("math."):
                 self._uses_math = True
             return BUILTIN_VALUES[name]
+        if name == "syminfo.mintick":
+            if index:
+                self._reject("syminfo.mintick: a tick size has no bar history")
+            return self._mintick_param()
         if _presentational_constant(name):
             # `col = up ? color.green : color.red` only ever feeds a plot, and
             # plots are dropped. Refusing the colour would report the strategy
@@ -2274,8 +2522,15 @@ class _Generator:
             return
 
         tag = _literal(expr.args[0]) if expr.args else "exit"
+        from_entry = _literal(expr.args[1]) if len(expr.args) > 1 else None
+        for key, value in expr.kwargs:
+            if key == "from_entry":
+                from_entry = _literal(value)
         self._uses_exit = True
         arguments = [repr(str(tag))]
+        if from_entry is not None:
+            # Names the entry whose pending bracket these levels ride on.
+            arguments.append(f"from_entry={str(from_entry)!r}")
         for key in ("stop", "limit"):
             if key in levels:
                 arguments.append(f"{key}={self._value_expr(levels[key])}")
@@ -2288,32 +2543,41 @@ class _Generator:
         time of the ``res`` bar containing it. ``ago`` reads a bar back, which
         is what ``time(res)[1]`` and ``ta.change(time(res))`` need.
 
-        A session argument is refused rather than approximated: honouring it
-        needs the exchange calendar, and the feed does not carry one.
+        A session argument becomes a per-bar check against the feed's own
+        clock -- the generated ``_pine_in_session`` states what that assumes.
         """
-        if len(call.args) > 1:
-            self._reject(
-                "time() with a session argument needs the exchange calendar, "
-                "which the data feed does not carry"
-            )
+        if len(call.args) > 2:
+            self._reject("time() takes at most a resolution and a session")
             return "None"
         self._uses_time = True
+        session = ""
+        if len(call.args) == 2:
+            self._uses_session = True
+            session = f", session={self._value_expr(call.args[1])}"
         if not call.args:
             return f"self._pine_time(None, {ago})" if ago else "self._pine_time()"
         resolution = call.args[0]
-        text = _literal(resolution)
-        if not isinstance(text, str):
-            self._reject("time(): the resolution must be a literal string")
-            return "None"
-        seconds = timeframe_seconds(text)
-        if seconds is None:
-            self._reject(
-                f"time(): resolution {text!r} does not floor to a fixed number "
-                "of seconds"
-            )
-            return "None"
+        if isinstance(resolution, Name) and resolution.id == "timeframe.period":
+            # The chart's own timeframe: the bar's stamp needs no flooring.
+            seconds = None
+        else:
+            text = _literal(resolution)
+            if not isinstance(text, str):
+                self._reject("time(): the resolution must be a literal string")
+                return "None"
+            seconds = timeframe_seconds(text)
+            if seconds is None:
+                self._reject(
+                    f"time(): resolution {text!r} does not floor to a fixed "
+                    "number of seconds"
+                )
+                return "None"
+        if session:
+            return f"self._pine_time({seconds}, {ago}{session})"
         if ago:
             return f"self._pine_time({seconds}, {ago})"
+        if seconds is None:
+            return "self._pine_time()"
         return f"self._pine_time({seconds})"
 
     def _security_feed(self, call):
@@ -2695,6 +2959,22 @@ class _Generator:
             self._emit_exit(expr, pad)
             return
 
+        if expr.func == "strategy.cancel":
+            tag = expr.args[0] if expr.args else None
+            for key, value in expr.kwargs:
+                if key == "id":
+                    tag = value
+            literal = _literal(tag) if tag is not None else None
+            if literal is None:
+                self._reject(
+                    "strategy.cancel: the id must be a literal string, which "
+                    "is what names the pending order it withdraws"
+                )
+                return
+            self._uses_pending = True
+            self.next_lines.append(f"{pad}self._pine_cancel({str(literal)!r})")
+            return
+
         self._reject(f"call to {expr.func}() is not supported")
 
     def _emit_entry(self, call, pad):
@@ -2710,11 +2990,23 @@ class _Generator:
             return
 
         size = None
+        prices = []
         for key, value in call.kwargs:
             if key in ("qty", "size"):
                 size = self._value_expr(value)
+            if key in ("limit", "stop"):
+                prices.append((key, self._value_expr(value)))
         long = "True" if direction == "strategy.long" else "False"
         arguments = f"{long}, size={size}" if size else long
+        if prices:
+            # A priced entry is a standing order, so it needs the id Pine
+            # gave it: that is what re-issuing moves and strategy.cancel
+            # withdraws.
+            tag = _literal(call.args[0]) if call.args else "entry"
+            arguments += f", tag={str(tag)!r}"
+            for key, value in prices:
+                arguments += f", {key}={value}"
+            self._uses_pending = True
         self._uses_entry = True
         self.next_lines.append(f"{pad}self._pine_entry({arguments})")
 
@@ -2848,8 +3140,12 @@ class _Generator:
             out.append("")
 
         out.append("    def __init__(self):")
-        if self._uses_exit:
+        if self._uses_exit or self._uses_pending:
             out.append("        self._pine_exits = {}")
+            out.append("        self._pine_pending = {}")
+            out.append("        self._pine_working = {}")
+        if self._uses_session:
+            out.append("        self._pine_sessions = {}")
         if self._uses_trades:
             out.append("        self._pine_closed = []")
             out.append("        self._pine_open = []")
@@ -2868,21 +3164,43 @@ class _Generator:
             )
         if self.init_lines:
             out.extend(f"        {line}" for line in self.init_lines)
-        elif not (self._uses_exit or self._uses_trades):
+        elif not (
+            self._uses_exit
+            or self._uses_trades
+            or self._uses_pending
+            or self._uses_session
+        ):
             out.append("        pass")
         out.append("")
 
         if self._uses_time:
             out.extend(_TIME_HELPER)
+        if self._uses_session:
+            out.extend(_SESSION_HELPER)
         if self._uses_entry:
             out.extend(_ENTRY_HELPER)
         if self._uses_exit:
             out.extend(_EXIT_HELPER)
+        if self._uses_pending:
+            out.extend(_PENDING_HELPER)
         if self._uses_trades:
             out.extend(_TRADES_HELPER)
 
         out.append("    def next(self):")
-        body = list(self.next_lines)
+        body = []
+        if self._max_lookback:
+            body.append(f"if len(self) <= {self._max_lookback}:")
+            body.append("    # Pine answers na for history that does not exist")
+            body.append("    # yet, and no condition on na fires. Backtrader")
+            body.append("    # would answer with the far end of the preloaded")
+            body.append("    # buffer -- bars from the future -- so the bars")
+            body.append("    # missing the history are sat out instead.")
+            body.append("    return")
+        body += list(self.next_lines)
+        if self._uses_pending:
+            # Pine places the bar's orders when the script finishes running
+            # on it, which for the pending entries is this flush.
+            body.append("self._pine_flush()")
         if self._uses_trades:
             # Snapshotting at the *end* of the bar is what makes `[1]` mean
             # the previous bar: a trade closing on bar N is notified before
