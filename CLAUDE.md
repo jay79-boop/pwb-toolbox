@@ -86,6 +86,10 @@ A worked example, for this repo's 21st MCP key:
   `--rate` overrides so the math still runs offline
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
+- `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
+  rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
+  gets checked against; it emulates TradingView's intrabar path assumption so a low
+  printed before the entry filled cannot retroactively stop the trade out
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
@@ -99,6 +103,8 @@ A worked example, for this repo's 21st MCP key:
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
+- `pine/` — TradingView strategies kept as reviewable source; `README.md` there covers
+  the chart setup they need. Nothing under `pwb_toolbox/` imports them
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
   `index.html` (the published landing page; see "Design tooling" below)
 
@@ -160,6 +166,7 @@ pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
+python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
