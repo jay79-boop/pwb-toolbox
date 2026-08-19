@@ -789,8 +789,8 @@ def build_ladder(wb: Workbook):
         "Rung",
         "Target price",
         "Multiple",
+        "Units to sell",
         "% of position",
-        "Qty sold",
         "Gross",
         "Fees",
         "Est. tax",
@@ -827,15 +827,23 @@ def build_ladder(wb: Workbook):
         # what-if — or the only way to plan an asset you do not hold yet.
         for col in (1, 2, 3, 5, 6, 8):
             style_input(ws.cell(row=row, column=col))
-        style_derived(ws.cell(row=row, column=4))
+        for col in (4, 9):
+            style_derived(ws.cell(row=row, column=col))
 
         asset_cell = ws.cell(row=row, column=1, value=seed[0] if seed else None)
         asset_dv.add(asset_cell)
         ws.cell(row=row, column=5, value=f"Rung {seed[1]}" if seed else None)
         target = ws.cell(row=row, column=6, value=seed[2].target if seed else None)
         target.number_format = MONEY
-        pct = ws.cell(row=row, column=8, value=seed[2].pct if seed else None)
-        pct.number_format = PCT0
+        # Same rule as Ticker Plan: the quantity is what you type and the
+        # percentage is what you read. It arrives as a live share of the
+        # position and is yours to overwrite.
+        qty = ws.cell(
+            row=row,
+            column=8,
+            value=f"=ROUND({seed[2].pct}*$B{row},6)" if seed else None,
+        )
+        qty.number_format = QTY
 
         blank = f'$A{row}=""'
         # IFERROR, because a name that is not on the register is not a mistake
@@ -858,14 +866,25 @@ def build_ladder(wb: Workbook):
         ).number_format = MONEY
 
         empty = f'OR({blank},$B{row}="",$C{row}="",$F{row}="",$H{row}="")'
+        # No rung may sell what the rungs above it already sold. Scoped to the
+        # asset, so ladders for different coins can be interleaved.
+        sold_above = (
+            "0"
+            if row == LADDER_FIRST
+            else (
+                f"SUMIFS($H${LADDER_FIRST}:$H{row - 1},"
+                f"$A${LADDER_FIRST}:$A{row - 1},$A{row})"
+            )
+        )
+        used = f"MIN($H{row},MAX(0,$B{row}-{sold_above}))"
         ws.cell(
             row=row, column=7, value=f'=IF(OR({empty},$C{row}=0),"",$F{row}/$C{row})'
         ).number_format = MULT
         ws.cell(
-            row=row, column=9, value=f'=IF({empty},"",$H{row}*$B{row})'
-        ).number_format = QTY
+            row=row, column=9, value=f'=IF(OR({empty},$B{row}=0),"",{used}/$B{row})'
+        ).number_format = PCT
         ws.cell(
-            row=row, column=10, value=f'=IF({empty},"",$I{row}*$F{row})'
+            row=row, column=10, value=f'=IF({empty},"",{used}*$F{row})'
         ).number_format = MONEY
         ws.cell(
             row=row, column=11, value=f'=IF({empty},"",$J{row}*FeeRate)'
@@ -873,7 +892,7 @@ def build_ladder(wb: Workbook):
         ws.cell(
             row=row,
             column=12,
-            value=f'=IF({empty},"",MAX(0,($F{row}-$C{row})*$I{row})*TaxRate)',
+            value=f'=IF({empty},"",MAX(0,($F{row}-$C{row})*{used})*TaxRate)',
         ).number_format = MONEY
         ws.cell(
             row=row, column=13, value=f'=IF({empty},"",$J{row}-$K{row}-$L{row})'
@@ -893,12 +912,20 @@ def build_ladder(wb: Workbook):
         ws.cell(
             row=row,
             column=16,
-            value=f'=IF({empty},"",SUMIFS($H${LADDER_FIRST}:$H{row},$A${LADDER_FIRST}:$A{row},$A{row}))',
-        ).number_format = PCT0
+            value=(
+                f'=IF(OR({empty},$B{row}=0),"",'
+                f"SUMIFS($H${LADDER_FIRST}:$H{row},"
+                f"$A${LADDER_FIRST}:$A{row},$A{row})/$B{row})"
+            ),
+        ).number_format = PCT
         ws.cell(
             row=row,
             column=17,
-            value=f'=IF({empty},"",$B{row}-SUMIFS($I${LADDER_FIRST}:$I{row},$A${LADDER_FIRST}:$A{row},$A{row}))',
+            value=(
+                f'=IF({empty},"",MAX(0,$B{row}-'
+                f"SUMIFS($H${LADDER_FIRST}:$H{row},"
+                f"$A${LADDER_FIRST}:$A{row},$A{row})))"
+            ),
         ).number_format = QTY
         ws.cell(
             row=row, column=18, value=f'=IF({empty},"",$Q{row}*$F{row})'
@@ -969,15 +996,24 @@ def build_ladder(wb: Workbook):
 def build_ticker_plan(wb: Workbook):
     """One ticker, one screen, the whole exit plan.
 
-    The position reads across a single strip rather than down a column, so the
-    ladder starts near the top of the sheet. An earlier version stacked the
-    inputs vertically and froze twenty-one rows, which on a laptop left the
-    ladder entirely below the fold — the sheet looked like it ended at the
-    tiles.
+    Two rules the rest of the sheet is built around.
+
+    The quantity is what you type and the percentage is what you read. Typing
+    units is how the decision is actually made — "take four hundred off here" —
+    and a percentage that has to be worked out first is a step in the way. The
+    unit cells arrive filled in from a share of the position, so a duplicate of
+    this tab still scales itself, and typing over one is expected rather than
+    destructive.
+
+    And no rung may sell units the rungs above it have already sold. The
+    quantity each rung actually moves is capped at what is left, so a plan that
+    over-commits shows the over-commitment in the tiles without booking cash on
+    units that no longer exist — which is the fault the old workbook's Gala
+    ladder had.
 
     Deliberately self-contained: every formula refers to a cell on this sheet
     (plus the two rates from Settings), so right-click → Duplicate gives a
-    working plan for the next coin instead of a mirror of this one.
+    working plan for the next coin rather than a mirror of this one.
     """
     ws = wb.create_sheet("Ticker Plan")
     ws.sheet_properties.tabColor = ACCENT
@@ -985,7 +1021,7 @@ def build_ticker_plan(wb: Workbook):
     sheet_title(
         ws,
         "Ticker Plan",
-        "Fill in the four amber cells. Everything below them is the plan. "
+        "Fill in the amber cells. Everything else follows from them. "
         "Right-click the tab and Duplicate it for the next coin.",
         20,
     )
@@ -998,36 +1034,38 @@ def build_ticker_plan(wb: Workbook):
     for col in "QRST":
         ws.column_dimensions[col].width = 15
 
-    # ---- the position, read across ----------------------------------------
+    row = TP_INPUT
+    ticker, units, cost = f"$B${row}", f"$C${row}", f"$D${row}"
+    mode, manual, live = f"$E${row}", f"$F${row}", f"$G${row}"
+    basis = f"$I${row}"
+
     strip = [
         (2, "Ticker", "CURRENCY:XRPUSD", None, True),
         (3, "Units held", 1000, QTY, True),
         (4, "Average cost", 1.00, MONEY, True),
-        (5, "Manual price", 1.00, MONEY, True),
+        (5, "Price mode", "Auto", None, True),
+        (6, "Manual price", 1.00, MONEY, True),
+        # Manual has to be able to win. As a fallback only, a coin the feed
+        # does carry ignored the price typed beside it with nothing to say so.
         (
-            6,
+            7,
             "Live price",
-            f"=IFERROR(GOOGLEFINANCE($B${TP_INPUT}),$E${TP_INPUT})",
+            f'=IF({mode}="Manual",{manual},IFERROR(GOOGLEFINANCE({ticker}),{manual}))',
             MONEY,
             False,
         ),
         (
-            7,
+            8,
             "Feed",
-            f'=IF(ISERROR(GOOGLEFINANCE($B${TP_INPUT})),"manual","live")',
+            f'=IF({mode}="Manual","manual — pinned by you",'
+            f'IF(ISERROR(GOOGLEFINANCE({ticker})),"no feed — using manual","live"))',
             None,
             False,
         ),
-        (8, "Cost basis", f"=$C${TP_INPUT}*$D${TP_INPUT}", MONEY, False),
-        (9, "Market value", f"=$C${TP_INPUT}*$F${TP_INPUT}", MONEY, False),
-        (10, "Open profit", f"=$I${TP_INPUT}-$H${TP_INPUT}", MONEY, False),
-        (
-            11,
-            "Open profit %",
-            f'=IF($H${TP_INPUT}=0,"",$J${TP_INPUT}/$H${TP_INPUT})',
-            PCT,
-            False,
-        ),
+        (9, "Cost basis", f"={units}*{cost}", MONEY, False),
+        (10, "Market value", f"={units}*{live}", MONEY, False),
+        (11, "Open profit", f"=$J${row}-{basis}", MONEY, False),
+        (12, "Open profit %", f'=IF({basis}=0,"",$K${row}/{basis})', PCT, False),
     ]
     for col, label, value, fmt, typed in strip:
         head = ws.cell(row=TP_LABEL, column=col, value=label.upper())
@@ -1036,16 +1074,17 @@ def build_ticker_plan(wb: Workbook):
         head.fill = PatternFill("solid", fgColor=INPUT_BG if typed else DERIVED)
         head.border = BOX
         cell = ws.cell(row=TP_INPUT, column=col, value=value)
-        if typed:
-            style_input(cell)
-        else:
-            style_derived(cell)
+        style_input(cell) if typed else style_derived(cell)
         if fmt:
             cell.number_format = fmt
     ws.row_dimensions[TP_LABEL].height = 26
     ws.row_dimensions[TP_INPUT].height = 20
 
-    for ref in (f"J{TP_INPUT}", f"K{TP_INPUT}"):
+    mode_dv = DataValidation(type="list", formula1='"Auto,Manual"', allow_blank=True)
+    ws.add_data_validation(mode_dv)
+    mode_dv.add(ws.cell(row=TP_INPUT, column=5))
+
+    for ref in (f"K{TP_INPUT}", f"L{TP_INPUT}"):
         ws.conditional_formatting.add(
             ref,
             CellIsRule(
@@ -1058,25 +1097,32 @@ def build_ticker_plan(wb: Workbook):
                 operator="greaterThan", formula=["0"], font=Font(bold=True, color=GOOD)
             ),
         )
+    ws.conditional_formatting.add(
+        f"H{TP_INPUT}",
+        CellIsRule(
+            operator="equal",
+            formula=['"manual — pinned by you"'],
+            font=Font(bold=True, color="92400E"),
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
+    )
 
     # ---- what the whole plan adds up to ------------------------------------
     first, last = TP_RUNG_FIRST, TP_RUNG_LAST
+    planned = f"SUM($H${first}:$H${last})"
     tiles = [
         (2, "Net cash it returns", f"=SUM($K${first}:$K${last})", MONEY0),
         (
             4,
             "Average exit price",
-            f'=IF(SUM($I${first}:$I${last})=0,"—",'
-            f"SUM($J${first}:$J${last})/SUM($I${first}:$I${last}))",
+            f'=IF(MIN({planned},{units})=0,"—",'
+            f"SUM($J${first}:$J${last})/MIN({planned},{units}))",
             MONEY,
         ),
-        (
-            6,
-            "% of position sold",
-            f'=IF($C${TP_INPUT}=0,"",SUM($I${first}:$I${last})/$C${TP_INPUT})',
-            PCT,
-        ),
-        (8, "Units still riding", f"=$C${TP_INPUT}-SUM($I${first}:$I${last})", QTY),
+        # Raw, not capped: the point of these two is to show an over-committed
+        # plan, so they have to be allowed to read past 100% and below zero.
+        (6, "% of position sold", f'=IF({units}=0,"",{planned}/{units})', PCT),
+        (8, "Units still riding", f"={units}-{planned}", QTY),
         (
             10,
             "Free ride from",
@@ -1112,13 +1158,23 @@ def build_ticker_plan(wb: Workbook):
                 ws.cell(row=r, column=col + offset).border = BOX
     ws.row_dimensions[TP_TILE_VALUE].height = 20
 
+    over = PatternFill("solid", fgColor=BAD_SOFT)
     ws.conditional_formatting.add(
-        f"G{TP_TILE_VALUE}",
+        f"F{TP_TILE_VALUE}",
         CellIsRule(
             operator="greaterThan",
             formula=["1"],
             font=Font(size=15, bold=True, color=BAD),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
+            fill=over,
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"H{TP_TILE_VALUE}",
+        CellIsRule(
+            operator="lessThan",
+            formula=["0"],
+            font=Font(size=15, bold=True, color=BAD),
+            fill=over,
         ),
     )
 
@@ -1147,8 +1203,8 @@ def build_ticker_plan(wb: Workbook):
         "Profit per unit",
         "Net cash",
         "Net profit",
-        "% to sell here",
-        "Units sold",
+        "Units to sell",
+        "% of position",
         "Gross",
         "Net cash",
         "Cash so far",
@@ -1166,88 +1222,88 @@ def build_ticker_plan(wb: Workbook):
     ws.freeze_panes = f"B{TP_RUNG_FIRST}"
 
     for offset in range(last - first + 1):
-        row = first + offset
+        r = first + offset
         seed = TP_RUNGS[offset] if offset < len(TP_RUNGS) else None
         for col in range(2, 16):
-            cell = ws.cell(row=row, column=col)
+            cell = ws.cell(row=r, column=col)
             style_body(cell)
             if offset % 2 == 1:
                 cell.fill = BAND_FILL
         for col in (2, 8):
-            style_input(ws.cell(row=row, column=col))
+            style_input(ws.cell(row=r, column=col))
 
-        gain = ws.cell(row=row, column=2, value=seed[0] if seed else None)
+        gain = ws.cell(row=r, column=2, value=seed[0] if seed else None)
         gain.number_format = PCT0
-        slice_pct = ws.cell(row=row, column=8, value=seed[1] if seed else None)
-        slice_pct.number_format = PCT0
-
-        blank = f'$B{row}=""'
-        noslice = f'$I{row}=""'
-        units, cost, live, basis = (
-            f"$C${TP_INPUT}",
-            f"$D${TP_INPUT}",
-            f"$F${TP_INPUT}",
-            f"$H${TP_INPUT}",
+        # Amber and pre-filled: a live default share of the position until you
+        # type a number of your own over it.
+        qty = ws.cell(
+            row=r,
+            column=8,
+            value=f"=ROUND({seed[1]}*{units},6)" if seed else None,
         )
+        qty.number_format = QTY
+
+        sold_above = "0" if r == first else f"SUM($H${first}:$H{r - 1})"
+        used = f"MIN($H{r},MAX(0,{units}-{sold_above}))"
+        blank = f'$B{r}=""'
+        noqty = f'OR($B{r}="",$H{r}="")'
+
         ws.cell(
-            row=row, column=3, value=f'=IF({blank},"",{cost}*(1+$B{row}))'
+            row=r, column=3, value=f'=IF({blank},"",{cost}*(1+$B{r}))'
         ).number_format = MONEY
         ws.cell(
-            row=row,
-            column=4,
-            value=f'=IF(OR({blank},{live}=0),"",$C{row}/{live}-1)',
+            row=r, column=4, value=f'=IF(OR({blank},{live}=0),"",$C{r}/{live}-1)'
         ).number_format = PCT
         ws.cell(
-            row=row, column=5, value=f'=IF({blank},"",$C{row}-{cost})'
+            row=r, column=5, value=f'=IF({blank},"",$C{r}-{cost})'
         ).number_format = MONEY
         ws.cell(
-            row=row,
+            row=r,
             column=6,
             value=(
-                f'=IF({blank},"",{units}*$C{row}*(1-FeeRate)'
-                f"-MAX(0,($C{row}-{cost})*{units})*TaxRate)"
+                f'=IF({blank},"",{units}*$C{r}*(1-FeeRate)'
+                f"-MAX(0,($C{r}-{cost})*{units})*TaxRate)"
             ),
         ).number_format = MONEY
         ws.cell(
-            row=row, column=7, value=f'=IF({blank},"",$F{row}-{basis})'
+            row=r, column=7, value=f'=IF({blank},"",$F{r}-{basis})'
         ).number_format = MONEY
         ws.cell(
-            row=row,
+            row=r,
             column=9,
-            value=f'=IF(OR({blank},$H{row}=""),"",$H{row}*{units})',
-        ).number_format = QTY
+            value=f'=IF(OR({noqty},{units}=0),"",{used}/{units})',
+        ).number_format = PCT
         ws.cell(
-            row=row, column=10, value=f'=IF({noslice},"",$I{row}*$C{row})'
+            row=r, column=10, value=f'=IF({noqty},"",{used}*$C{r})'
         ).number_format = MONEY
         ws.cell(
-            row=row,
+            row=r,
             column=11,
             value=(
-                f'=IF({noslice},"",$J{row}*(1-FeeRate)'
-                f"-MAX(0,($C{row}-{cost})*$I{row})*TaxRate)"
+                f'=IF({noqty},"",$J{r}*(1-FeeRate)'
+                f"-MAX(0,($C{r}-{cost})*{used})*TaxRate)"
             ),
         ).number_format = MONEY
         ws.cell(
-            row=row, column=12, value=f'=IF({noslice},"",SUM($K${first}:$K{row}))'
+            row=r, column=12, value=f'=IF({noqty},"",SUM($K${first}:$K{r}))'
         ).number_format = MONEY
         ws.cell(
-            row=row,
+            row=r,
             column=13,
-            value=f'=IF({noslice},"",{units}-SUM($I${first}:$I{row}))',
+            value=f'=IF({noqty},"",MAX(0,{units}-SUM($H${first}:$H{r})))',
         ).number_format = QTY
-        # The rung where the cash taken off the table covers what you put in.
         ws.cell(
-            row=row,
+            row=r,
             column=14,
-            value=f'=IF({noslice},"",IF($L{row}>={basis},"Free ride","Still exposed"))',
+            value=(
+                f'=IF({noqty},"",IF(SUM($H${first}:$H{r})>{units},"Oversold",'
+                f'IF($L{r}>={basis},"Free ride","Still exposed")))'
+            ),
         )
         ws.cell(
-            row=row,
+            row=r,
             column=15,
-            value=(
-                f'=IF({noslice},"",IF($M{row}<=0,"—",'
-                f"MAX(0,{basis}-$L{row})/$M{row}))"
-            ),
+            value=(f'=IF({noqty},"",IF($M{r}<=0,"—",MAX(0,{basis}-$L{r})/$M{r}))'),
         ).number_format = MONEY
 
     ws.conditional_formatting.add(
@@ -1260,21 +1316,21 @@ def build_ticker_plan(wb: Workbook):
         ),
     )
     ws.conditional_formatting.add(
+        f"N{first}:N{last}",
+        CellIsRule(
+            operator="equal",
+            formula=['"Oversold"'],
+            font=Font(color=BAD, bold=True),
+            fill=over,
+        ),
+    )
+    ws.conditional_formatting.add(
         f"D{first}:D{last}",
         CellIsRule(
             operator="lessThanOrEqual",
             formula=["0"],
             font=Font(color=GOOD, bold=True),
             fill=PatternFill("solid", fgColor=GOOD_SOFT),
-        ),
-    )
-    ws.conditional_formatting.add(
-        f"M{first}:M{last}",
-        CellIsRule(
-            operator="lessThan",
-            formula=["0"],
-            font=Font(color=BAD, bold=True),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
         ),
     )
     ws.conditional_formatting.add(
@@ -1306,27 +1362,23 @@ def build_ticker_plan(wb: Workbook):
         cell.alignment = Alignment(vertical="center", wrap_text=True, indent=1)
 
     for offset, drawdown in enumerate([i / 100 for i in range(10, 81, 10)]):
-        row = TP_RUNG_FIRST + offset
+        r = TP_RUNG_FIRST + offset
         for col in range(17, 21):
-            cell = ws.cell(row=row, column=col)
+            cell = ws.cell(row=r, column=col)
             style_body(cell)
             if offset % 2 == 1:
                 cell.fill = BAND_FILL
-        ws.cell(row=row, column=17, value=round(drawdown, 2)).number_format = PCT0
-        ws.cell(
-            row=row, column=18, value=f"=$D${TP_INPUT}*(1-$Q{row})"
-        ).number_format = MONEY
-        ws.cell(row=row, column=19, value=f"=$R{row}*$C${TP_INPUT}").number_format = (
-            MONEY
-        )
-        ws.cell(row=row, column=20, value=f"=1/(1-$Q{row})-1").number_format = PCT0
+        ws.cell(row=r, column=17, value=round(drawdown, 2)).number_format = PCT0
+        ws.cell(row=r, column=18, value=f"={cost}*(1-$Q{r})").number_format = MONEY
+        ws.cell(row=r, column=19, value=f"=$R{r}*{units}").number_format = MONEY
+        ws.cell(row=r, column=20, value=f"=1/(1-$Q{r})-1").number_format = PCT0
     ws.conditional_formatting.add(
         f"T{TP_RUNG_FIRST}:T{TP_RUNG_FIRST + 7}",
         CellIsRule(
             operator="greaterThanOrEqual",
             formula=["1"],
             font=Font(color=BAD, bold=True),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
+            fill=over,
         ),
     )
 
@@ -1334,11 +1386,12 @@ def build_ticker_plan(wb: Workbook):
         row=last + 2,
         column=2,
         value=(
-            'Green under "vs today\'s price" means the market is already past '
-            'that rung. "Break-even of the rest" is what the units you still '
-            "hold have to be worth for the whole trade to come out flat — once "
-            "a rung reads Free ride, the position cannot lose you money "
-            "whatever happens next."
+            "Type units, read percentages. Every unit cell starts as a share of "
+            "the position and is yours to overwrite. No rung can sell what the "
+            "rungs above it already sold — go past what you hold and the status "
+            "reads Oversold, the tiles turn red, and the cash stops counting "
+            "units that are gone. Set Price mode to Manual to pin a price the "
+            "feed would otherwise overrule."
         ),
     )
     note.font = SMALL_F

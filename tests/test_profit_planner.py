@@ -29,6 +29,7 @@ from tools.build_profit_planner import (  # noqa: E402
     SECTORS,
     STATUSES,
     TP_HEADER,
+    TP_INPUT,
     TP_RUNG_FIRST,
     TP_RUNG_LAST,
     TP_RUNGS,
@@ -377,3 +378,67 @@ def test_the_stale_band_sits_under_the_portfolio_value(wb):
     assert (
         ws["B5"].value == f"=Positions!$N${POS_TOTAL}"
     ), "tile above must be the value"
+
+
+def test_a_pinned_price_beats_the_feed(wb):
+    """Manual price was a fallback only.
+
+    For a coin the feed does carry, typing a price beside it did nothing and
+    nothing said why. Price mode decides, exactly as it does on Positions.
+    """
+    live = wb["Ticker Plan"].cell(row=TP_INPUT, column=7).value
+    assert live.startswith(f'=IF($E${TP_INPUT}="Manual",$F${TP_INPUT},')
+    assert "GOOGLEFINANCE" in live
+    feed = wb["Ticker Plan"].cell(row=TP_INPUT, column=8).value
+    assert "pinned by you" in feed, "the sheet has to say the feed is overruled"
+    modes = {dv.formula1 for dv in wb["Ticker Plan"].data_validations.dataValidation}
+    assert '"Auto,Manual"' in modes
+
+
+def test_you_type_units_and_read_percentages(wb):
+    """Typing units is how the decision is made — take four hundred off here.
+
+    A percentage that has to be worked out first is a step in the way, so the
+    unit cells carry a live default and the percentage is derived from them.
+    """
+    for sheet, qty_col, pct_col in (("Ticker Plan", 8, 9), ("Exit Ladder", 8, 9)):
+        ws = wb[sheet]
+        first = TP_RUNG_FIRST if sheet == "Ticker Plan" else LADDER_FIRST
+        last = TP_RUNG_LAST if sheet == "Ticker Plan" else LADDER_LAST
+        seeded = 0
+        for row in range(first, last + 1):
+            qty = ws.cell(row=row, column=qty_col)
+            assert qty.fill.fgColor.rgb.endswith("FEF3C7"), f"{sheet} {row} qty"
+            if qty.value:
+                assert qty.value.startswith("=ROUND("), "a live default, not a constant"
+                seeded += 1
+            pct = ws.cell(row=row, column=pct_col).value
+            assert pct.startswith("=IF("), f"{sheet} {row} percentage must be derived"
+            assert "MIN(" in pct, f"{sheet} {row} percentage must read the capped units"
+        assert seeded, f"{sheet} should arrive with a plan in it"
+
+
+def test_no_rung_sells_what_the_rungs_above_it_sold(wb):
+    """The fault the old workbook's Gala ladder had.
+
+    Over-committing a plan used to keep booking cash on units that were
+    already gone. The quantity each rung moves is capped at what is left.
+    """
+    for sheet, first, last, held in (
+        ("Ticker Plan", TP_RUNG_FIRST, TP_RUNG_LAST, f"$C${TP_INPUT}"),
+        ("Exit Ladder", LADDER_FIRST, LADDER_LAST, None),
+    ):
+        ws = wb[sheet]
+        for row in range(first, last + 1):
+            gross = ws.cell(row=row, column=10).value
+            assert "MIN($H%d,MAX(0," % row in gross, f"{sheet} row {row} is uncapped"
+            if held:
+                assert held in gross
+            left = ws.cell(row=row, column=13 if sheet == "Ticker Plan" else 17).value
+            assert "MAX(0," in left, f"{sheet} row {row} can show negative units left"
+
+
+def test_an_oversold_plan_says_so(wb):
+    ws = wb["Ticker Plan"]
+    for row in range(TP_RUNG_FIRST, TP_RUNG_LAST + 1):
+        assert '"Oversold"' in ws.cell(row=row, column=14).value
