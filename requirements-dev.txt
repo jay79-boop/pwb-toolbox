@@ -5,5 +5,7 @@ pytest
 black==26.5.1
 
 # tools/build_profit_planner.py writes an .xlsx workbook; the test suite
-# builds it in memory rather than shipping a binary.
-openpyxl
+# builds it in memory rather than shipping a binary. Pinned for the same
+# reason black is: CI installs fresh every run, so an unpinned dependency
+# would eventually fail the job on code nobody touched.
+openpyxl==3.1.5
