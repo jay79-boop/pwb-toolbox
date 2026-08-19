@@ -30,6 +30,7 @@ from .market import (
     breadth,
     latest_changes,
     movers,
+    session_is_open,
     typical_moves,
 )
 
@@ -230,6 +231,7 @@ def collect_free(
         latest = pd.to_datetime(frame["date"]).max()
         if not pd.isna(latest):
             facts.session_date = latest.date()
+            facts.session_open = session_is_open(facts.session_date)
 
         facts.rate = normalize_tnx(_quote_from(frame, FREE_RATE_SYMBOL, "the ten-year"))
         facts.crude = _quote_from(frame, FREE_CRUDE_SYMBOL, "crude")

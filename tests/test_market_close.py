@@ -5,7 +5,7 @@ built in-process and the renderer against ``demo_facts``, so nothing needs
 ``PWB_API_KEY``, a Hugging Face login, or a live session.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -85,10 +85,25 @@ def test_ordinal_to_words(day, expected):
         (2.5, "two and a half percent"),
         (14.0, "fourteen percent"),
         (0.001, "a fraction of a percent"),
+        (0.94, "nine tenths of a percent"),
+        (0.95, "one percent"),
+        (0.99, "one percent"),
     ],
 )
 def test_say_percent_uses_desk_idiom(pct, expected):
     assert spoken.say_percent(pct) == expected
+
+
+def test_say_percent_never_says_ten_tenths():
+    """Regression: a clean one percent move arrives as 0.9999999999999998.
+
+    Floating point puts it just under the whole-percent branch, where it used
+    to round to ten tenths and say so out loud.
+    """
+    assert spoken.say_percent(-0.9999999999999998) == "one percent"
+    for step in range(90, 111):
+        said = spoken.say_percent(step / 100)
+        assert "ten tenths" not in said, (step / 100, said)
 
 
 @pytest.mark.parametrize(
@@ -537,6 +552,40 @@ def test_scale_lines_keep_the_no_digits_invariant():
             assert not any(c.isdigit() for c in line), line
 
 
+def test_the_ordinary_band_never_waves_the_move_away():
+    """ "Typical" and "nothing" are the same only in a calm month.
+
+    A one percent drop can be perfectly average for a volatile market and still
+    be the most interesting fact available. The band means "matched what this
+    market has been doing lately" — it must not be read as "no story".
+    """
+    for line in script.SCALE_ORDINARY:
+        for dismissal in (
+            "Not a story",
+            "least reportable",
+            "boringly ordinary",
+            "nothing",
+        ):
+            assert dismissal not in line, line
+
+
+def test_the_ordinary_band_can_state_the_measured_baseline():
+    """At least one line reports what average actually is right now."""
+    assert any(
+        "{typical}" in line or "{Typical}" in line for line in script.SCALE_ORDINARY
+    )
+
+
+def test_the_baseline_substitutes_into_the_ordinary_lines():
+    quote = market.index_quotes(history(daily_pct=0.9, today_pct=-1.0), ["SPY"])[0]
+    assert quote.move_scale == "ordinary"
+    seen = {script.scale_line(quote, date(2026, 8, day)) for day in range(1, 20)}
+    assert any("nine tenths of a percent" in line for line in seen)
+    for line in seen:
+        assert "{" not in line and "}" not in line, line
+        assert not any(c.isdigit() for c in line), line
+
+
 def test_every_scale_band_has_a_bank():
     assert set(script.SCALE_BANKS) == {"quiet", "ordinary", "notable", "big"}
     assert all(script.SCALE_BANKS[band] for band in script.SCALE_BANKS)
@@ -561,6 +610,92 @@ def test_tape_omits_the_scale_line_without_a_baseline():
         "what this market does on",
     ):
         assert marker not in script.tape(facts)
+
+
+# --------------------------------------------------------------------------
+# open sessions
+# --------------------------------------------------------------------------
+
+
+def eastern(y, m, d, hour):
+    from zoneinfo import ZoneInfo
+
+    return datetime(y, m, d, hour, tzinfo=ZoneInfo(market.MARKET_TIMEZONE))
+
+
+@pytest.mark.parametrize(
+    "latest,now,expected",
+    [
+        (date(2026, 8, 18), eastern(2026, 8, 18, 11), True),  # mid-session
+        (date(2026, 8, 18), eastern(2026, 8, 18, 9), True),  # just after the open
+        (date(2026, 8, 18), eastern(2026, 8, 18, 16), False),  # the bell
+        (date(2026, 8, 18), eastern(2026, 8, 18, 21), False),  # evening
+        (date(2026, 8, 17), eastern(2026, 8, 18, 11), False),  # yesterday's bar
+        (date(2026, 8, 14), eastern(2026, 8, 17, 11), False),  # over a weekend
+    ],
+)
+def test_session_is_open(latest, now, expected):
+    assert market.session_is_open(latest, now) is expected
+
+
+def test_an_open_session_never_claims_a_close():
+    """ "Closed down one percent" is false at eleven in the morning."""
+    facts = market.demo_facts()
+    facts.session_open = True
+    text = script.render(facts, full=True)
+    for claim in ("closed up", "closed down", "settled at", "closing at", "finished"):
+        assert claim not in text, claim
+
+
+def test_a_finished_session_still_speaks_in_the_past():
+    text = script.render(market.demo_facts(), full=True)
+    assert "closed up" in text
+    assert "is up six tenths" not in text
+
+
+@pytest.mark.parametrize(
+    "segment,live_marker,past_marker",
+    [
+        ("tape", "is up six tenths", "closed up six tenths"),
+        ("movers", "is down twenty-two", "finished down twenty-two"),
+        ("rates", "has eased three basis points", "eased three basis points"),
+        ("commodities", "Crude is at", "Crude settled at"),
+    ],
+)
+def test_each_segment_switches_tense(segment, live_marker, past_marker):
+    closed, live = market.demo_facts(), market.demo_facts()
+    live.session_open = True
+    render = getattr(script, segment)
+    assert past_marker in render(closed)
+    assert live_marker in render(live)
+
+
+def test_a_flat_index_switches_tense_too():
+    facts = MarketFacts(
+        session_date=DAY_TWO,
+        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.001, 100.0)],
+        session_open=True,
+    )
+    assert "is essentially flat" in script.tape(facts)
+
+
+def test_an_open_session_keeps_the_no_digits_invariant():
+    facts = market.demo_facts()
+    facts.session_open = True
+    assert not any(c.isdigit() for c in script.render(facts, full=True))
+
+
+def test_cli_notes_an_open_session(monkeypatch, capsys):
+    real = market.demo_facts
+
+    def open_facts(session=None):
+        facts = real(session)
+        facts.session_open = True
+        return facts
+
+    monkeypatch.setattr(market, "demo_facts", open_facts)
+    assert main(["--demo"]) == 0
+    assert "the market is still open" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------

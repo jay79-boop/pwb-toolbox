@@ -164,12 +164,21 @@ SCALE_QUIET = [
     "it, technically, not news. [starts laughing] And yet here I am.",
 ]
 
+# These say "typical", never "nothing". The band means today matched what this
+# market has been doing lately — which in a calm month is the same as "no
+# story" and in a violent one is the opposite. A one percent drop can be
+# perfectly average and still be the most interesting fact available, so none
+# of these are allowed to wave it away. ``{typical}`` is the measured baseline.
 SCALE_ORDINARY = [
-    "Which is about a normal day for this market. [pause] Not a story. "
-    "[pause] Just the market being open.",
-    "About average. [exhales] The least reportable thing that can happen, "
-    "[pause] and the thing that happens most.",
-    "Ordinary. [pause] Genuinely, boringly ordinary. [pause] I checked.",
+    "Which is a normal day for this market right now. [pause] Not calm. "
+    "[pause] Normal. [exhales] Those two have drifted apart lately.",
+    "About average — [pause] and average around here is {typical} a day, at the "
+    "moment. [pause] Make of that what you like. [starts laughing] I've stopped.",
+    "Which is about what this market has been doing every day for a month. "
+    "[pause] {Typical} a session, over and over. [exhales] At some point that "
+    "stops being a move and starts being the weather.",
+    "Ordinary, for this market, this month. [pause] Both halves of that matter, "
+    "[pause] and only one of them makes the headline.",
 ]
 
 # ``{multiple}`` substitutes mid-sentence, ``{Multiple}`` at a sentence start.
@@ -303,8 +312,15 @@ a personality."""
 COLD_OPEN_HANDOFF = "[pause] I'm {anchor}. [pause] Let's look at today."
 
 
+# Past tense once the bell has rung; present tense while it is still moving.
+# Writing the script before the close is the normal case — you write, then you
+# record — so "closed down one percent" is false at eleven in the morning, and
+# it is the one claim in the whole show a viewer could catch outright.
 GAIN_VERBS = ("closed up", "gained", "added", "advanced")
 LOSS_VERBS = ("closed down", "slipped", "shed", "gave up")
+
+LIVE_GAIN_VERBS = ("is up", "has gained", "has added", "is ahead")
+LIVE_LOSS_VERBS = ("is down", "has slipped", "has shed", "is off")
 
 # Below this, a yield move is noise rather than news.
 QUIET_RATE_MOVE_BP = 5.0
@@ -335,13 +351,16 @@ def _capitalize(text: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def _index_clause(quote: Quote, position: int) -> str:
+def _index_clause(quote: Quote, position: int, live: bool = False) -> str:
     """One index's move, in the unit that index is actually quoted in."""
     pct = quote.percent_change
     if abs(pct) < 0.05:
-        return f"{quote.name} finished essentially flat"
+        return f"{quote.name} {'is essentially flat' if live else 'finished essentially flat'}"
 
-    verbs = GAIN_VERBS if pct > 0 else LOSS_VERBS
+    if pct > 0:
+        verbs = LIVE_GAIN_VERBS if live else GAIN_VERBS
+    else:
+        verbs = LIVE_LOSS_VERBS if live else LOSS_VERBS
     verb = verbs[position % len(verbs)]
 
     # The Dow is read in points on air; everything else in percent.
@@ -390,11 +409,17 @@ def scale_line(quote: Quote, session: date) -> str | None:
 
     line = pick(SCALE_BANKS[scale], session, "scale")
     multiple = spoken.say_multiple(quote.move_ratio)
+    typical = spoken.say_percent(quote.typical_move)
     # ``replace`` rather than ``format``: a stray brace in a bank line should
     # never raise on a live run.
-    return line.replace("{multiple}", multiple).replace(
-        "{Multiple}", _capitalize(multiple)
-    )
+    for token, value in (
+        ("{multiple}", multiple),
+        ("{Multiple}", _capitalize(multiple)),
+        ("{typical}", typical),
+        ("{Typical}", _capitalize(typical)),
+    ):
+        line = line.replace(token, value)
+    return line
 
 
 def tape(facts: MarketFacts, counts: bool = False) -> str | None:
@@ -410,7 +435,8 @@ def tape(facts: MarketFacts, counts: bool = False) -> str | None:
         return None
 
     clauses = [
-        _index_clause(quote, position) for position, quote in enumerate(facts.indices)
+        _index_clause(quote, position, live=facts.session_open)
+        for position, quote in enumerate(facts.indices)
     ]
     body = ". ".join(_capitalize(clause) for clause in clauses) + "."
 
@@ -436,24 +462,30 @@ def tape(facts: MarketFacts, counts: bool = False) -> str | None:
     return f"[THE TAPE]\n\n{body}\n{tally}[pause] {joke}"
 
 
-def _gainer_block(quote: Quote, session: date) -> str:
+def _gainer_block(quote: Quote, session: date, live: bool = False) -> str:
     joke = pick(GAINER_JOKES, session, "gainer")
+    verb = "are leading the tape, up" if live else "led the tape, up"
+    at = "at" if live else "closing at"
     return (
-        f"Shares of {quote.name} led the tape, up "
-        f"{spoken.say_percent(quote.percent_change)}, closing at "
+        f"Shares of {quote.name} {verb} "
+        f"{spoken.say_percent(quote.percent_change)}, {at} "
         f"{spoken.say_dollars(quote.close)}.\n{joke}"
     )
 
 
-def _loser_block(quote: Quote, session: date, lead: bool) -> str:
+def _loser_block(quote: Quote, session: date, lead: bool, live: bool = False) -> str:
     joke = pick(LOSER_JOKES, session, "loser")
     # "Going the other way" needs something to be the other way from; standing
     # alone it opens the segment mid-thought.
-    opening = (
-        f"The biggest move today went the wrong way. {quote.name} finished down"
-        if lead
-        else f"Going the other way — {quote.name} finished down"
-    )
+    if lead:
+        opening = (
+            f"The biggest move so far has gone the wrong way. {quote.name} is down"
+            if live
+            else f"The biggest move today went the wrong way. {quote.name} finished down"
+        )
+    else:
+        tail = "is down" if live else "finished down"
+        opening = f"Going the other way — {quote.name} {tail}"
     return (
         f"{opening} {spoken.say_percent(quote.percent_change)}, at "
         f"{spoken.say_dollars(quote.close)}.\n{joke}"
@@ -471,13 +503,15 @@ def movers(facts: MarketFacts, both: bool = False) -> str | None:
     if facts.gainer is None and facts.loser is None:
         return None
 
+    live = facts.session_open
+
     if both:
         blocks = []
         if facts.gainer is not None:
-            blocks.append(_gainer_block(facts.gainer, facts.session_date))
+            blocks.append(_gainer_block(facts.gainer, facts.session_date, live))
         if facts.loser is not None:
             blocks.append(
-                _loser_block(facts.loser, facts.session_date, lead=not blocks)
+                _loser_block(facts.loser, facts.session_date, not blocks, live)
             )
         return "[MOVERS]\n\n" + "\n\n".join(blocks)
 
@@ -491,9 +525,9 @@ def movers(facts: MarketFacts, both: bool = False) -> str | None:
         )
 
     block = (
-        _gainer_block(facts.gainer, facts.session_date)
+        _gainer_block(facts.gainer, facts.session_date, live)
         if lead_gainer
-        else _loser_block(facts.loser, facts.session_date, lead=True)
+        else _loser_block(facts.loser, facts.session_date, True, live)
     )
     return f"[MOVERS]\n\n{block}"
 
@@ -507,10 +541,17 @@ def rates(facts: MarketFacts) -> str | None:
     basis_points = facts.rate.point_change * 100.0
     quiet = abs(basis_points) < QUIET_RATE_MOVE_BP
 
+    live = facts.session_open
     if abs(basis_points) < 0.5:
-        movement = f"was effectively unchanged, at {spoken.say_yield(facts.rate.close)}"
+        was = "is" if live else "was"
+        movement = (
+            f"{was} effectively unchanged, at {spoken.say_yield(facts.rate.close)}"
+        )
     else:
-        direction = "eased" if basis_points < 0 else "rose"
+        if live:
+            direction = "has eased" if basis_points < 0 else "has risen"
+        else:
+            direction = "eased" if basis_points < 0 else "rose"
         movement = (
             f"{direction} {spoken.say_basis_points(basis_points)} "
             f"to {spoken.say_yield(facts.rate.close)}"
@@ -530,17 +571,20 @@ def commodities(facts: MarketFacts) -> str | None:
     if facts.crude is not None:
         joke = pick(CRUDE_JOKES, facts.session_date, "crude")
         move = "up" if facts.crude.percent_change >= 0 else "down"
+        settled = "is at" if facts.session_open else "settled at"
         blocks.append(
-            f"Crude settled at {spoken.say_dollars(facts.crude.close)} a barrel, "
+            f"Crude {settled} {spoken.say_dollars(facts.crude.close)} a barrel, "
             f"{move} {spoken.say_percent(facts.crude.percent_change)}.\n{joke}"
         )
 
     if facts.crypto is not None:
         joke = pick(CRYPTO_JOKES, facts.session_date, "crypto")
         move = "higher" if facts.crypto.percent_change >= 0 else "lower"
+        went = "is" if facts.session_open else "went"
+        at = "at" if facts.session_open else "to"
         blocks.append(
-            f"And Bitcoin — [exhales] Bitcoin went {move}, "
-            f"{spoken.say_percent(facts.crypto.percent_change)}, to "
+            f"And Bitcoin — [exhales] Bitcoin {went} {move}, "
+            f"{spoken.say_percent(facts.crypto.percent_change)}, {at} "
             f"{spoken.say_dollars(facts.crypto.close)}.\n{joke}"
         )
 

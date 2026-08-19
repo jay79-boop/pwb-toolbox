@@ -90,17 +90,50 @@ would divide anyway, and Backtrader's line division raises where Pine answers
 function of the current bar's values, where ``if``/``else`` is lazy again.
 See ``_EXPR_INDICATOR`` and :meth:`_Generator._expr_line`.
 
-``ta.hma``, ``ta.vwma`` and ``ta.alma`` are the tenth. Hull looks like it is
+``ta.hma``, ``ta.vwma`` and ``ta.alma`` are the fourteenth. Hull looks like it is
 already in Backtrader and is not: the built-in truncates the final
 ``sqrt(period)`` where Pine rounds it, so the two disagree for 24 of the first
 59 lengths. It is composed here from the weighted averages Pine says it is
 made of. See :meth:`_Generator._hoist_moving_average`.
 
-``ta.pivothigh`` and ``ta.pivotlow`` are the eleventh. Backtrader has no pivot
+``ta.pivothigh`` and ``ta.pivotlow`` are the tenth. Backtrader has no pivot
 indicator, so one is emitted alongside the strategy. The bar under test is
 ``right`` bars back, which is what keeps it causal: a pivot is reported only
 once that many further bars have closed and confirmed it. See
 ``_PIVOT_INDICATOR``.
+
+Naming an inlined intermediate is the thirteenth, and it is one absence
+wearing three faces. Substitution has nowhere to put a body local, so copying
+it into every read grows the tree multiplicatively, ``adx[1]`` has no previous
+bar to read off an expression tree, and ``ta.ema(adx, n)`` cannot take one as
+a source. A local past :data:`_MATERIALISE_NODE_LIMIT` is given a name in
+``next()`` instead, which is one node, lands in ``_computed``, and lets
+:meth:`_Generator._promote` build the same expression as a line the moment
+anything asks for its history or hands it to an indicator. See
+:meth:`_Generator._materialise`.
+
+That splits the prelude in two. A ``var`` update has to run on every bar
+wherever the call sits, so it is still refused under an ``if``. A named
+intermediate is a value rather than a state machine, and computing it only on
+the bars that read it is the same strategy.
+
+An ``if`` that writes one name in every branch is the twelfth. It is how a
+Pine function picks a value -- assign a default, overwrite it in whichever
+branch applies, hand the name back -- and it is an assignment rather than an
+expression, so it folds into the substitution wherever it sits rather than
+only at the end of a body. A missing ``else`` binds the name to itself, which
+substitution turns back into whatever it last held: Pine leaves a variable
+alone when no branch runs. See :func:`_if_as_assignment`.
+
+The clock is the eleventh. ``timeframe.period`` and ``time()`` ask what the
+chart is and when this bar opened, and the feed already knows both, so neither
+needs the caller to declare anything. ``time(res)`` floors the bar's stamp to
+``res``, which is what makes Pine's ``ta.change(time("240")) != 0`` fire on the
+first chart bar of each new four-hour bar. Two things about it are refused
+rather than guessed: a session argument, which needs an exchange calendar the
+feed does not carry, and a weekly or monthly resolution, which does not floor
+by modulo -- the epoch falls on a Thursday. See ``_TIME_HELPER`` and
+:meth:`_Generator._value_time`.
 
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
@@ -239,6 +272,94 @@ def parse_timeframe(text):
     if unit == "" and count == "":
         return None
     return _TIMEFRAME_UNITS[unit], int(count) if count else 1
+
+
+#: Seconds in one bar of a Pine resolution, for flooring a timestamp to it.
+#: Weeks and months are deliberately absent: a week is a fixed 604800 seconds
+#: only if you accept the week starting on a Thursday, which is where the epoch
+#: falls, and a month is not a fixed number of seconds at all.
+_TIMEFRAME_SECONDS = {"S": 1, "": 60, "D": 86400}
+
+
+def timeframe_seconds(text):
+    """Seconds in one bar of ``text``, or None where Pine's floor is not a modulo.
+
+    ``"240"`` is 14400 and ``"D"`` is 86400. Returns None for the empty string
+    -- the chart's own timeframe, which needs no flooring -- and for weeks and
+    months, which do not tile the epoch evenly.
+    """
+    if not isinstance(text, str):
+        return None
+    token = text.strip().upper()
+    match = re.fullmatch(r"(\d*)([SDWM]?)", token)
+    if not match or token == "":
+        return None
+    count, unit = match.groups()
+    if unit == "" and count == "":
+        return None
+    per = _TIMEFRAME_SECONDS.get(unit)
+    if per is None:
+        return None
+    return per * (int(count) if count else 1)
+
+
+#: Emitted into a strategy that reads ``timeframe.period`` or calls ``time()``.
+#:
+#: Both are questions about the clock rather than about price, and a running
+#: backtest answers them from the feed it was handed. ``timeframe.period``
+#: inverts :func:`parse_timeframe`: Pine writes minutes as a bare number and
+#: everything else with a unit letter, and writes one of a unit as the bare
+#: letter, so ``(Minutes, 240)`` is ``"240"`` and ``(Days, 1)`` is ``"D"``.
+#:
+#: ``time(res)`` is the opening time of the ``res`` bar containing this one,
+#: which is a floor, and that floor is the whole point: it makes
+#: ``ta.change(time("240")) != 0`` true on the first chart bar of each new
+#: four-hour bar. The assumption the floor carries is stated in the emitted
+#: docstring rather than left for the reader to discover.
+_TIME_HELPER = (
+    "    _PINE_UNITS = (",
+    '        (bt.TimeFrame.Seconds, "S"),',
+    '        (bt.TimeFrame.Minutes, ""),',
+    '        (bt.TimeFrame.Days, "D"),',
+    '        (bt.TimeFrame.Weeks, "W"),',
+    '        (bt.TimeFrame.Months, "M"),',
+    "    )",
+    "",
+    "    def _pine_timeframe(self):",
+    '        """The primary feed\'s timeframe, spelled the way Pine spells it."""',
+    "        for frame, unit in self._PINE_UNITS:",
+    "            if self.data._timeframe == frame:",
+    "                count = int(self.data._compression or 1)",
+    '                if unit == "":',
+    "                    return str(count)",
+    '                return unit if count == 1 else "%d%s" % (count, unit)',
+    '        return ""',
+    "",
+    "    def _pine_time(self, seconds=None, ago=0):",
+    '        """Opening time in epoch milliseconds, as Pine\'s time() reports it.',
+    "",
+    "        With no resolution this is the bar's own stamp. With one, it is that",
+    "        stamp floored to the resolution, so the value changes exactly when a",
+    "        new higher-timeframe bar begins.",
+    "",
+    "        The floor runs on a continuous clock from midnight UTC. That is exact",
+    "        for a market trading around the clock, and for any whose sessions",
+    "        divide the day evenly. It is off by the session open for one whose",
+    "        four-hour bars start at 09:30.",
+    '        """',
+    "        if ago and len(self) <= ago:",
+    "            # Backtrader reads the far end of the preallocated buffer when",
+    "            # the history is not there yet, which is a bar from the future.",
+    "            # Pine answers na there, and reading this bar instead makes the",
+    "            # difference downstream zero, which is what na produces.",
+    "            ago = 0",
+    "        when = self.data.datetime.datetime(-ago)",
+    "        stamp = calendar.timegm(when.utctimetuple())",
+    "        if seconds:",
+    "            stamp -= stamp % seconds",
+    "        return stamp * 1000",
+    "",
+)
 
 
 #: Pine builtins that read straight across to a Backtrader expression.
@@ -717,6 +838,21 @@ _EXIT_HELPER = (
 #: honest answer is that the function wants real intermediate values.
 _INLINE_NODE_LIMIT = 400
 
+#: How big a body local may get, as a substituted expression, before it is
+#: given a name in ``next()`` instead of being copied into every read of it.
+#:
+#: Substitution has nowhere to put an intermediate, and that one absence wears
+#: three faces: copying a local everywhere grows the tree multiplicatively,
+#: ``adx[1]`` cannot read history off an expression tree, and ``ta.ema(adx, n)``
+#: cannot take one as a source. Naming the local answers all three at once --
+#: the name is one node, it lands in ``_computed``, and ``_promote`` builds a
+#: line from it on demand.
+#:
+#: Well under :data:`_INLINE_NODE_LIMIT`, because several named locals still
+#: have to fit inside it, and comfortably above the arithmetic that makes up
+#: an ordinary one-line body, which should stay substituted.
+_MATERIALISE_NODE_LIMIT = 60
+
 
 def _substitute(node, bindings):
     """Replace every bound name in ``node`` with the expression bound to it.
@@ -779,6 +915,64 @@ def _node_count(node):
     for child in getattr(node, "items", ()) or ():
         total += _node_count(child)
     return total
+
+
+def _if_as_assignment(statement):
+    """Read an ``if`` whose every branch assigns one name as a conditional.
+
+    This is the shape a Pine function uses to pick a value over several
+    branches and then hand it back:
+
+        moment = 0
+        if a and b
+            moment := 1
+        else if c
+            moment := 2
+        else
+            moment := 4
+        moment
+
+    Every branch writes the same name, so the block is one assignment whose
+    right-hand side is a chain of conditionals -- which is what
+    :meth:`_Generator._inline_body` can carry forward in its substitution.
+
+    A missing ``else`` binds the name to *itself*. Pine leaves a variable
+    alone when no branch runs, and substitution turns that back into whatever
+    the name last held, where :func:`_if_as_expression` would have to answer
+    ``na`` because it has no name to fall back on.
+
+    Returns ``(target, expression)``, or None when the branches disagree about
+    what they are writing or carry more than one statement.
+    """
+
+    def branch(body):
+        if (
+            len(body) == 1
+            and isinstance(body[0], Assign)
+            and body[0].qualifier in ("", ":=")
+        ):
+            return body[0].target, body[0].value
+        return None
+
+    head = branch(statement.body)
+    if head is None:
+        return None
+    target, value = head
+
+    if not statement.orelse:
+        other = Name(target)
+    elif len(statement.orelse) == 1 and isinstance(statement.orelse[0], If):
+        nested = _if_as_assignment(statement.orelse[0])
+        if nested is None or nested[0] != target:
+            return None
+        other = nested[1]
+    else:
+        tail = branch(statement.orelse)
+        if tail is None or tail[0] != target:
+            return None
+        other = tail[1]
+
+    return target, Ternary(cond=statement.cond, then=value, other=other)
 
 
 def _if_as_expression(statement):
@@ -900,6 +1094,7 @@ class _Generator:
         self._uses_math = False
         self._uses_trades = False
         self._uses_entry = False
+        self._uses_time = False
         self._uses_pivot = False
         self._uses_expr = False
         self._uses_alma = False
@@ -1077,7 +1272,9 @@ class _Generator:
                 held = isinstance(bound, Name) and bound.id in self.state
                 value = self._value_expr(_substitute(statement.value, bindings))
                 if held:
-                    self._prelude.append(f"self.{self.state[bound.id]} = {value}")
+                    self._prelude.append(
+                        (True, f"self.{self.state[bound.id]} = {value}")
+                    )
                     # Only now: the right-hand side above still had to see the
                     # previous bar's value, which is what `e0[1]` means.
                     self._var_written.add(bound.id)
@@ -1085,7 +1282,7 @@ class _Generator:
                         return bound
                     continue
                 name = self._local(f"{slug}_{_safe(statement.target.lstrip(chr(95)))}")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 bindings[statement.target] = Name(name)
                 if last:
@@ -1095,7 +1292,7 @@ class _Generator:
             if isinstance(statement, ExprStmt) and last:
                 value = self._value_expr(_substitute(statement.value, bindings))
                 name = self._local(f"{slug}_value")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 return Name(name)
 
@@ -1116,7 +1313,7 @@ class _Generator:
                     return None
                 value = self._value_expr(_substitute(folded, bindings))
                 name = self._local(f"{slug}_value")
-                self._prelude.append(f"{_safe(name)} = {value}")
+                self._prelude.append((True, f"{_safe(name)} = {value}"))
                 self.scalars.add(name)
                 return Name(name)
 
@@ -1205,6 +1402,29 @@ class _Generator:
                 return None
         return bindings
 
+    def _materialise(self, func, target, node):
+        """Give a body local a name in ``next()`` rather than copying it around.
+
+        Returns the ``Name`` to bind in its place. Registering the node in
+        ``_computed`` is the part that matters beyond size: it is what lets
+        :meth:`_promote` build a line for the same expression later, so the
+        local can carry history and feed an indicator -- neither of which a
+        substituted expression tree can do.
+
+        The prelude only reaches ``next()`` from a top-level statement, which
+        :meth:`_emit_statement` already enforces for the stateful path and now
+        covers this one too.
+        """
+        stem = f"{_slug(func.name) or 'fn'}_{_safe(target.lstrip(chr(95)))}"
+        name = self._local(stem)
+        value = self._value_expr(node)
+        self._prelude.append((False, f"{_safe(name)} = {value}"))
+        self.scalars.add(name)
+        # Single, unconditional, never reassigned -- true by construction here,
+        # which is exactly what `_promotable` checks for a top-level name.
+        self._computed[name] = node
+        return Name(name)
+
     def _inline_body(self, func, bindings):
         """Fold a body down to the single expression its call site stands for.
 
@@ -1225,6 +1445,8 @@ class _Generator:
                     )
                     return None
                 value = _substitute(statement.value, bindings)
+                if not last and _node_count(value) > _MATERIALISE_NODE_LIMIT:
+                    value = self._materialise(func, statement.target, value)
                 bindings[statement.target] = value
                 if last:
                     return value
@@ -1247,7 +1469,35 @@ class _Generator:
                 )
                 return None
 
-            if isinstance(statement, If) and last:
+            if isinstance(statement, If):
+                # A block that writes one name is an assignment, wherever it
+                # sits. Try that first: it is the only reading available to an
+                # `if` in the middle of a body, and for a trailing one it also
+                # keeps the name's previous value when no branch runs.
+                assigned = _if_as_assignment(statement)
+                if assigned is not None:
+                    target, folded = assigned
+                    if target not in bindings:
+                        self._reject(
+                            f"{func.name}(): `{target}` is assigned only inside "
+                            "an `if`, so it has no value on the branch that "
+                            "does not run"
+                        )
+                        return None
+                    value = _substitute(folded, bindings)
+                    if not last and _node_count(value) > _MATERIALISE_NODE_LIMIT:
+                        value = self._materialise(func, target, value)
+                    bindings[target] = value
+                    if last:
+                        return value
+                    continue
+                if not last:
+                    self._reject(
+                        f"{func.name}(): an `if` in the middle of the body has "
+                        "to write one name in every branch to carry a value "
+                        "forward"
+                    )
+                    return None
                 folded = _if_as_expression(statement)
                 if folded is None:
                     self._reject(
@@ -1580,6 +1830,22 @@ class _Generator:
 
         if isinstance(node, Index):
             offset = _literal(node.offset)
+            if (
+                isinstance(node.base, Call)
+                and node.base.func == "time"
+                and isinstance(offset, int)
+            ):
+                # time() is read off the feed's clock rather than hoisted into
+                # a line, so its history is the same read at an offset.
+                return self._value_time(node.base, ago=offset)
+            if not isinstance(node.base, Name) and isinstance(offset, int):
+                # `ta.ema(close, 20)[1]` is the previous bar of a line that has
+                # to exist for the current bar to be readable at all, so the
+                # base is built the way any indicator source is and then read
+                # at an offset. Backtrader spells that the same way Pine does.
+                lowered = self._line_expr(node.base)
+                if lowered is not None:
+                    return f"{lowered}[{-offset}]"
             if not isinstance(node.base, Name) or not isinstance(offset, int):
                 self._reject("history access is only supported as name[constant]")
                 return "None"
@@ -1631,6 +1897,12 @@ class _Generator:
         # than loudly wrong, which is the worst way to be wrong.
         if name in self.scalars:
             if index:
+                # The scalar holds this bar's number and nothing else, but the
+                # expression behind it is known, so the same value exists as a
+                # line the moment anything asks for its history.
+                handle = self._promote(name)
+                if handle is not None:
+                    return f"{handle}[{index}]"
                 self._reject(
                     f"{name}: history of a computed value needs a Backtrader line"
                 )
@@ -1651,6 +1923,13 @@ class _Generator:
                 "not a full history"
             )
             return current
+
+        if name == "timeframe.period":
+            if index:
+                self._reject("timeframe.period: the chart's timeframe has no history")
+                return "None"
+            self._uses_time = True
+            return "self._pine_timeframe()"
 
         if name in BUILTIN_VALUES:
             if index:
@@ -1881,12 +2160,20 @@ class _Generator:
             if not isinstance(length, int):
                 self._reject("ta.change: length must be a constant")
                 return "None"
-            now = self._value_expr(source)
-            before = self._value_expr(
-                Index(base=source, offset=Num(float(length)))
-                if isinstance(source, Name)
-                else source
+            has_history = isinstance(source, Name) or (
+                isinstance(source, Call) and source.func == "time"
             )
+            if not has_history:
+                # Re-evaluating the source would subtract a value from itself
+                # and report no change on any bar. Saying so beats emitting a
+                # condition that silently never fires.
+                self._reject(
+                    "ta.change: the source needs bar history, so it has to be a "
+                    "name or a builtin that carries one"
+                )
+                return "None"
+            now = self._value_expr(source)
+            before = self._value_expr(Index(base=source, offset=Num(float(length))))
             return f"({now} - {before})"
 
         if call.func in PIVOTS:
@@ -1931,6 +2218,9 @@ class _Generator:
                 return "None"
             parts = [self._value_expr(a) for a in call.args]
             return f"(({' + '.join(parts)}) / {len(parts)})"
+
+        if call.func == "time":
+            return self._value_time(call)
 
         if call.func == "request.security":
             return self._value_security(call)
@@ -1989,6 +2279,41 @@ class _Generator:
                 arguments.append(f"{key}={self._value_expr(levels[key])}")
         self.next_lines.append(f"{pad}self._pine_exit({', '.join(arguments)})")
 
+    def _value_time(self, call, ago=0):
+        """Lower Pine's ``time()`` to a floored stamp read off the primary feed.
+
+        ``time()`` is this bar's opening time and ``time(res)`` is the opening
+        time of the ``res`` bar containing it. ``ago`` reads a bar back, which
+        is what ``time(res)[1]`` and ``ta.change(time(res))`` need.
+
+        A session argument is refused rather than approximated: honouring it
+        needs the exchange calendar, and the feed does not carry one.
+        """
+        if len(call.args) > 1:
+            self._reject(
+                "time() with a session argument needs the exchange calendar, "
+                "which the data feed does not carry"
+            )
+            return "None"
+        self._uses_time = True
+        if not call.args:
+            return f"self._pine_time(None, {ago})" if ago else "self._pine_time()"
+        resolution = call.args[0]
+        text = _literal(resolution)
+        if not isinstance(text, str):
+            self._reject("time(): the resolution must be a literal string")
+            return "None"
+        seconds = timeframe_seconds(text)
+        if seconds is None:
+            self._reject(
+                f"time(): resolution {text!r} does not floor to a fixed number "
+                "of seconds"
+            )
+            return "None"
+        if ago:
+            return f"self._pine_time({seconds}, {ago})"
+        return f"self._pine_time({seconds})"
+
     def _value_security(self, call):
         """Lower ``request.security`` onto a resampled Backtrader feed.
 
@@ -2010,17 +2335,23 @@ class _Generator:
             )
             return "None"
 
-        for key, value in call.kwargs:
-            if key == "lookahead" and isinstance(value, Name):
-                if value.id.endswith("lookahead_on"):
-                    # Reads the higher-timeframe bar before it has closed.
-                    # Backtrader has no equivalent, and inventing one would
-                    # mean feeding the strategy data it could not have had.
-                    self._reject(
-                        "request.security with barmerge.lookahead_on reads a bar "
-                        "before it closes; there is no Backtrader equivalent"
-                    )
-                    return "None"
+        # Pine takes `lookahead` fourth-and-fifth positionally as well as by
+        # name, and only the keyword form was being checked. A script written
+        # `request.security(sym, "240", x, barmerge.gaps_off,
+        # barmerge.lookahead_on)` converted clean and read the higher-timeframe
+        # bar before it closed -- a backtest that cannot lose, on data the
+        # strategy could not have had. Any `lookahead_on` in the call is the
+        # answer, wherever it sits.
+        settings = [value for _, value in call.kwargs] + list(call.args[3:])
+        for value in settings:
+            if isinstance(value, Name) and value.id.endswith("lookahead_on"):
+                # Backtrader has no equivalent, and inventing one would mean
+                # feeding the strategy data it could not have had.
+                self._reject(
+                    "request.security with barmerge.lookahead_on reads a bar "
+                    "before it closes; there is no Backtrader equivalent"
+                )
+                return "None"
 
         if isinstance(timeframe, Name) and timeframe.id == "timeframe.period":
             # The chart's own timeframe. Pine still routes it through
@@ -2156,17 +2487,21 @@ class _Generator:
             prelude, self._prelude = self._prelude, outer
         if not prelude:
             return
-        if indent:
+        if indent and any(per_bar for per_bar, _ in prelude):
             # Pine updates a function's state on every bar wherever the call
             # sits. Emitting these under an `if` would update it only on the
             # bars the condition held, which is a different strategy.
+            #
+            # A named intermediate carries no such requirement: it is a value,
+            # not a state machine, and computing it only on the bars that read
+            # it is the same strategy.
             self._reject(
                 "a function that keeps state across bars can only be called "
                 "from a top-level statement, since Pine updates it every bar"
             )
             return
         pad = "    " * indent
-        self.next_lines[mark:mark] = [f"{pad}{line}" for line in prelude]
+        self.next_lines[mark:mark] = [f"{pad}{line}" for _, line in prelude]
 
     def _emit_one(self, statement, indent):
         pad = "    " * indent
@@ -2439,6 +2774,8 @@ class _Generator:
 
     def _render(self):
         out = ["import backtrader as bt"]
+        if self._uses_time:
+            out.append("import calendar")
         if self._uses_math:
             out.append("import math")
         out += ["", ""]
@@ -2511,6 +2848,8 @@ class _Generator:
             out.append("        pass")
         out.append("")
 
+        if self._uses_time:
+            out.extend(_TIME_HELPER)
         if self._uses_entry:
             out.extend(_ENTRY_HELPER)
         if self._uses_exit:

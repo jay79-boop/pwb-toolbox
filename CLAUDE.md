@@ -3,6 +3,35 @@
 A toolbox library for quant traders: datasets, backtesting (Backtrader), live
 execution, and performance analytics. Requires Python 3.10+.
 
+## Where the work happens
+
+The owner works in **Claude Code running locally on their Windows machine**, in
+this repository, and talks to it in plain English rather than pasting shell
+commands. Away from the desk they do not start a session somewhere else — they
+reach that same local session from their phone, over Remote Control, which is
+what lets them approve things without being at the keyboard. A scheduled task,
+`\ClaudeRemoteControl`, keeps one alive from logon so there is always something
+to attach to.
+
+Cloud sessions do still exist, and this file is read by them, so the capability
+gap between the two is load-bearing — getting it wrong cost two days once. A
+local session can touch `C:\Users\Gexio\...`, run their venv, and open the
+trade journal. A cloud session shares only GitHub with them: it cannot read
+their disk, their scheduled tasks or their skills directory, and everything on
+that side has to be done by handing them a command and waiting for the output.
+Both see this identical repository, which is exactly why the two are easy to
+confuse. The `gexio-machine` skill carries the diagnostic for working out which
+one you are in — run it before writing a single command for them.
+
+They do not retain procedures between sittings, and should not have to. The
+orientation hook has every session open with a short unprompted catch-up — branch
+state, unpushed work, open PRs and their CI, anything unfinished, one suggested
+next step — so "where was I" is answered before it has to be asked.
+
+**"Catch me up"** is how they ask for that same thing again mid-session, when
+the thread is lost. It wants where things stand right now — branch, working
+tree, what is in flight — not a replay of how it got there.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
@@ -53,6 +82,18 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `static/journal-shots.js` — chart screenshots for the journal: downscale and
+  re-encode on the way in, then account the result against the ~5 MB localStorage
+  a `file://` page gets. The arithmetic is what is tested (`node
+  static/journal-shots.test.js`, run under pytest by `tests/test_journal_shots.py`);
+  `shrink()` needs a canvas and is verified in a browser instead
+- `static/option-lab.js` — Black-Scholes, greeks, decay and profit ladders in the
+  browser, with no dependencies. A port of `pwb_toolbox/options/{greeks,decay}.py`
+  kept deliberately faithful: `tests/test_option_lab.py` prices a spread of
+  contracts through the Python module and requires node to agree to 1e-9, so the
+  two cannot drift into disagreeing about the same contract. Adds what Python has
+  no counterpart for — rho, touch and finish probabilities, and the ladders —
+  tested against closed forms in `static/option-lab.test.js`
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
   `index.html` (the published landing page; see "Design tooling" below)
 
@@ -113,6 +154,8 @@ pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
 pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
+node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
@@ -179,14 +222,86 @@ headline figure somewhere useless.
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
 
+## The trade journal is not in this repository
+
+`trade-journal.html` — the single-file journal that logs a trade against a locked
+thesis, closes it against that thesis, and runs the Position Lab — lives only on
+the user's machine, at `C:\Users\Gexio\OneDrive\trade-journal\`. It was briefly
+committed here so it could be edited, and removed at the user's request: it is a
+personal document and this fork is public.
+
+Two consequences worth knowing before working on it:
+
+- **Ask for the file, do not reconstruct it.** `git log --diff-filter=D --
+  static/trade-journal.html` finds the commit that removed it, and
+  `git show <sha>^:static/trade-journal.html` recovers that revision — but the
+  user's copy has moved on since, so treat the history as a reference and the
+  file they send as the truth.
+- **It inlines `static/option-lab.js` and `static/journal-shots.js` verbatim**, each
+  in its own `<script>` block behind a comment saying so. That is deliberate: the journal must stay one file that
+  opens from `file://` with no server and no build step, which is what makes it
+  usable straight out of a synced folder. Edit the module here, run the tests,
+  then re-inline the whole file — never patch the inlined copy, or the tested
+  version and the running version stop being the same code.
+
 ## The user's local checkout
 
 Windows, PowerShell 5.1, at `C:\Users\Gexio\OneDrive\pwb-toolbox`, Python 3.12.
 
-**`origin` is `paperswithbacktest/pwb-toolbox`, the upstream project — not their
-fork.** Their fork is `jay79-boop/pwb-toolbox`, added as the remote `jay`.
-Telling them to `git pull origin main` pulls upstream and conflicts; branches
-pushed from here arrive via `git fetch jay <branch>`.
+**A second checkout exists at `C:\Users\Gexio\pwb-toolbox`, without the
+`OneDrive`, and the OneDrive one is canonical.** It holds the live feature
+branches and sits in a folder with version history behind it. Sessions have
+landed work in the other one by mistake, so always spell the OneDrive path out
+in a command rather than assuming the shell's working directory.
+
+**Do not read staleness out of an ahead/behind count.** An earlier version of
+this note recorded the OneDrive checkout as "sixteen files and 1,834 lines
+behind", and that was an artifact, not a fact — it was sitting on a feature
+branch whose `main` had simply never been fast-forwarded, and every file the
+note called missing was in fact present. Ahead/behind compares two refs, not two
+working trees, and it means nothing about currency when the refs are a feature
+branch and someone else's `main`. It is the same trap as the `[ahead 113,
+behind 1]` reading below. Check `git log` and the actual files before believing
+either.
+
+If you end up in that second checkout anyway, know that **its `.venv` is nearly
+empty**: the suite reads as broken when it is merely uninstalled, which sends you
+hunting a bug that does not exist. Install first, then run tests through the venv's
+own interpreter rather than a bare `pytest`:
+
+```
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+If teardown throws `PermissionError` on `pytest-current`, add
+`--basetemp="$TEMP/pwbtest"`. That is Windows symlink cleanup, not a test failure —
+worth saying because the traceback looks exactly like one.
+
+Separately, `.claude/settings.local.json` regrows dead permission entries on its
+own, so cleaning it is never a one-time fix. That is Claude Code behaviour rather
+than a fact about this repository, so it lives in the `gexio-machine` skill along
+with the fix — not restated here, for the same reason the NEEDS YOU rules are not.
+
+**`jay` and `upstream` now mean the same thing in both checkouts. `origin` does
+not.** As of 2026-08-18, both directories have `jay` = the fork
+(`jay79-boop/pwb-toolbox`) and `upstream` = the upstream project
+(`paperswithbacktest/pwb-toolbox`). `origin` is the one that still differs: it is
+**upstream** in the OneDrive checkout and **the fork** in the other, so a bare
+`git pull origin main` means two different things depending on which directory
+the shell happens to be in, and fails by succeeding against the wrong project
+rather than by erroring.
+
+**So use `jay` and `upstream` explicitly and never write a bare `origin`
+command.** `git fetch jay <branch>` now works identically in both — which was not
+true before: the second checkout had no `jay` remote at all, so the command this
+file documented silently failed there. It also had no route to upstream, which is
+why the OneDrive checkout was the only one that could open an upstream PR.
+
+Check what `main` tracks before reading anything into `git status`. Where it
+tracks `origin` and `origin` is upstream, the ahead/behind counts measure the
+fork against upstream and say nothing about whether the checkout is current — the
+`[ahead 113, behind 1]` seen on 2026-08-18 is that reading, not a health report.
 
 Running only `pwb_toolbox.scraping` and `pwb_toolbox.converting` needs six
 packages, not all of `requirements-dev.txt` (which drags in `transformers`,

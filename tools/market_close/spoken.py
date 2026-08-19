@@ -157,6 +157,13 @@ def say_percent(pct: float) -> str:
     tenths = int(round(p * 10))
     if tenths <= 0:
         return "a fraction of a percent"
+    if tenths >= 10:
+        # Anything from about 0.95 up rounds to ten tenths, and "ten tenths of
+        # a percent" is a thing no person has ever said. It is one percent.
+        # Floating point makes this routine rather than rare: a clean -1.0%
+        # move arrives as -0.9999999999999998 and lands here, not in the
+        # branch above.
+        return "one percent"
     if tenths == 1:
         return "a tenth of a percent"
     return f"{int_to_words(tenths)} tenths of a percent"
