@@ -32,6 +32,29 @@ next step — so "where was I" is answered before it has to be asked.
 the thread is lost. It wants where things stand right now — branch, working
 tree, what is in flight — not a replay of how it got there.
 
+## Brainstorm before building
+
+The owner asked for this after several rounds where a guess was shipped and they
+found the hole in it: a spreadsheet that reported a portfolio value four tenths
+of which had not moved since 2022, a ladder that collapsed to `#N/A` on a ticker
+typed by hand, a tab whose frozen header hid everything under it.
+
+So for anything beyond a small correction: explore what they are actually trying
+to do, put the trade-offs to them, and get an answer before writing code. Ask few
+questions and make them count — use `AskUserQuestion` so they can click rather
+than type, lead each option list with a recommendation, and say which one you
+would pick and why.
+
+**Push back.** They want the disagreement, not the compliance. If their framing
+has a flaw, say so before building to it. If something they asked for last week
+is now dead weight — an empty tab, a feature nothing reads — raise it rather than
+maintaining it silently. Recommend the thing you would do if it were yours.
+
+This is a standing preference and it is not limited to this repository. The
+cross-project copy belongs in the `gexio-machine` skill, which is synced from
+their account: a cloud session cannot durably edit it, so that copy has to be
+written from a local session or pasted by them.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
