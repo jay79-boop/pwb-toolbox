@@ -287,6 +287,37 @@ def test_a_filled_workbook_says_none_of_that():
     assert "No plan rows" not in report.text()
 
 
+def test_a_tab_that_parsed_nothing_does_not_read_as_an_all_clear():
+    """Pointing --gid at a plan tab instead of the Watch tab.
+
+    It fetches fine and has rows, but neither header is on it, so nothing
+    parses. Every other line in the report is derived from rows and is
+    therefore empty too — leaving three words of reassurance about a tab that
+    was never read. This is the same failure as an unfilled workbook, one
+    level up.
+    """
+    plan_tab = [
+        ["Plan 1"],
+        ["Rung", "Target", "Units to sell"],
+        ["+25%", "$1.25", "1,250"],
+    ]
+    plans, holdings = parse(plan_tab)
+    assert (plans, holdings) == ([], []), "no header row means no sections"
+    report = check(plans, holdings, {}, max_weight=0.20)
+    assert report.no_rows
+    assert "No plan or holding rows found on this tab" in report.text()
+    assert "--gid" in report.text(), "name the likeliest cause"
+
+
+def test_a_tab_that_parsed_something_says_none_of_that():
+    plans, holdings = parse(rows())
+    assert not check(plans, holdings, {}).no_rows
+    plans, holdings = parse(unfilled_rows())
+    report = check(plans, holdings, {})
+    assert not report.no_rows, "holdings parsed, they are just empty"
+    assert "No plan or holding rows found" not in report.text()
+
+
 def test_the_example_row_is_not_a_position():
     """It ships filled in to show the shape of a complete holding.
 
