@@ -90,6 +90,12 @@ would divide anyway, and Backtrader's line division raises where Pine answers
 function of the current bar's values, where ``if``/``else`` is lazy again.
 See ``_EXPR_INDICATOR`` and :meth:`_Generator._expr_line`.
 
+``ta.hma``, ``ta.vwma`` and ``ta.alma`` are the fourteenth. Hull looks like it is
+already in Backtrader and is not: the built-in truncates the final
+``sqrt(period)`` where Pine rounds it, so the two disagree for 24 of the first
+59 lengths. It is composed here from the weighted averages Pine says it is
+made of. See :meth:`_Generator._hoist_moving_average`.
+
 ``ta.pivothigh`` and ``ta.pivotlow`` are the tenth. Backtrader has no pivot
 indicator, so one is emitted alongside the strategy. The bar under test is
 ``right`` bars back, which is what keeps it causal: a pivot is reported only
@@ -190,6 +196,10 @@ INDICATORS = {
 #: Pine cross helpers, mapped to a CrossOver line plus the comparison that
 #: recovers the direction Pine means.
 PIVOTS = ("ta.pivothigh", "ta.pivotlow")
+
+#: Moving averages Backtrader either lacks or spells differently enough to
+#: matter. Each is built from what Pine says it is made of.
+COMPOSED_AVERAGES = ("ta.hma", "ta.vwma", "ta.alma")
 
 #: Operators Backtrader overloads on line objects to give another line.
 #: Comparisons are deliberately absent: a truth value is not a source, and
@@ -567,6 +577,50 @@ _PIVOT_INDICATOR = (
     "            out[i] = (",
     "                candidate if self._found(candidate, window) else float('nan')",
     "            )",
+    "",
+    "",
+)
+
+#: Emitted when the script uses ``ta.alma``. Backtrader has no equivalent, and
+#: unlike Hull it is not a composition of moving averages either -- the weights
+#: are a Gaussian over the window, so the window has to be walked.
+#:
+#: The weights depend only on the length, the offset and sigma, so they are
+#: computed once rather than per bar.
+_ALMA_INDICATOR = (
+    "class PineAlma(bt.Indicator):",
+    '    """Pine\'s ta.alma: a Gaussian-weighted moving average."""',
+    "",
+    '    lines = ("alma",)',
+    '    params = (("period", 9), ("offset", 0.85), ("sigma", 6.0))',
+    "",
+    "    def __init__(self):",
+    "        length = self.p.period",
+    "        centre = self.p.offset * (length - 1)",
+    "        spread = length / self.p.sigma",
+    "        self._weights = [",
+    "            math.exp(-((i - centre) ** 2) / (2 * spread * spread))",
+    "            for i in range(length)",
+    "        ]",
+    "        self._norm = sum(self._weights)",
+    "        self.addminperiod(length)",
+    "",
+    "    def _weighted(self, at):",
+    '        """`at` reads the window ending on the bar it is given."""',
+    "        length = self.p.period",
+    "        total = sum(",
+    "            at(length - 1 - i) * weight",
+    "            for i, weight in enumerate(self._weights)",
+    "        )",
+    "        return total / self._norm",
+    "",
+    "    def next(self):",
+    "        self.lines.alma[0] = self._weighted(lambda back: self.data[-back])",
+    "",
+    "    def once(self, start, end):",
+    "        source, out = self.data.array, self.lines.alma.array",
+    "        for i in range(start, end):",
+    "            out[i] = self._weighted(lambda back, i=i: source[i - back])",
     "",
     "",
 )
@@ -1043,6 +1097,7 @@ class _Generator:
         self._uses_time = False
         self._uses_pivot = False
         self._uses_expr = False
+        self._uses_alma = False
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
         self._computed = {}
@@ -1527,6 +1582,8 @@ class _Generator:
             if node.func in self.functions:
                 inlined = self._inline_call(node)
                 return None if inlined is None else self._line_expr(inlined)
+            if node.func in COMPOSED_AVERAGES:
+                return self._hoist_moving_average(node)
             if node.func in _LINE_MATH or node.func in ("math.pow", "math.avg"):
                 parts = [self._line_expr(arg) for arg in node.args]
                 if not parts or any(part is None for part in parts):
@@ -1889,6 +1946,90 @@ class _Generator:
         self._reject(f"unknown identifier {name!r}")
         return "None"
 
+    def _hoist_moving_average(self, call):
+        """Build the moving averages Backtrader has no exact equivalent for.
+
+        Hull *looks* like it has one, and using it would be wrong: Backtrader
+        truncates the final `sqrt(period)` where Pine rounds it, so the two
+        disagree for 24 of the first 59 lengths -- silently, by a little. It
+        is composed here instead, out of the weighted averages Pine says it is
+        made of.
+        """
+        source, period = self._source_and_period(call)
+        if source is None or period is None:
+            return None
+
+        if call.func == "ta.hma":
+            half = self._hoist(
+                "wma", f"bt.indicators.WMA({source}, period=({period}) // 2)"
+            )
+            full = self._hoist("wma", f"bt.indicators.WMA({source}, period={period})")
+            return self._hoist(
+                "hma",
+                f"bt.indicators.WMA(2.0 * {half} - {full}, "
+                f"period=round(({period}) ** 0.5))",
+            )
+
+        if call.func == "ta.vwma":
+            volume = f"{self._feed}.volume"
+            traded = self._hoist(
+                "sma", f"bt.indicators.SMA({source} * {volume}, period={period})"
+            )
+            shares = self._hoist("sma", f"bt.indicators.SMA({volume}, period={period})")
+            # A window with no volume at all divides by zero, where Pine
+            # answers `na`, so the division is guarded rather than composed.
+            self._uses_expr = True
+            return self._hoist(
+                "vwma",
+                f"PineExpr({shares}, {traded}, func=lambda a0, a1: "
+                "a1 / a0 if a0 else float('nan'))",
+            )
+
+        offset, sigma = "0.85", "6.0"
+        extra = list(call.args[2:])
+        named = dict(call.kwargs)
+        if extra:
+            offset = self._period_expr(extra[0]) or offset
+        if len(extra) > 1:
+            sigma = self._period_expr(extra[1]) or sigma
+        for key, alias in (("offset", "offset"), ("sigma", "sigma")):
+            if key in named:
+                resolved = self._period_expr(named[key])
+                if resolved is None:
+                    self._reject(f"ta.alma: {key} must be a constant or a parameter")
+                    return None
+                if alias == "offset":
+                    offset = resolved
+                else:
+                    sigma = resolved
+        self._uses_alma = True
+        self._uses_math = True
+        return self._hoist(
+            "alma",
+            f"PineAlma({source}, period={period}, offset={offset}, sigma={sigma})",
+        )
+
+    def _source_and_period(self, call):
+        """The ``(source, length)`` pair these all take, lowered."""
+        args = list(call.args)
+        named = dict(call.kwargs)
+        source_node = args.pop(0) if args else named.get("source")
+        period_node = args.pop(0) if args else named.get("length", named.get("period"))
+        if source_node is None or period_node is None:
+            self._reject(f"{call.func} expects a source and a length")
+            return None, None
+        source = self._line_expr(source_node)
+        if source is None:
+            self._reject(
+                f"{call.func}: source argument is not a plain series or parameter"
+            )
+            return None, None
+        period = self._period_expr(period_node)
+        if period is None:
+            self._reject(f"{call.func}: could not resolve its length argument")
+            return None, None
+        return source, period
+
     def _hoist_pivot(self, call):
         """Build a ``PinePivot`` in ``__init__`` and return its handle.
 
@@ -2037,6 +2178,10 @@ class _Generator:
 
         if call.func in PIVOTS:
             handle = self._hoist_pivot(call)
+            return f"{handle}[0]" if handle else "None"
+
+        if call.func in COMPOSED_AVERAGES:
+            handle = self._hoist_moving_average(call)
             return f"{handle}[0]" if handle else "None"
 
         if call.func.startswith(("strategy.closedtrades.", "strategy.opentrades.")):
@@ -2636,6 +2781,8 @@ class _Generator:
         out += ["", ""]
         if self._uses_pivot:
             out.extend(_PIVOT_INDICATOR)
+        if self._uses_alma:
+            out.extend(_ALMA_INDICATOR)
         if self._uses_expr:
             out.extend(_EXPR_INDICATOR)
         out.append(f"class {self.class_name}(bt.Strategy):")

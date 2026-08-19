@@ -81,6 +81,9 @@ duplicate is pure waste.
 | `array<float> b = ...`, `Zone z = ...` | likewise, generics and user types included |
 | `float[] xs = ...` | the older array spelling, read the same way |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
+| `ta.hma(src, len)` | composed from weighted averages — see below |
+| `ta.vwma(src, len)` | `sma(src × volume) / sma(volume)`, guarded |
+| `ta.alma(src, len, offset, sigma)` | a `PineAlma` line, emitted with the file |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
 | `ta.pivothigh/pivotlow(src, left, right)` | a `PinePivot` line, emitted with the file |
 | the short form, `ta.pivothigh(left, right)` | the same over `high` / `low` |
@@ -360,6 +363,42 @@ other way — which is what happened before this rule existed — an `if` branch
 
 Where the breaks fall never reaches the output: the tests assert that a split
 condition and the same condition on one line generate character-identical code.
+
+## Three moving averages, and one that looks like it is already there
+
+`ta.vwma` and `ta.alma` have no Backtrader equivalent. `ta.hma` appears to —
+`bt.indicators.HullMovingAverage` implements the same published formula — and
+using it would be wrong.
+
+Hull ends with a weighted average over `sqrt(length)` bars. Pine **rounds**
+that; Backtrader **truncates** it. For `length = 13` Pine averages over 4 bars
+and Backtrader over 3, and the two disagree for **24 of the first 59 lengths**
+— by a little, on every bar, with nothing to show that anything is wrong.
+
+So it is composed here out of what Pine says it is made of:
+
+```python
+self._wma_1 = bt.indicators.WMA(self.data.close, period=(self.p.n) // 2)
+self._wma_2 = bt.indicators.WMA(self.data.close, period=self.p.n)
+self._hma_3 = bt.indicators.WMA(2.0 * self._wma_1 - self._wma_2, period=round((self.p.n) ** 0.5))
+```
+
+There is a test asserting the generated code contains no `HullMovingAverage`
+and that its value *differs* from Backtrader's, so the difference cannot be
+tidied away later by someone who spots the built-in.
+
+`ta.vwma` is `sma(src × volume, len) / sma(volume, len)`. The division goes
+through a `PineExpr` rather than a line operation, so a window with no volume
+at all answers `na` — as Pine does — instead of raising.
+
+`ta.alma` is the one that needs a real indicator: its weights are a Gaussian
+over the window rather than a composition of averages, so the window has to be
+walked. The weights depend only on the length, the offset and sigma, so they
+are computed once rather than per bar. Offset and sigma default to `0.85` and
+`6`, matching TradingView.
+
+All three are checked against their definitions written out longhand, to twelve
+significant figures.
 
 ## Pivots, and the offset that makes them honest
 
