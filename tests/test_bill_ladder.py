@@ -22,8 +22,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+import tools.bill_ladder as bill_ladder  # noqa: E402
 from tools.bill_ladder import (  # noqa: E402
     DAY_COUNT,
+    build_ladder,
     after_tax_rate,
     breakeven_roll_rate,
     cli,
@@ -32,6 +34,7 @@ from tools.bill_ladder import (  # noqa: E402
     fetch_curve,
     forward_breakeven_rate,
     growth,
+    nearest_maturity,
     parse_bill_csv,
     roll_growth,
     taxable_equivalent_yield,
@@ -387,3 +390,148 @@ def test_the_curve_of_2026_08_17_favours_holding_at_every_maturity_but_one():
     # Staying in 4-week paper for a year instead of buying the 52-week bill
     # costs this much per 100k, if the curve never moves.
     assert edges[52] == pytest.approx(-225.71, abs=0.01)
+
+
+# --------------------------------------------------------------------------
+# Ladders
+# --------------------------------------------------------------------------
+
+
+def _live_available():
+    curve = parse_bill_csv(LIVE_CSV)
+    return {curve.days(w): r for w, r in curve.rates.items()}
+
+
+def test_a_ladder_splits_the_capital_evenly_and_ends_at_the_full_maturity():
+    plan = build_ladder(weeks=13, rungs=4, principal=100_000.0, target_rate=0.0381)
+    assert len(plan.rungs) == 4
+    assert all(rung.principal == pytest.approx(25_000.0) for rung in plan.rungs)
+    assert plan.rungs[-1].seed_days == 91
+    assert plan.ideal_spacing_days == pytest.approx(22.75)
+
+
+def test_the_cadence_always_sums_to_the_maturity():
+    # The invariant that makes a ladder a ladder: however the seeds land, the
+    # gaps between maturities must tile exactly one full term, because every
+    # rung rolls forward by that term and the pattern repeats. A seeding bug
+    # that lost or double-counted a rung would break this before it broke
+    # anything a reader would notice.
+    for rungs in (1, 2, 3, 4, 7):
+        for weeks in (4, 13, 26, 52):
+            plan = build_ladder(weeks, rungs, 100_000.0, 0.0381)
+            assert sum(plan.cadence_days) == weeks * 7
+
+
+def test_the_cadence_still_tiles_when_seeded_from_real_maturities():
+    plan = build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+    assert [rung.seed_days for rung in plan.rungs] == [28, 42, 56, 91]
+    assert plan.cadence_days == (14, 14, 35, 28)
+    assert sum(plan.cadence_days) == 91
+
+
+def test_a_one_rung_ladder_is_just_holding_the_bill():
+    plan = build_ladder(13, 1, 100_000.0, 0.0381, available=_live_available())
+    assert plan.cadence_days == (91,)
+    assert plan.liquidity_edge_days() == 0
+    assert plan.build_drag == pytest.approx(0.0)
+
+
+def test_seeds_come_from_purchasable_maturities_not_arithmetic_ones():
+    # 22.75-day spacing wants a 23-day bill, which does not exist.
+    ideal = build_ladder(13, 4, 100_000.0, 0.0381)
+    real = build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+    assert ideal.rungs[0].seed_days == 23
+    assert real.rungs[0].seed_days == 28
+    assert real.rungs[0].seed_rate == pytest.approx(0.0370)
+
+
+def test_nearest_maturity_avoids_one_already_taken():
+    available = [28, 42, 56, 91]
+    assert nearest_maturity(available, 30) == 28
+    assert nearest_maturity(available, 30, taken=[28]) == 42
+
+
+def test_nearest_maturity_reuses_only_once_nothing_is_left():
+    assert nearest_maturity([28], 30, taken=[28]) == 28
+
+
+def test_a_curve_too_short_to_seed_every_rung_is_flagged_not_hidden():
+    # Four rungs of 4-week paper want bills at 7, 14, 21 and 28 days, and the
+    # curve's shortest is 28. Rungs that come due on the same day roll the same
+    # distance forward and stay married, so the ladder is really one rung.
+    plan = build_ladder(4, 4, 100_000.0, 0.0370, available={28: 0.0370})
+    assert not plan.distinct_seeds
+    assert build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+
+
+def test_steady_state_yields_exactly_the_maturity_it_is_built_from():
+    # A ladder buys liquidity, not yield. If this ever showed a premium the
+    # arithmetic would be inventing money.
+    plan = build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+    assert plan.steady_annual == pytest.approx(effective_annual(0.0381, 91))
+    assert plan.steady_income == pytest.approx(100_000.0 * plan.steady_annual)
+
+
+def test_the_last_rung_costs_nothing_to_place():
+    plan = build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+    assert plan.rungs[-1].seed_days == 91
+    assert plan.rungs[-1].seed_rate == pytest.approx(0.0381)
+    assert plan.rungs[-1].drag == pytest.approx(0.0)
+
+
+def test_build_drag_is_the_sum_of_the_rungs_and_positive_on_a_rising_curve():
+    plan = build_ladder(13, 4, 100_000.0, 0.0381, available=_live_available())
+    assert plan.build_drag == pytest.approx(sum(r.drag for r in plan.rungs))
+    assert plan.build_drag == pytest.approx(7.58, abs=0.01)
+
+
+def test_build_drag_is_unknown_rather_than_guessed_without_a_curve():
+    plan = build_ladder(13, 4, 100_000.0, 0.0381)
+    assert plan.build_drag is None
+    assert all(rung.drag is None for rung in plan.rungs)
+
+
+def test_a_flat_curve_costs_nothing_to_ladder():
+    flat = {28: 0.0381, 42: 0.0381, 56: 0.0381, 91: 0.0381}
+    plan = build_ladder(13, 4, 100_000.0, 0.0381, available=flat)
+    assert plan.build_drag == pytest.approx(0.0)
+
+
+def test_build_ladder_rejects_a_structure_that_is_not_one():
+    with pytest.raises(ValueError, match="at least one rung"):
+        build_ladder(13, 0, 100_000.0, 0.0381)
+    with pytest.raises(ValueError, match="at least a week"):
+        build_ladder(0, 4, 100_000.0, 0.0381)
+
+
+def test_ladder_command_reports_the_real_seeds_and_the_build_cost(monkeypatch):
+    monkeypatch.setattr(
+        bill_ladder, "fetch_curve", lambda **kw: parse_bill_csv(LIVE_CSV)
+    )
+    result = CliRunner().invoke(cli, ["ladder"])
+    assert result.exit_code == 0, result.output
+    assert "28d" in result.output
+    assert "14d, 14d, 35d, 28d" in result.output
+    assert "7.58" in result.output
+
+
+def test_ladder_command_does_not_pass_ideal_maturities_off_as_buyable():
+    # Offline the seeds are arithmetic, and saying otherwise would send someone
+    # looking for a 23-day bill.
+    result = CliRunner().invoke(cli, ["ladder", "--rate", "3.81"])
+    assert result.exit_code == 0, result.output
+    assert "not purchasable bills" in result.output
+    assert "Unknown without the curve" in result.output
+
+
+def test_ladder_command_does_not_claim_liquidity_it_does_not_have(monkeypatch):
+    # The 4-rung 13-week ladder's worst gap is 35 days against the 28-day bill
+    # it is compared with, so it is slower in the worst case, not faster.
+    monkeypatch.setattr(
+        bill_ladder, "fetch_curve", lambda **kw: parse_bill_csv(LIVE_CSV)
+    )
+    result = CliRunner().invoke(cli, ["ladder"])
+    assert "longest gap is 35d" in result.output
+    # Two 26-week rungs land exactly on the 91-day bill's own cadence.
+    even = CliRunner().invoke(cli, ["ladder", "--weeks", "26", "--rungs", "2"])
+    assert "at least as often" in even.output

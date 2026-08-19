@@ -12,7 +12,7 @@ effective-annual basis so they are directly comparable, and reports what the
 short bill would have to pay for the roll to break even. If today's short rate
 is below that number, rolling is a bet that rates rise — priced, not free.
 
-Three commands:
+Four commands:
 
     curve     The bill curve as it stands, every maturity on one basis, with
               the break-even for rolling 4-week paper out to each of them.
@@ -20,6 +20,13 @@ Three commands:
     compare   Roll one maturity against holding another over a horizon. The
               dollars, the effective annual yields, and the rate the roll needs
               to average from here to tie.
+
+    ladder    Size a ladder of one maturity: the bills you would actually buy
+              to seed it, the cadence that falls out of them, the steady-state
+              yield, and what the first cycle costs. A ladder does not earn
+              more than the maturity it is built from — it holds that yield
+              while money keeps coming due, which is a different thing and
+              worth not confusing with a free lunch.
 
     savings   What a bill is worth after tax against a savings account or CD.
               Bill interest is exempt from state and local income tax, which is
@@ -31,6 +38,7 @@ network. Examples::
     python tools/bill_ladder.py curve
     python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81
     python tools/bill_ladder.py compare --roll-weeks 4 --hold-weeks 26 --live
+    python tools/bill_ladder.py ladder --weeks 13 --rungs 4
     python tools/bill_ladder.py savings --bill-rate 3.81 --savings-apy 3.90 \\
         --federal 24 --state 9.3
 
@@ -212,6 +220,175 @@ def compare(
         forward_breakeven=forward_breakeven_rate(
             hold_rate, hold_days, roll_term_days, horizon, roll_rate
         ),
+    )
+
+
+# --------------------------------------------------------------------------
+# Ladders
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LadderRung:
+    """One rung: a slice of capital, and the bill bought at t=0 to place it."""
+
+    index: int
+    principal: float
+    seed_days: int
+    seed_rate: float | None
+    target_rate: float
+
+    @property
+    def seed_interest(self) -> float | None:
+        if self.seed_rate is None:
+            return None
+        return self.principal * (growth(self.seed_rate, self.seed_days) - 1.0)
+
+    @property
+    def drag(self) -> float | None:
+        """What this rung gives up against putting the same money straight into
+        the target maturity.
+
+        Confined to the seed leg by construction: once the short bill matures
+        the rung buys the target maturity like everything else, so from that
+        day on it and the lump-sum alternative earn the same rate. The rung
+        seeded at the full maturity drags nothing, which is the arithmetic
+        saying the last rung is not really part of the build.
+        """
+        if self.seed_rate is None:
+            return None
+        return (
+            self.principal
+            * (self.target_rate - self.seed_rate)
+            * (self.seed_days / DAY_COUNT)
+        )
+
+
+@dataclass(frozen=True)
+class Ladder:
+    """``rungs`` bills of one maturity, staggered so one keeps coming due.
+
+    In steady state every rung holds the target maturity, so the ladder yields
+    exactly what that maturity yields — the point of it is not extra return but
+    that the money is reachable on a cadence, without selling anything early.
+    """
+
+    weeks: int
+    principal: float
+    target_rate: float
+    rungs: tuple[LadderRung, ...]
+
+    @property
+    def days(self) -> int:
+        return self.weeks * 7
+
+    @property
+    def ideal_spacing_days(self) -> float:
+        return self.days / len(self.rungs)
+
+    @property
+    def cadence_days(self) -> tuple[int, ...]:
+        """Real gaps between maturities, from the bills actually bought.
+
+        This is the ladder's permanent cadence, not just its first cycle: each
+        rung rolls into the target maturity when its seed matures, so it comes
+        due again exactly ``weeks`` later and the pattern set at t=0 repeats
+        forever. Choosing the seeds *is* choosing the cadence.
+        """
+        days = sorted(rung.seed_days for rung in self.rungs)
+        wrapped = days[1:] + [days[0] + self.days]
+        return tuple(b - a for a, b in zip(days, wrapped))
+
+    @property
+    def steady_annual(self) -> float:
+        return effective_annual(self.target_rate, self.days)
+
+    @property
+    def steady_income(self) -> float:
+        """Annual income once every rung holds the target maturity."""
+        return self.principal * self.steady_annual
+
+    @property
+    def build_drag(self) -> float | None:
+        """First-cycle cost of building it, against one lump in the target bill."""
+        if any(rung.seed_rate is None for rung in self.rungs):
+            return None
+        return sum(rung.drag for rung in self.rungs)
+
+    @property
+    def distinct_seeds(self) -> bool:
+        """False when the curve could not give every rung its own maturity."""
+        return len({rung.seed_days for rung in self.rungs}) == len(self.rungs)
+
+    def liquidity_edge_days(self) -> int:
+        """How much sooner cash comes free than with a single bill."""
+        return self.days - max(self.cadence_days)
+
+
+def nearest_maturity(available_days, wanted_days: int, taken=()) -> int:
+    """Pick the purchasable maturity closest to ``wanted_days``.
+
+    Even spacing is arithmetic; the bills are whatever Treasury sells. A 4-rung
+    13-week ladder wants rungs every 22.75 days and there is no 23-day bill, so
+    the honest structure is the one built from real maturities and the cadence
+    that falls out of it.
+
+    Maturities in ``taken`` are avoided while any others remain. Two rungs
+    seeded at the same maturity are not a ladder — they come due on the same
+    day and stay married for good, since each rolls the same distance forward.
+    A short curve can still force it, and then the caller is told rather than
+    handed a ladder that is secretly one rung.
+    """
+    remaining = [d for d in available_days if d not in set(taken)] or list(
+        available_days
+    )
+    return min(remaining, key=lambda d: (abs(d - wanted_days), d))
+
+
+def build_ladder(
+    weeks: int,
+    rungs: int,
+    principal: float,
+    target_rate: float,
+    available: dict[int, float] | None = None,
+) -> Ladder:
+    """Lay out a ladder, seeding it from ``available`` maturities where given.
+
+    ``available`` maps days to rate. Without it the structure and steady state
+    still compute; the build-phase drag does not, and is reported as unknown
+    rather than guessed at.
+    """
+    if rungs < 1:
+        raise ValueError("a ladder needs at least one rung")
+    if weeks < 1:
+        raise ValueError("maturity must be at least a week")
+
+    per_rung = principal / rungs
+    spacing = weeks * 7 / rungs
+    built = []
+    for index in range(1, rungs + 1):
+        wanted = round(spacing * index)
+        if available:
+            seed_days = nearest_maturity(
+                sorted(available), wanted, taken=[r.seed_days for r in built]
+            )
+            seed_rate = available[seed_days]
+        else:
+            seed_days, seed_rate = wanted, None
+        built.append(
+            LadderRung(
+                index=index,
+                principal=per_rung,
+                seed_days=seed_days,
+                seed_rate=seed_rate,
+                target_rate=target_rate,
+            )
+        )
+    return Ladder(
+        weeks=weeks,
+        principal=principal,
+        target_rate=target_rate,
+        rungs=tuple(built),
     )
 
 
@@ -611,6 +788,160 @@ def savings(
         click.echo(
             "  You passed no state rate, so the exemption scored nothing here.\n"
         )
+
+
+@cli.command()
+@click.option("--weeks", default=13, type=int, help="Maturity of each rung.")
+@click.option("--rungs", default=4, type=int, help="How many bills in the ladder.")
+@click.option("--principal", default=100_000.0, type=float, help="Total capital.")
+@click.option("--rate", type=float, help="Rate for the rung maturity, percent.")
+@click.option(
+    "--short-rate",
+    type=float,
+    help="Shortest bill's rate, percent, to compare rolling against.",
+)
+@click.option("--year", type=int)
+def ladder(
+    weeks: int,
+    rungs: int,
+    principal: float,
+    rate: float | None,
+    short_rate: float | None,
+    year: int | None,
+) -> None:
+    """Size a bill ladder: rungs, cadence, steady-state yield, cost to build.
+
+    A ladder is not a way to earn more than the maturity it is built from. It
+    is a way to hold that maturity's yield while still having money come due on
+    a schedule, so nothing has to be sold early to reach cash.
+    """
+    bills = None
+    if rate is None or short_rate is None:
+        try:
+            bills = fetch_curve(year=year)
+        except Exception as exc:
+            if rate is None:
+                raise click.ClickException(
+                    f"could not fetch the Treasury bill curve: {exc}\n"
+                    "Pass the rate yourself instead, e.g. --rate 3.81"
+                )
+            click.echo(f"  (no curve: {exc})\n")
+
+    available = None
+    if bills is not None:
+        available = {bills.days(w): r for w, r in bills.rates.items()}
+        if rate is None:
+            rate = bills.rate(weeks) * 100.0
+        if short_rate is None:
+            short_rate = bills.rates[min(bills.rates)] * 100.0
+        source = f"Treasury, {bills.date:%Y-%m-%d}"
+    else:
+        source = "your input"
+
+    try:
+        plan = build_ladder(
+            weeks=weeks,
+            rungs=rungs,
+            principal=principal,
+            target_rate=_pct(rate),
+            available=available,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+
+    click.echo(_rule("="))
+    click.echo(
+        f"  {rungs}-RUNG LADDER OF {weeks}-WEEK BILLS"
+        f"   on {principal:,.0f}   ({source})"
+    )
+    click.echo(_rule("="))
+
+    click.echo(
+        f"\n  Each rung is {plan.rungs[0].principal:,.0f}. Ideal spacing is"
+        f" {plan.ideal_spacing_days:.1f} days;"
+    )
+    if available:
+        click.echo("  these are the bills you can actually buy to get there:\n")
+    else:
+        click.echo(
+            "  these are the ideal seed maturities, not purchasable bills —\n"
+            "  without the curve there is nothing to round them to:\n"
+        )
+    click.echo(f"    {'RUNG':<7}{'SEED BILL':>12}{'RATE':>9}{'MATURES':>11}")
+    for rung in plan.rungs:
+        rate_cell = "?" if rung.seed_rate is None else f"{rung.seed_rate:.2%}"
+        click.echo(
+            f"    {rung.index:<7}{f'{rung.seed_days}d':>12}{rate_cell:>9}"
+            f"{f'day {rung.seed_days}':>11}"
+        )
+
+    cadence = plan.cadence_days
+    click.echo(
+        f"\n  CADENCE   cash comes due every {min(cadence)}-{max(cadence)} days"
+        f"  ({', '.join(f'{d}d' for d in cadence)}, repeating)"
+    )
+    click.echo(
+        f"            against {plan.days} days if you held one {weeks}-week bill"
+        f" — {plan.liquidity_edge_days()} days sooner, worst case."
+    )
+    if not plan.distinct_seeds:
+        click.echo(
+            click.style(
+                "            The curve could not give every rung its own "
+                "maturity, so\n"
+                "            some rungs come due together and the ladder is "
+                "shorter than it looks.",
+                fg="yellow",
+            )
+        )
+
+    click.echo("\n  STEADY STATE  (every rung holding the target maturity)")
+    click.echo(
+        f"    {'Yield':<22}{plan.target_rate:>9.2%}"
+        f"   ->{plan.steady_annual:>9.3%} effective annual"
+    )
+    click.echo(f"    {'Income per year':<22}{plan.steady_income:>9,.0f}")
+    if short_rate is not None:
+        short = _pct(short_rate)
+        shortest = plan.rungs[0].seed_days
+        rolled = principal * effective_annual(short, shortest)
+        click.echo(
+            f"    {f'vs rolling the {shortest}d bill':<22}{rolled:>9,.0f}"
+            f"   ({plan.steady_income - rolled:+,.0f} a year)"
+        )
+        worst = max(cadence)
+        if worst <= shortest:
+            click.echo(
+                f"    Cash at least as often as rolling that bill"
+                f" ({worst}d vs {shortest}d), at the longer yield."
+            )
+        else:
+            click.echo(
+                f"    But its longest gap is {worst}d against the {shortest}d"
+                f" bill's {shortest}d,"
+            )
+            click.echo(
+                "    so the extra yield is bought with a slower worst case, not"
+                " a free one."
+            )
+
+    drag = plan.build_drag
+    click.echo("\n  COST TO BUILD IT")
+    if drag is None:
+        click.echo("    Unknown without the curve — the seed rates are what price it.")
+    else:
+        click.echo(
+            f"    First cycle costs {drag:,.2f} against putting the whole"
+            f" {principal:,.0f}"
+        )
+        click.echo(
+            f"    into one {weeks}-week bill, because the short seed rungs earn" " less"
+        )
+        click.echo(
+            f"    while the ladder fills. Paid once; you are at steady state on"
+            f" day {plan.days}."
+        )
+    click.echo()
 
 
 if __name__ == "__main__":

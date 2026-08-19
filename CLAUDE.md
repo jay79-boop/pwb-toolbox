@@ -79,9 +79,10 @@ A worked example, for this repo's 21st MCP key:
 - `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
-- `tools/bill_ladder.py` — settles roll-vs-hold on the T-bill curve, and prices the
-  state-tax exemption against a savings account. Reads Treasury's daily bill CSV,
-  which `home.treasury.gov` blocks from cloud containers — every command takes
+- `tools/bill_ladder.py` — settles roll-vs-hold on the T-bill curve, sizes a
+  ladder from the maturities Treasury actually sells, and prices the state-tax
+  exemption against a savings account. Reads Treasury's daily bill CSV, which
+  `home.treasury.gov` blocks from cloud containers — every command takes
   `--rate` overrides so the math still runs offline
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
