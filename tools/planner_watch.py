@@ -13,10 +13,15 @@ The three rules, chosen deliberately and kept few:
 * a holding moved more than a set percentage since the last run
 * a holding has grown past the weight limit
 
-And one guard that is not a rule: a holding whose price is not live is skipped
-entirely. A rung alert computed from a price typed months ago is a false alarm,
-and false alarms are how alerting dies. The message says how many were skipped
-so the silence is never mistaken for calm.
+And two guards that are not rules. A holding whose price is not live is skipped
+entirely: a rung alert computed from a price typed months ago is a false alarm,
+and false alarms are how alerting dies. A holding with a live price but no
+quantity is set aside too — its weight is zero, so every rule passes over it in
+silence that looks exactly like nothing being wrong.
+
+Both are counted in the message. An untouched workbook and a portfolio with
+nothing to decide are otherwise the same three words, and the first is the more
+likely of the two on any given day.
 
 Movement needs yesterday's price, which a spreadsheet cannot remember. The
 state file holds the last price seen per holding and nothing else.
@@ -119,6 +124,8 @@ class Holding:
 class Report:
     alerts: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    unfilled: list[str] = field(default_factory=list)
+    no_plans: bool = False
     prices: dict[str, float] = field(default_factory=dict)
 
     def text(self) -> str:
@@ -131,6 +138,21 @@ class Report:
             body += (
                 f"\n\n{len(self.skipped)} skipped, no live price: {names}. "
                 "Nothing can be said about these until the price updates."
+            )
+        # A live price on a row you hold nothing of measures nothing. Left
+        # unsaid, an untouched workbook is byte-identical to a calm portfolio.
+        if self.unfilled:
+            names = ", ".join(sorted(self.unfilled))
+            body += (
+                f"\n\n{len(self.unfilled)} with a live price but no quantity: "
+                f"{names}. Units and average cost are still blank, so weight "
+                "and market value are zero and no rule can fire on them."
+            )
+        if self.no_plans:
+            body += (
+                "\n\nNo plan rows to watch. Rung alerts need a plan with a "
+                "target price; until one exists that rule is silent whatever "
+                "prices do."
             )
         return body
 
@@ -211,10 +233,16 @@ def check(
 ) -> Report:
     report = Report()
     skipped: set[str] = set()
+    unfilled: set[str] = set()
+    plans_defined = 0
 
     for plan in plans:
         if plan.holding.strip().lower().startswith(EXAMPLE):
             continue
+        # Counted before the live check: the question this answers is whether a
+        # plan exists at all, not whether it can be evaluated right now.
+        if plan.target is not None:
+            plans_defined += 1
         if not plan.live:
             skipped.add(plan.holding)
             continue
@@ -252,6 +280,13 @@ def check(
             if holding.units:
                 skipped.add(holding.holding)
             continue
+        # A live price is not the same as a position. With no units the weight
+        # is 0.0 — falsy, so the limit check below short-circuits — and market
+        # value is 0 too. Every rule passes over the row without a word, which
+        # is the one silence this tool must never produce unexplained.
+        if not holding.units:
+            unfilled.add(holding.holding)
+            continue
         report.prices[holding.holding] = holding.price
         was = previous.get(holding.holding)
         if was:
@@ -268,6 +303,10 @@ def check(
             )
 
     report.skipped = sorted(skipped)
+    report.unfilled = sorted(unfilled)
+    # Only worth saying when there is something to plan for; an entirely blank
+    # tab already says enough through the unfilled list.
+    report.no_plans = not plans_defined and bool(report.prices or unfilled)
     return report
 
 
