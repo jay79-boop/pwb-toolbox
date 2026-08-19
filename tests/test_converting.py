@@ -3808,3 +3808,121 @@ def test_lookahead_on_is_refused_wherever_it_sits(settings):
 )
 def test_lookahead_off_is_the_normal_case_and_still_converts(settings):
     assert convert(_SECURITY.format(settings=settings)).ok
+
+
+# --- request.security as a line, not just a reading --------------------------
+
+HTF_INDICATOR_STRATEGY = """//@version=6
+strategy("HTF")
+fast = input.int(20, "Fast")
+htfClose = request.security(syminfo.tickerid, "240", close)
+htfMa = ta.ema(htfClose, fast)
+if htfClose > htfMa
+    strategy.entry("l", strategy.long)
+if htfClose < htfMa
+    strategy.close()
+"""
+
+
+def test_a_higher_timeframe_series_can_feed_an_indicator():
+    """`request.security` answered only as this bar's number before.
+
+    A resampled feed is a line like any other, so an indicator can be built on
+    it -- but the lowering indexed it before handing it back, which left
+    nothing an indicator could take.
+    """
+    result = convert(HTF_INDICATOR_STRATEGY)
+    assert result.ok, result.unsupported
+    assert "self._line_htfClose_1 = self.datas[1].close" in result.code
+    assert "bt.indicators.EMA(self._line_htfClose_1, period=self.p.fast)" in result.code
+
+
+def test_a_higher_timeframe_series_composes_before_it_is_used():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'htf = request.security(syminfo.tickerid, "240", close)\n'
+        "spread = htf - close\n"
+        "sig = ta.sma(spread, 5)\n"
+        "if sig > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    # The higher-timeframe read is promoted to its own handle first, so the
+    # composition references that rather than repeating the feed.
+    assert "self._line_htf_1 = self.datas[1].close" in result.code
+    assert "self._line_spread_2 = (self._line_htf_1 - self.data.close)" in result.code
+    assert "bt.indicators.SMA(self._line_spread_2, period=5)" in result.code
+
+
+def test_the_line_path_still_records_the_feed_to_supply():
+    result = convert(HTF_INDICATOR_STRATEGY)
+    assert "resample_spec" in result.code
+    assert "needs 2 data feeds" in result.code
+
+
+@pytest.mark.parametrize(
+    "call,reason",
+    [
+        (
+            'request.security(syminfo.tickerid, "240", high, barmerge.gaps_off,'
+            " barmerge.lookahead_on)",
+            "lookahead_on reads a bar before it closes",
+        ),
+        (
+            'request.security(syminfo.tickerid, "240", high,'
+            " lookahead=barmerge.lookahead_on)",
+            "lookahead_on reads a bar before it closes",
+        ),
+        (
+            'request.security("SPY", "240", close)',
+            "needs a second instrument",
+        ),
+        (
+            'request.security(syminfo.tickerid, "zz", close)',
+            "is not recognised",
+        ),
+    ],
+)
+def test_the_line_path_refuses_what_the_value_path_refuses(call, reason):
+    """The checks moved when the two paths were split, so they are re-pinned.
+
+    A lookahead read is the one thing this converter most needs to refuse: it
+    is a backtest on data the strategy could not have had, and it looks like a
+    very good strategy. Reaching `request.security` through an indicator must
+    not be a way around that.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"h = {call}\n"
+        "ma = ta.ema(h, 20)\n"
+        "if close > ma\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any(reason in item for item in result.unsupported)
+
+
+def test_generated_htf_indicator_strategy_runs_and_trades():
+    result = convert(HTF_INDICATOR_STRATEGY)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy = namespace[result.class_name]
+
+    cerebro = bt.Cerebro()
+    frame = _price_frame(bars=600)
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    for timeframe, compression in strategy.resample_spec:
+        cerebro.resampledata(
+            bt.feeds.PandasData(dataname=frame),
+            timeframe=timeframe,
+            compression=compression,
+        )
+    cerebro.addstrategy(strategy)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    result_strategy = cerebro.run()[0]
+    closed = (
+        result_strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
+    )
+    assert closed > 0

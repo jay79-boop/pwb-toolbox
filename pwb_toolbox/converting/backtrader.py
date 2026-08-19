@@ -1582,6 +1582,8 @@ class _Generator:
             if node.func in self.functions:
                 inlined = self._inline_call(node)
                 return None if inlined is None else self._line_expr(inlined)
+            if node.func == "request.security":
+                return self._line_security(node)
             if node.func in COMPOSED_AVERAGES:
                 return self._hoist_moving_average(node)
             if node.func in _LINE_MATH or node.func in ("math.pow", "math.avg"):
@@ -2314,17 +2316,21 @@ class _Generator:
             return f"self._pine_time({seconds}, {ago})"
         return f"self._pine_time({seconds})"
 
-    def _value_security(self, call):
-        """Lower ``request.security`` onto a resampled Backtrader feed.
+    def _security_feed(self, call):
+        """The Backtrader feed a ``request.security`` reads from, or ``None``.
 
         Pine reaches another timeframe inline; Backtrader reaches it through a
         second data feed set up on the cerebro before the strategy exists. So
         the call becomes a read from ``self.datas[n]``, and the feeds the
         caller has to supply are recorded on the class.
+
+        Split out from the lowering because the same call has to be answerable
+        both ways: as a number for ``next()``, and as a line for anything that
+        wants to build an indicator on top of it.
         """
         if len(call.args) < 3:
             self._reject("request.security needs a symbol, timeframe and expression")
-            return "None"
+            return None
 
         symbol, timeframe, expression = call.args[0], call.args[1], call.args[2]
 
@@ -2333,7 +2339,7 @@ class _Generator:
                 "request.security on a symbol other than syminfo.tickerid needs "
                 "a second instrument, which is a data-loading decision"
             )
-            return "None"
+            return None
 
         # Pine takes `lookahead` fourth-and-fifth positionally as well as by
         # name, and only the keyword form was being checked. A script written
@@ -2351,7 +2357,7 @@ class _Generator:
                     "request.security with barmerge.lookahead_on reads a bar "
                     "before it closes; there is no Backtrader equivalent"
                 )
-                return "None"
+                return None
 
         if isinstance(timeframe, Name) and timeframe.id == "timeframe.period":
             # The chart's own timeframe. Pine still routes it through
@@ -2365,13 +2371,13 @@ class _Generator:
                     "an input default, because the feed is built before the "
                     "strategy runs"
                 )
-                return "None"
+                return None
             spec = parse_timeframe(resolved)
             if spec is None:
                 self._reject(
                     f"request.security: timeframe {resolved!r} is not recognised"
                 )
-                return "None"
+                return None
             if from_param:
                 # The param stays, because the script may read it elsewhere,
                 # but it cannot move the feed: resampledata runs before the
@@ -2388,12 +2394,30 @@ class _Generator:
                 self._feed_index[resolved] = index
             feed = f"self.datas[{index}]"
 
+        return feed
+
+    def _line_security(self, call):
+        """``request.security`` as a line, for building indicators on."""
+        feed = self._security_feed(call)
+        if feed is None:
+            return None
         previous, self._feed = self._feed, feed
         try:
-            line = self._line_expr(expression)
+            return self._line_expr(call.args[2])
+        finally:
+            self._feed = previous
+
+    def _value_security(self, call):
+        """``request.security`` as this bar's number."""
+        feed = self._security_feed(call)
+        if feed is None:
+            return "None"
+        previous, self._feed = self._feed, feed
+        try:
+            line = self._line_expr(call.args[2])
             if line is not None:
                 return f"{line}[0]"
-            return self._value_expr(expression)
+            return self._value_expr(call.args[2])
         finally:
             self._feed = previous
 
