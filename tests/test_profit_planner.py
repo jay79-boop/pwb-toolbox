@@ -23,6 +23,7 @@ from tools.build_profit_planner import (  # noqa: E402
     POS_TOTAL,
     CLASSES,
     LOG_FIRST,
+    NO_GOOGLE_FEED,
     LOG_LAST,
     POSITIONS,
     SECTORS,
@@ -342,3 +343,37 @@ def test_every_ladder_column_waits_for_its_inputs(wb):
             formula = ws.cell(row=row, column=col).value
             for ref in (f'$B{row}=""', f'$C{row}=""', f'$F{row}=""', f'$H{row}=""'):
                 assert ref in formula, f"column {col} ignores {ref}"
+
+
+def test_unpriced_positions_say_so_on_the_row(wb):
+    """Google Finance carries the majors and nothing else.
+
+    A holding it cannot price sits at whatever was typed into it, so the row
+    has to admit that rather than presenting a 2022 number as today's.
+    """
+    noted = {p.asset for p in POSITIONS if "does not carry this symbol" in p.note}
+    assert noted == NO_GOOGLE_FEED
+    for position in POSITIONS:
+        if position.asset not in NO_GOOGLE_FEED:
+            assert "does not carry this symbol" not in position.note, position.asset
+
+
+def test_staleness_is_measured_in_money_not_in_rows(wb):
+    """One stale holding was a third of the book while reading as one row of
+    twelve. A count understates the damage; the dashboard has to weigh it."""
+    band = wb["Dashboard"]["B7"].value
+    assert band.startswith("=IF(SUMIF(Positions!$M")
+    assert '"<>live"' in band, "must select the rows with no live feed"
+    assert f"Positions!$N${POS_FIRST}:$N${POS_LAST}" in band, "must sum market value"
+    assert f"Positions!$N${POS_TOTAL}" in band, "must express it as a share"
+    assert "priced by hand" in band
+
+
+def test_the_stale_band_sits_under_the_portfolio_value(wb):
+    """It qualifies that tile, so it has to be read in the same glance."""
+    ws = wb["Dashboard"]
+    merged = {str(r) for r in ws.merged_cells.ranges}
+    assert "B7:P7" in merged
+    assert (
+        ws["B5"].value == f"=Positions!$N${POS_TOTAL}"
+    ), "tile above must be the value"

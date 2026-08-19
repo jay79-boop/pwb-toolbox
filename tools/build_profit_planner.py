@@ -170,6 +170,21 @@ class Ladder:
 # number instead of two that could disagree.
 # --------------------------------------------------------------------------
 
+# Observed from a live import: Google Finance carries the majors as
+# CURRENCY:XXXUSD and nothing else. Bitcoin, Ethereum, Cardano and XRP resolve;
+# these do not, and a row that cannot be priced sits at whatever was typed into
+# it — which is how a portfolio total quietly becomes fiction.
+NO_GOOGLE_FEED = {
+    "Chainlink",
+    "Gala",
+    "The Sandbox",
+    "Decentraland",
+    "Theta",
+    "Harmony",
+    "Audius",
+    "Shiba Inu",
+}
+
 POSITIONS: list[Position] = [
     Position(
         "Unknown — old sheet said '10162008'",
@@ -208,9 +223,11 @@ POSITIONS: list[Position] = [
         1.31,
         1.31,
         8.35,
-        "Old sheet listed this twice with different sizes: 10,000 units on the "
-        "holdings tab and 100 on a planning tab. The larger is carried here — "
-        "correct it if the planning tab was right.",
+        "CHECK THIS FIRST. The old sheet listed it twice with different sizes: "
+        "10,000 units on the holdings tab and 100 on a planning tab. The larger "
+        "is carried here, and at the price beside it that is over a third of "
+        "the whole portfolio — so if the planning tab was right, every total in "
+        "this workbook is wrong by a wide margin.",
     ),
     Position("Decentraland", "CURRENCY:MANAUSD", "Metaverse", 150, 0.834, 0.83, 5.87),
     Position("Theta", "CURRENCY:THETAUSD", "Media / NFT", 100, 1.25, 1.25, 15.71),
@@ -237,6 +254,17 @@ POSITIONS: list[Position] = [
         "rounded away by the cell format. Corrected here.",
     ),
 ]
+
+_NO_FEED_NOTE = (
+    "Google Finance does not carry this symbol, so the price is whatever is in "
+    "Manual price and will not move on its own. Update it by hand, or leave it "
+    "and read the portfolio total as an estimate."
+)
+for _position in POSITIONS:
+    if _position.asset in NO_GOOGLE_FEED:
+        _position.note = (
+            _position.note + " " if _position.note else ""
+        ) + _NO_FEED_NOTE
 
 LADDERS: list[Ladder] = [
     Ladder(
@@ -1490,6 +1518,13 @@ def build_dashboard(wb: Workbook):
 
     status = f"Positions!$E${POS_FIRST}:$E${POS_LAST}"
     realised = f"Positions!$R${POS_FIRST}:$R${POS_LAST}"
+    # Value sitting on prices nobody is updating. Counting the rows understates
+    # it badly — one stale holding was a third of the book while reading as one
+    # row out of twelve.
+    stale = (
+        f'SUMIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"<>live",'
+        f"Positions!$N${POS_FIRST}:$N${POS_LAST})"
+    )
 
     def tiles(label_row: int, entries):
         for start_col, label, formula, fmt, size in entries:
@@ -1535,6 +1570,40 @@ def build_dashboard(wb: Workbook):
             ),
         ],
     )
+    # Directly under the portfolio value, because that is the number the
+    # staleness makes untrue.
+    ws.merge_cells(start_row=7, start_column=2, end_row=7, end_column=16)
+    band = ws.cell(
+        row=7,
+        column=2,
+        value=(
+            f'=IF({stale}=0,"Every position above is priced from a live feed.",'
+            f'TEXT({stale},"$#,##0")&" of that — "'
+            f'&TEXT(IFERROR({stale}/Positions!$N${POS_TOTAL},0),"0.0%")'
+            f'&" — is priced by hand and has not moved since you typed it. '
+            f'Read the figures above as an estimate until you refresh them.")'
+        ),
+    )
+    band.font = Font(name="Calibri", size=10, bold=True, color=INK)
+    band.alignment = Alignment(vertical="center", indent=1)
+    ws.row_dimensions[7].height = 20
+    ws.conditional_formatting.add(
+        "B7",
+        FormulaRule(
+            formula=[f"{stale}>0"],
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+            font=Font(size=10, bold=True, color="92400E"),
+        ),
+    )
+    ws.conditional_formatting.add(
+        "B7",
+        FormulaRule(
+            formula=[f"{stale}=0"],
+            fill=PatternFill("solid", fgColor=GOOD_SOFT),
+            font=Font(size=10, bold=True, color=GOOD),
+        ),
+    )
+
     # The second row is the half the old sheet never had: what you have
     # actually banked, and what the two halves add up to.
     tiles(
@@ -1663,10 +1732,9 @@ def build_dashboard(wb: Workbook):
             "Every holding should have rungs before it needs them.",
         ),
         (
-            "Positions priced by hand",
-            f'=COUNTIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"manual")'
-            f'+COUNTIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"no feed")',
-            "These do not update themselves. Everything about them is as stale as the day you typed it.",
+            "Portfolio value priced by hand",
+            f"={stale}",
+            "Not a row count — the money riding on prices that do not update themselves. The band under the tiles says what share of the portfolio that is.",
         ),
         (
             "Trades logged against nothing",
@@ -1695,7 +1763,7 @@ def build_dashboard(wb: Workbook):
         ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
         val = ws.cell(row=r, column=4, value=formula)
         val.font = BOLD_F
-        val.number_format = "0"
+        val.number_format = MONEY0 if "SUMIF(Positions!$M" in formula else "0"
         val.alignment = Alignment(horizontal="center")
         val.border = BOX
         hint = ws.cell(row=r, column=6, value=note)
