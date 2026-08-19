@@ -91,13 +91,10 @@ POS_FIRST = 4
 POS_LAST = 33
 POS_TOTAL = 35
 
-LADDER_FIRST = 4
-LADDER_LAST = 43
-
 LOG_FIRST = 5
 LOG_LAST = 204
 
-# Row geography of the Ticker Plan sheet. It is the tab that gets used daily,
+# Row geography of a Plan tab. These are the tabs that get used daily,
 # so the layout is fixed here and every formula on it refers back to these.
 # The position reads across one strip (labels on TP_LABEL, values on TP_INPUT)
 # rather than down a column, which is what keeps the ladder above the fold.
@@ -109,6 +106,10 @@ TP_BANNER = 11
 TP_HEADER = 12
 TP_RUNG_FIRST = 13
 TP_RUNG_LAST = 26
+
+# Six plans ship ready-made so the Dashboard can check them. A seventh coin is
+# a duplicated tab, which works but sits outside the check.
+PLAN_COUNT = 6
 
 # (gain above your average cost, share of what is still held at that rung).
 # Shares of the remainder rather than of the original position, so the plan
@@ -148,19 +149,6 @@ class Position:
     asset_class: str = "Crypto"
 
 
-@dataclass
-class Rung:
-    target: float
-    pct: float
-
-
-@dataclass
-class Ladder:
-    asset: str
-    rungs: list[Rung] = field(default_factory=list)
-    note: str = ""
-
-
 # --------------------------------------------------------------------------
 # Carried-over data.
 #
@@ -188,111 +176,37 @@ NO_GOOGLE_FEED = {
 
 POSITIONS: list[Position] = [
     Position(
-        "Unknown — old sheet said '10162008'",
-        "",
-        "Review",
-        100,
-        7.26,
-        7.26,
-        45.01,
-        "Name was a number in the old sheet. The $45.01 all-time high matches "
-        "Uniswap (UNI) — confirm, then set the name and ticker CURRENCY:UNIUSD.",
-    ),
-    Position("Bitcoin", "CURRENCY:BTCUSD", "Store of value", 0.26, 22151, 22151, 68780),
-    Position(
-        "Ethereum", "CURRENCY:ETHUSD", "L1 / Smart contract", 3, 1496, 1496, 4861.29
+        "EXAMPLE — overwrite or delete this row",
+        "CURRENCY:BTCUSD",
+        "Store of value",
+        0.05,
+        50000,
+        50000,
+        126000,
+        "Every column filled in, so you can see the shape of a complete "
+        "holding. Overwrite it with your first real position or delete the row.",
     ),
     Position(
-        "Cardano", "CURRENCY:ADAUSD", "L1 / Smart contract", 250, 0.48, 0.48, 3.09
-    ),
-    Position("Chainlink", "CURRENCY:LINKUSD", "DeFi / Oracle", 100, 6.67, 6.67, 52.85),
-    Position(
-        "Gala",
-        "CURRENCY:GALAUSD",
-        "Gaming",
-        13545,
-        0.044,
-        0.04,
-        0.74,
-        "Avg cost is $595.98 / 13,545 coins.",
+        "Bitcoin",
+        "CURRENCY:BTCUSD",
+        "Store of value",
+        0,
+        0,
+        0,
+        None,
+        "Google Finance carries this one. Type your quantity and average cost "
+        "and the price is already live.",
     ),
     Position(
-        "The Sandbox",
-        "CURRENCY:SANDUSD",
-        "Metaverse",
-        10000,
-        1.31,
-        1.31,
-        8.35,
-        "CHECK THIS FIRST. The old sheet listed it twice with different sizes: "
-        "10,000 units on the holdings tab and 100 on a planning tab. The larger "
-        "is carried here, and at the price beside it that is over a third of "
-        "the whole portfolio — so if the planning tab was right, every total in "
-        "this workbook is wrong by a wide margin.",
-    ),
-    Position("Decentraland", "CURRENCY:MANAUSD", "Metaverse", 150, 0.834, 0.83, 5.87),
-    Position("Theta", "CURRENCY:THETAUSD", "Media / NFT", 100, 1.25, 1.25, 15.71),
-    Position(
-        "Harmony",
-        "CURRENCY:ONEUSD",
-        "Low cap",
-        2500,
-        0.0223644,
-        0.02,
-        0.38,
-        "Avg cost is $55.91 / 2,500 coins.",
-    ),
-    Position("Audius", "CURRENCY:AUDIOUSD", "Low cap", 200, 0.35, 0.35, 4.94),
-    Position(
-        "Shiba Inu",
-        "CURRENCY:SHIBUSD",
-        "Meme",
-        10000000,
-        0.000011,
-        0.000011,
-        0.00008845,
-        "Old sheet showed the all-time high as $0.00 — it was the real number "
-        "rounded away by the cell format. Corrected here.",
-    ),
-]
-
-_NO_FEED_NOTE = (
-    "Google Finance does not carry this symbol, so the price is whatever is in "
-    "Manual price and will not move on its own. Update it by hand, or leave it "
-    "and read the portfolio total as an estimate."
-)
-for _position in POSITIONS:
-    if _position.asset in NO_GOOGLE_FEED:
-        _position.note = (
-            _position.note + " " if _position.note else ""
-        ) + _NO_FEED_NOTE
-
-LADDERS: list[Ladder] = [
-    Ladder(
-        "Gala",
-        [
-            Rung(0.06, 0.15),
-            Rung(0.08, 0.20),
-            Rung(0.10, 0.25),
-            Rung(0.12, 0.30),
-            Rung(0.14, 0.40),
-        ],
-        "Price targets are the old sheet's. The old ladder sold 3,563 coins at "
-        "the last rung when only 891 were left, booking ~$374 of profit on "
-        "coins it had already sold. Each rung here is a share of what is still "
-        "held when it is reached, so the plan cannot oversell itself.",
-    ),
-    Ladder(
-        "Cardano",
-        [
-            Rung(1.25, 0.15),
-            Rung(2.00, 0.20),
-            Rung(2.50, 0.25),
-            Rung(2.75, 0.30),
-            Rung(3.09, 0.40),
-        ],
-        "Price targets are the old sheet's. The old sheet held three identical "
-        "copies of this ladder on one tab; this is the one copy.",
+        "Ethereum",
+        "CURRENCY:ETHUSD",
+        "L1 / Smart contract",
+        0,
+        0,
+        0,
+        None,
+        "Google Finance carries this one. Type your quantity and average cost "
+        "and the price is already live.",
     ),
 ]
 
@@ -539,6 +453,7 @@ def build_positions(wb: Workbook):
         "X to ATH",
         "If ATH returns",
         "Note",
+        "Needs",
     ]
     widths = [
         28,
@@ -585,7 +500,7 @@ def build_positions(wb: Workbook):
         seed = POSITIONS[row - POS_FIRST] if row - POS_FIRST < len(POSITIONS) else None
         banded = (row - POS_FIRST) % 2 == 1
 
-        for col in range(1, 25):
+        for col in range(1, 26):
             cell = ws.cell(row=row, column=col)
             style_body(cell)
             if banded:
@@ -690,8 +605,24 @@ def build_positions(wb: Workbook):
             column=23,
             value=f'=IF(OR({inactive},$T{row}=""),"",$G{row}*$T{row})',
         ).number_format = MONEY
+        # A named row that is missing something has to say so. An earlier
+        # version let a holding with no Status sit at zero, contributing
+        # nothing and reporting nothing — the register simply ignored it.
+        missing = ws.cell(
+            row=row,
+            column=25,
+            value=(
+                f'=IF({blank},"",'
+                f'IF($E{row}="","set Status",'
+                f'IF($G{row}="","set Quantity",'
+                f'IF($H{row}="","set Avg cost",'
+                f'IF($C{row}="","set Class",'
+                f'IF($B{row}="","set Ticker",""))))))'
+            ),
+        )
+        missing.font = Font(name="Calibri", size=9, bold=True, color="92400E")
 
-    for col in range(1, 25):
+    for col in range(1, 26):
         cell = ws.cell(row=POS_TOTAL, column=col)
         cell.fill = PatternFill("solid", fgColor=INK)
         cell.font = Font(name="Calibri", size=11, bold=True, color=WHITE)
@@ -757,8 +688,15 @@ def build_positions(wb: Workbook):
         ),
     )
     ws.conditional_formatting.add(
-        f"A{POS_FIRST}:X{POS_LAST}",
+        f"A{POS_FIRST}:Y{POS_LAST}",
         FormulaRule(formula=[f'$E{POS_FIRST}="Closed"'], font=Font(color=MUTED)),
+    )
+    ws.conditional_formatting.add(
+        f"A{POS_FIRST}:Y{POS_LAST}",
+        FormulaRule(
+            formula=[f'AND($A{POS_FIRST}<>"",$Y{POS_FIRST}<>"")'],
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
     )
     ws.conditional_formatting.add(
         f"E{POS_FIRST}:E{POS_LAST}",
@@ -771,271 +709,34 @@ def build_positions(wb: Workbook):
     return ws
 
 
-def build_ladder(wb: Workbook):
-    ws = wb.create_sheet("Exit Ladder")
-    ws.sheet_properties.tabColor = "7C3AED"
-    sheet_title(
-        ws,
-        "Exit Ladder",
-        "Decide what you sell at what price before the price gets there. "
-        "Percentages are of the original position, so the rungs always add to "
-        "100% or less.",
-        18,
-    )
-    headers = [
-        "Asset",
-        "Qty held",
-        "Avg cost",
-        "Cost basis",
-        "Rung",
-        "Target price",
-        "Multiple",
-        "Units to sell",
-        "% of remainder",
-        "Gross",
-        "Fees",
-        "Est. tax",
-        "Net proceeds",
-        "Cumulative net",
-        "Cost recovered",
-        "% sold so far",
-        "Qty remaining",
-        "Remainder value",
-    ]
-    widths = [26, 14, 12, 13, 8, 14, 10, 14, 14, 13, 11, 11, 14, 15, 16, 13, 14, 15]
-    header_row(ws, 3, headers, widths)
-    ws.freeze_panes = "E4"
+def build_plan_tab(wb: Workbook, index: int):
+    """One coin, one screen, the whole exit plan.
 
-    asset_dv = DataValidation(
-        type="list",
-        formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
-        allow_blank=True,
-    )
-    ws.add_data_validation(asset_dv)
+    Six of these ship ready-made. Each picks a holding from the register by
+    name, so quantity, cost and ticker arrive rather than being typed twice —
+    the drift that put XRP in the workbook at two different average costs
+    cannot happen by accident. Those cells stay amber: typing over one is a
+    legitimate what-if, and the tab then says it no longer matches the
+    register, which is a warning that means something specific.
 
-    seeded: list[tuple[str, int, Rung]] = []
-    for ladder in LADDERS:
-        for idx, rung in enumerate(ladder.rungs, start=1):
-            seeded.append((ladder.asset, idx, rung))
-
-    for row in range(LADDER_FIRST, LADDER_LAST + 1):
-        seed = seeded[row - LADDER_FIRST] if row - LADDER_FIRST < len(seeded) else None
-        for col in range(1, 19):
-            cell = ws.cell(row=row, column=col)
-            style_body(cell)
-        # Quantity and average cost are amber, not grey: they arrive filled in
-        # from the register, and typing over either one is a legitimate
-        # what-if — or the only way to plan an asset you do not hold yet.
-        for col in (1, 2, 3, 5, 6, 8):
-            style_input(ws.cell(row=row, column=col))
-        for col in (4, 9):
-            style_derived(ws.cell(row=row, column=col))
-
-        asset_cell = ws.cell(row=row, column=1, value=seed[0] if seed else None)
-        asset_dv.add(asset_cell)
-        ws.cell(row=row, column=5, value=f"Rung {seed[1]}" if seed else None)
-        target = ws.cell(row=row, column=6, value=seed[2].target if seed else None)
-        target.number_format = MONEY
-        # Same rule as Ticker Plan: the quantity is what you type and the
-        # percentage is what you read. It arrives as a live share of the
-        # position and is yours to overwrite.
-        sold_before = (
-            "0"
-            if row == LADDER_FIRST
-            else (
-                f"SUMIFS($H${LADDER_FIRST}:$H{row - 1},"
-                f"$A${LADDER_FIRST}:$A{row - 1},$A{row})"
-            )
-        )
-        qty = ws.cell(
-            row=row,
-            column=8,
-            value=(
-                f"=ROUND({seed[2].pct}*MAX(0,$B{row}-{sold_before}),6)"
-                if seed
-                else None
-            ),
-        )
-        qty.number_format = QTY
-
-        blank = f'$A{row}=""'
-        # IFERROR, because a name that is not on the register is not a mistake
-        # — it is a coin you are sizing up. Without it the whole row collapsed
-        # to #N/A the moment you typed a ticker of your own.
-        ws.cell(
-            row=row,
-            column=2,
-            value=f'=IF({blank},"",IFERROR({pos_lookup("G", f"$A{row}")},""))',
-        ).number_format = QTY
-        ws.cell(
-            row=row,
-            column=3,
-            value=f'=IF({blank},"",IFERROR({pos_lookup("H", f"$A{row}")},""))',
-        ).number_format = MONEY
-        ws.cell(
-            row=row,
-            column=4,
-            value=f'=IF(OR($B{row}="",$C{row}=""),"",$B{row}*$C{row})',
-        ).number_format = MONEY
-
-        empty = f'OR({blank},$B{row}="",$C{row}="",$F{row}="",$H{row}="")'
-        # No rung may sell what the rungs above it already sold. Scoped to the
-        # asset, so ladders for different coins can be interleaved.
-        remaining = f"MAX(0,$B{row}-{sold_before})"
-        used = f"MIN($H{row},{remaining})"
-        ws.cell(
-            row=row, column=7, value=f'=IF(OR({empty},$C{row}=0),"",$F{row}/$C{row})'
-        ).number_format = MULT
-        ws.cell(
-            row=row,
-            column=9,
-            value=f'=IF(OR({empty},{remaining}=0),"",{used}/{remaining})',
-        ).number_format = PCT
-        ws.cell(
-            row=row, column=10, value=f'=IF({empty},"",{used}*$F{row})'
-        ).number_format = MONEY
-        ws.cell(
-            row=row, column=11, value=f'=IF({empty},"",$J{row}*FeeRate)'
-        ).number_format = MONEY
-        ws.cell(
-            row=row,
-            column=12,
-            value=f'=IF({empty},"",MAX(0,($F{row}-$C{row})*{used})*TaxRate)',
-        ).number_format = MONEY
-        ws.cell(
-            row=row, column=13, value=f'=IF({empty},"",$J{row}-$K{row}-$L{row})'
-        ).number_format = MONEY
-        # Running totals scoped to the asset, so rungs for different assets can
-        # be interleaved without the arithmetic bleeding across.
-        ws.cell(
-            row=row,
-            column=14,
-            value=f'=IF({empty},"",SUMIFS($M${LADDER_FIRST}:$M{row},$A${LADDER_FIRST}:$A{row},$A{row}))',
-        ).number_format = MONEY
-        ws.cell(
-            row=row,
-            column=15,
-            value=f'=IF({empty},"",IF($N{row}>=$D{row},"Yes — free ride","Not yet"))',
-        )
-        ws.cell(
-            row=row,
-            column=16,
-            value=(
-                f'=IF(OR({empty},$B{row}=0),"",'
-                f"SUMIFS($H${LADDER_FIRST}:$H{row},"
-                f"$A${LADDER_FIRST}:$A{row},$A{row})/$B{row})"
-            ),
-        ).number_format = PCT
-        ws.cell(
-            row=row,
-            column=17,
-            value=(
-                f'=IF({empty},"",MAX(0,$B{row}-'
-                f"SUMIFS($H${LADDER_FIRST}:$H{row},"
-                f"$A${LADDER_FIRST}:$A{row},$A{row})))"
-            ),
-        ).number_format = QTY
-        ws.cell(
-            row=row, column=18, value=f'=IF({empty},"",$Q{row}*$F{row})'
-        ).number_format = MONEY
-
-    ws.conditional_formatting.add(
-        f"O{LADDER_FIRST}:O{LADDER_LAST}",
-        CellIsRule(
-            operator="equal",
-            formula=['"Yes — free ride"'],
-            font=Font(color=GOOD, bold=True),
-            fill=PatternFill("solid", fgColor=GOOD_SOFT),
-        ),
-    )
-    # The failure the old sheet actually made: a ladder that sells more than it
-    # holds. Flagged loudly rather than left to arithmetic.
-    ws.conditional_formatting.add(
-        f"P{LADDER_FIRST}:P{LADDER_LAST}",
-        CellIsRule(
-            operator="greaterThan",
-            formula=["1"],
-            font=Font(color=BAD, bold=True),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
-        ),
-    )
-    ws.conditional_formatting.add(
-        f"Q{LADDER_FIRST}:Q{LADDER_LAST}",
-        CellIsRule(
-            operator="lessThan",
-            formula=["0"],
-            font=Font(color=BAD, bold=True),
-            fill=PatternFill("solid", fgColor=BAD_SOFT),
-        ),
-    )
-
-    row = LADDER_LAST + 2
-    how = ws.cell(
-        row=row,
-        column=1,
-        value=(
-            "Pick an asset and its quantity and average cost arrive from the "
-            "register — both are amber, so type over either one for a what-if, "
-            "or type a name of your own and fill them in yourself to plan "
-            "something you do not hold yet. Cost basis follows from the two of "
-            "them, and every column to the right follows from that."
-        ),
-    )
-    how.font = SMALL_F
-    how.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.merge_cells(start_row=row, start_column=1, end_row=row + 1, end_column=10)
-    ws.row_dimensions[row].height = 28
-
-    row = LADDER_LAST + 5
-    ws.cell(row=row, column=1, value="Notes carried from the old sheet").font = BOLD_F
-    for offset, ladder in enumerate(LADDERS, start=1):
-        cell = ws.cell(
-            row=row + offset, column=1, value=f"{ladder.asset}: {ladder.note}"
-        )
-        cell.font = SMALL_F
-        cell.alignment = Alignment(vertical="top", wrap_text=True)
-        ws.merge_cells(
-            start_row=row + offset, start_column=1, end_row=row + offset, end_column=10
-        )
-        ws.row_dimensions[row + offset].height = 42
-    return ws
-
-
-def build_ticker_plan(wb: Workbook):
-    """One ticker, one screen, the whole exit plan.
-
-    Two rules the rest of the sheet is built around.
-
-    The quantity is what you type and the percentage is what you read. Typing
-    units is how the decision is actually made — "take four hundred off here" —
-    and a percentage that has to be worked out first is a step in the way. The
-    unit cells arrive filled in from a share of the position, so a duplicate of
-    this tab still scales itself, and typing over one is expected rather than
-    destructive.
-
-    And no rung may sell units the rungs above it have already sold. The
-    quantity each rung actually moves is capped at what is left, so a plan that
-    over-commits shows the over-commitment in the tiles without booking cash on
-    units that no longer exist — which is the fault the old workbook's Gala
-    ladder had.
-
-    Deliberately self-contained: every formula refers to a cell on this sheet
-    (plus the two rates from Settings), so right-click → Duplicate gives a
-    working plan for the next coin rather than a mirror of this one.
+    The only sheet a plan refers to is Positions, so duplicating a tab for a
+    seventh coin still works — the copy picks its own holding and computes from
+    that, rather than mirroring the tab it came from.
     """
-    ws = wb.create_sheet("Ticker Plan")
+    ws = wb.create_sheet(f"Plan {index}")
     ws.sheet_properties.tabColor = ACCENT
     ws.sheet_view.showGridLines = False
     sheet_title(
         ws,
-        "Ticker Plan",
-        "Fill in the amber cells. Everything else follows from them. "
-        "Right-click the tab and Duplicate it for the next coin.",
+        f"Plan {index}",
+        "Pick a holding and the register fills the rest in. Amber cells are "
+        "yours to change. Right-click the tab and Duplicate it for a seventh "
+        "coin.",
         20,
     )
 
     ws.column_dimensions["A"].width = 3
-    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["B"].width = 20
     for col in "CDEFGHIJKLMNO":
         ws.column_dimensions[col].width = 14
     ws.column_dimensions["P"].width = 2
@@ -1043,37 +744,52 @@ def build_ticker_plan(wb: Workbook):
         ws.column_dimensions[col].width = 15
 
     row = TP_INPUT
-    ticker, units, cost = f"$B${row}", f"$C${row}", f"$D${row}"
-    mode, manual, live = f"$E${row}", f"$F${row}", f"$G${row}"
-    basis = f"$I${row}"
+    holding = f"$B${row}"
+    ticker, units, cost = f"$C${row}", f"$D${row}", f"$E${row}"
+    mode, yours, live = f"$F${row}", f"$G${row}", f"$H${row}"
+    basis = f"$J${row}"
+
+    def from_register(column: str) -> str:
+        return f'IFERROR({pos_lookup(column, holding)},"")'
 
     strip = [
-        (2, "Ticker", "CURRENCY:XRPUSD", None, True),
-        (3, "Units held", 1000, QTY, True),
-        (4, "Average cost", 1.00, MONEY, True),
-        (5, "Price mode", "Auto", None, True),
-        (6, "Your price", 1.00, MONEY, True),
-        # Manual has to be able to win. As a fallback only, a coin the feed
-        # does carry ignored the price typed beside it with nothing to say so.
+        (2, "Holding", None, None, True),
+        (3, "Ticker", f'=IF({holding}="","",{from_register("B")})', None, False),
+        (4, "Units held", f'=IF({holding}="","",{from_register("G")})', QTY, True),
+        (5, "Average cost", f'=IF({holding}="","",{from_register("H")})', MONEY, True),
+        (6, "Price mode", "Auto", None, True),
+        (7, "Your price", f'=IF({holding}="","",{from_register("K")})', MONEY, True),
         (
-            7,
+            8,
             "Price used",
-            f'=IF({mode}="Manual",{manual},IFERROR(GOOGLEFINANCE({ticker}),{manual}))',
+            f'=IF({mode}="Manual",{yours},IFERROR(GOOGLEFINANCE({ticker}),{yours}))',
             MONEY,
             False,
         ),
         (
-            8,
+            9,
             "Feed",
             f'=IF({mode}="Manual","manual — pinned by you",'
-            f'IF(ISERROR(GOOGLEFINANCE({ticker})),"no feed — using manual","live"))',
+            f'IF(ISERROR(GOOGLEFINANCE({ticker})),"no feed — using your price","live"))',
             None,
             False,
         ),
-        (9, "Cost basis", f"={units}*{cost}", MONEY, False),
-        (10, "Market value", f"={units}*{live}", MONEY, False),
-        (11, "Open profit", f"=$J${row}-{basis}", MONEY, False),
-        (12, "Open profit %", f'=IF({basis}=0,"",$K${row}/{basis})', PCT, False),
+        (10, "Cost basis", f"={units}*{cost}", MONEY, False),
+        (11, "Market value", f"={units}*{live}", MONEY, False),
+        (12, "Open profit", f"=$K${row}-{basis}", MONEY, False),
+        (13, "Open profit %", f'=IF({basis}=0,"",$L${row}/{basis})', PCT, False),
+        # Typing over a pulled cell is allowed, but the tab has to admit it is
+        # no longer showing what the register holds.
+        (
+            14,
+            "Matches register",
+            (
+                f'=IF({holding}="","",IF(AND(ROUND(N({units}),8)=ROUND(N({from_register("G")}),8),'
+                f'ROUND(N({cost}),8)=ROUND(N({from_register("H")}),8)),"yes","EDITED"))'
+            ),
+            None,
+            False,
+        ),
     ]
     for col, label, value, fmt, typed in strip:
         head = ws.cell(row=TP_LABEL, column=col, value=label.upper())
@@ -1088,11 +804,17 @@ def build_ticker_plan(wb: Workbook):
     ws.row_dimensions[TP_LABEL].height = 26
     ws.row_dimensions[TP_INPUT].height = 20
 
+    holding_dv = DataValidation(
+        type="list",
+        formula1=f"=Positions!$A${POS_FIRST}:$A${POS_LAST}",
+        allow_blank=True,
+    )
     mode_dv = DataValidation(type="list", formula1='"Auto,Manual"', allow_blank=True)
-    ws.add_data_validation(mode_dv)
-    mode_dv.add(ws.cell(row=TP_INPUT, column=5))
+    for dv, column in ((holding_dv, 2), (mode_dv, 6)):
+        ws.add_data_validation(dv)
+        dv.add(ws.cell(row=TP_INPUT, column=column))
 
-    for ref in (f"K{TP_INPUT}", f"L{TP_INPUT}"):
+    for ref in (f"L{TP_INPUT}", f"M{TP_INPUT}"):
         ws.conditional_formatting.add(
             ref,
             CellIsRule(
@@ -1106,7 +828,16 @@ def build_ticker_plan(wb: Workbook):
             ),
         )
     ws.conditional_formatting.add(
-        f"H{TP_INPUT}",
+        f"N{TP_INPUT}",
+        CellIsRule(
+            operator="equal",
+            formula=['"EDITED"'],
+            font=Font(bold=True, color="92400E"),
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"I{TP_INPUT}",
         CellIsRule(
             operator="equal",
             formula=['"manual — pinned by you"'],
@@ -1127,8 +858,6 @@ def build_ticker_plan(wb: Workbook):
             f"SUM($J${first}:$J${last})/MIN({planned},{units}))",
             MONEY,
         ),
-        # Raw, not capped: the point of these two is to show an over-committed
-        # plan, so they have to be allowed to read past 100% and below zero.
         (6, "% of position sold", f'=IF({units}=0,"",{planned}/{units})', PCT),
         (8, "Units still riding", f"={units}-{planned}", QTY),
         (
@@ -1242,10 +971,8 @@ def build_ticker_plan(wb: Workbook):
 
         gain = ws.cell(row=r, column=2, value=seed[0] if seed else None)
         gain.number_format = PCT0
+
         sold_above = "0" if r == first else f"SUM($H${first}:$H{r - 1})"
-        # Each rung is a share of what the rungs above it left, not of the
-        # original position. Change any quantity and every rung below re-sizes
-        # against the units that actually remain.
         remaining = f"MAX(0,{units}-{sold_above})"
         used = f"MIN($H{r},{remaining})"
         qty = ws.cell(
@@ -1254,6 +981,7 @@ def build_ticker_plan(wb: Workbook):
             value=f"=ROUND({seed[1]}*{remaining},6)" if seed else None,
         )
         qty.number_format = QTY
+
         blank = f'$B{r}=""'
         noqty = f'OR($B{r}="",$H{r}="")'
 
@@ -1312,7 +1040,7 @@ def build_ticker_plan(wb: Workbook):
         ws.cell(
             row=r,
             column=15,
-            value=(f'=IF({noqty},"",IF($M{r}<=0,"—",MAX(0,{basis}-$L{r})/$M{r}))'),
+            value=f'=IF({noqty},"",IF($M{r}<=0,"—",MAX(0,{basis}-$L{r})/$M{r}))',
         ).number_format = MONEY
 
     ws.conditional_formatting.add(
@@ -1347,7 +1075,7 @@ def build_ticker_plan(wb: Workbook):
         DataBarRule(start_type="min", end_type="max", color=ACCENT),
     )
 
-    # ---- recovery math, beside the ladder rather than below it -------------
+    # ---- recovery math, beside the ladder ----------------------------------
     ws.merge_cells(
         start_row=TP_BANNER, start_column=17, end_row=TP_BANNER, end_column=20
     )
@@ -1391,19 +1119,43 @@ def build_ticker_plan(wb: Workbook):
         ),
     )
 
+    # The rung the market is heading for next, resolved here rather than in the
+    # watcher so the sheet and the alert can never disagree about it.
+    nxt = TP_RUNG_FIRST + 9
+    ws.cell(row=nxt, column=17, value="NEXT RUNG").font = KPI_LABEL_F
+    next_block = [
+        (
+            "which",
+            f"=IFERROR(MIN(MATCH(0,$D${first}:$D${last},1)+1,{last - first + 1}),1)",
+            "0",
+        ),
+        ("gain", f"=INDEX($B${first}:$B${last},$R{nxt})", PCT0),
+        ("target price", f"=INDEX($C${first}:$C${last},$R{nxt})", MONEY),
+        ("away", f"=INDEX($D${first}:$D${last},$R{nxt})", PCT),
+        ("units to sell", f"=INDEX($H${first}:$H${last},$R{nxt})", QTY),
+        ("net cash", f"=INDEX($K${first}:$K${last},$R{nxt})", MONEY),
+        ("units left after", f"=INDEX($M${first}:$M${last},$R{nxt})", QTY),
+        ("break-even after", f"=INDEX($O${first}:$O${last},$R{nxt})", MONEY),
+    ]
+    for offset, (label, formula, fmt) in enumerate(next_block):
+        r = nxt + offset
+        lab = ws.cell(row=r, column=17, value=label if offset else "which rung")
+        lab.font = SMALL_F
+        cell = ws.cell(row=r, column=18, value=formula)
+        style_derived(cell)
+        cell.number_format = fmt
+
     note = ws.cell(
         row=last + 2,
         column=2,
         value=(
-            "Type units, read percentages. Every unit cell is a share of what "
-            "the rungs above it left, so changing one re-sizes every rung "
-            "below it against the units that actually remain — and the plan "
-            "cannot sell what you no longer hold.\n"
-            "Price mode decides where Price used comes from. On Auto it is "
-            "the live feed, and Your price is only the fallback for a ticker "
-            "the feed does not carry. On Manual, Your price wins outright — "
-            "which is how you ask what the plan looks like if this thing "
-            "reaches $3, without waiting for the market to get there."
+            "Pick a holding and quantity, cost and ticker arrive from the "
+            "register. They stay amber, so type over one for a what-if — the "
+            "tab will say EDITED and the Dashboard will count it, which is how "
+            "you avoid planning against numbers you no longer hold.\n"
+            "Every unit cell is a share of what the rungs above it left, so "
+            "changing one re-sizes the rest against what actually remains. "
+            "Price mode on Manual pins Your price over the feed."
         ),
     )
     note.font = SMALL_F
@@ -1562,6 +1314,126 @@ def build_trade_log(wb: Workbook):
     return ws
 
 
+def build_watch(wb: Workbook):
+    """One flat table for the alert watcher to read.
+
+    Published to the web as CSV and polled from the PC. It exists so the
+    watcher reads a single tab instead of seven, and so the sheet — not the
+    script — decides which rung is next: two places computing the same target
+    is how they end up disagreeing.
+    """
+    ws = wb.create_sheet("Watch")
+    ws.sheet_properties.tabColor = MUTED
+    sheet_title(
+        ws,
+        "Watch",
+        "What the alert watcher reads. Publish this one tab to the web as CSV. "
+        "Nothing here is typed.",
+        13,
+    )
+
+    headers = [
+        "Plan",
+        "Holding",
+        "Ticker",
+        "Feed",
+        "Units held",
+        "Avg cost",
+        "Price",
+        "Weight",
+        "Next rung",
+        "Target price",
+        "Away",
+        "Units to sell",
+        "Net cash",
+    ]
+    header_row(ws, 3, headers, [10, 26, 20, 22, 14, 13, 13, 10, 11, 14, 10, 14, 13])
+
+    nxt = TP_RUNG_FIRST + 9
+    for index in range(1, PLAN_COUNT + 1):
+        row = 3 + index
+        plan = f"'Plan {index}'"
+        holding = f"{plan}!$B${TP_INPUT}"
+        for col in range(1, 14):
+            style_derived(ws.cell(row=row, column=col))
+        cells = [
+            (1, f'="Plan {index}"', None),
+            (2, f'=IF({holding}="","",{holding})', None),
+            (3, f'=IF({holding}="","",{plan}!$C${TP_INPUT})', None),
+            (4, f'=IF({holding}="","",{plan}!$I${TP_INPUT})', None),
+            (5, f'=IF({holding}="","",{plan}!$D${TP_INPUT})', QTY),
+            (6, f'=IF({holding}="","",{plan}!$E${TP_INPUT})', MONEY),
+            (7, f'=IF({holding}="","",{plan}!$H${TP_INPUT})', MONEY),
+            (
+                8,
+                f'=IF({holding}="","",IFERROR(INDEX(Positions!$Q${POS_FIRST}:$Q${POS_LAST},'
+                f"MATCH({holding},Positions!$A${POS_FIRST}:$A${POS_LAST},0)),"
+                "))",
+                PCT,
+            ),
+            (9, f'=IF({holding}="","",{plan}!$R${nxt + 1})', PCT0),
+            (10, f'=IF({holding}="","",{plan}!$R${nxt + 2})', MONEY),
+            (11, f'=IF({holding}="","",{plan}!$R${nxt + 3})', PCT),
+            (12, f'=IF({holding}="","",{plan}!$R${nxt + 4})', QTY),
+            (13, f'=IF({holding}="","",{plan}!$R${nxt + 5})', MONEY),
+        ]
+        for col, formula, fmt in cells:
+            cell = ws.cell(row=row, column=col, value=formula)
+            if fmt:
+                cell.number_format = fmt
+
+    row = 3 + PLAN_COUNT + 2
+    ws.cell(row=row, column=1, value="Holdings").font = BOLD_F
+    header_row_at = row + 1
+    for offset, (label, width) in enumerate(
+        [
+            ("Holding", 26),
+            ("Ticker", 20),
+            ("Class", 12),
+            ("Status", 10),
+            ("Feed", 14),
+            ("Units", 14),
+            ("Avg cost", 13),
+            ("Price", 13),
+            ("Market value", 14),
+            ("Weight", 10),
+            ("Unrealised %", 13),
+        ]
+    ):
+        cell = ws.cell(row=header_row_at, column=1 + offset, value=label)
+        cell.font = HEAD_F
+        cell.fill = HEAD_FILL
+        cell.border = BOX
+        cell.alignment = Alignment(vertical="center", wrap_text=True, indent=1)
+    ws.row_dimensions[header_row_at].height = 28
+
+    for offset in range(POS_LAST - POS_FIRST + 1):
+        src = POS_FIRST + offset
+        row = header_row_at + 1 + offset
+        for col, letter, fmt in (
+            (1, "A", None),
+            (2, "B", None),
+            (3, "C", None),
+            (4, "E", None),
+            (5, "M", None),
+            (6, "G", QTY),
+            (7, "H", MONEY),
+            (8, "L", MONEY),
+            (9, "N", MONEY),
+            (10, "Q", PCT),
+            (11, "P", PCT),
+        ):
+            cell = ws.cell(
+                row=row,
+                column=col,
+                value=f'=IF(Positions!$A${src}="","",Positions!${letter}${src})',
+            )
+            style_derived(cell)
+            if fmt:
+                cell.number_format = fmt
+    return ws
+
+
 def build_dashboard(wb: Workbook):
     ws = wb.create_sheet("Dashboard")
     ws.sheet_properties.tabColor = INK
@@ -1620,11 +1492,17 @@ def build_dashboard(wb: Workbook):
         ws.row_dimensions[label_row + 1].height = 22
         ws.row_dimensions[label_row + 2].height = 16
 
+    live_value = (
+        f'SUMIF(Positions!$M${POS_FIRST}:$M${POS_LAST},"live",'
+        f"Positions!$N${POS_FIRST}:$N${POS_LAST})"
+    )
     tiles(
         4,
         [
-            ("B", "Portfolio value", f"=Positions!$N${POS_TOTAL}", MONEY0, 20),
-            ("F", "Cost at risk", f"=Positions!$I${POS_TOTAL}", MONEY0, 20),
+            # Split, so the headline is never contaminated. A number nobody is
+            # updating does not belong in the same total as a live one.
+            ("B", "Value on live prices", f"={live_value}", MONEY0, 20),
+            ("F", "Value priced by hand", f"={stale}", MONEY0, 20),
             ("J", "Unrealised", f"=Positions!$O${POS_TOTAL}", MONEY0, 20),
             (
                 "N",
@@ -1642,11 +1520,13 @@ def build_dashboard(wb: Workbook):
         row=7,
         column=2,
         value=(
-            f'=IF({stale}=0,"Every position above is priced from a live feed.",'
-            f'TEXT({stale},"$#,##0")&" of that — "'
+            f'=IF(Positions!$N${POS_TOTAL}=0,"Nothing in the register yet — '
+            f'add a holding on Positions and every tab fills in.",'
+            f'IF({stale}=0,"Every position is priced from a live feed.",'
+            f'"Portfolio "&TEXT(Positions!$N${POS_TOTAL},"$#,##0")&", of which "'
+            f'&TEXT({stale},"$#,##0")&" — "'
             f'&TEXT(IFERROR({stale}/Positions!$N${POS_TOTAL},0),"0.0%")'
-            f'&" — is priced by hand and has not moved since you typed it. '
-            f'Read the figures above as an estimate until you refresh them.")'
+            f'&" — is priced by hand and has not moved since you typed it."))'
         ),
     )
     band.font = Font(name="Calibri", size=10, bold=True, color=INK)
@@ -1790,11 +1670,25 @@ def build_dashboard(wb: Workbook):
     ws.cell(row=row, column=2, value="Checks").font = BOLD_F
     checks = [
         (
-            "Active positions with no exit plan",
+            "Active holdings with no plan",
             f'=SUMPRODUCT(({status}="Active")*'
-            f"(COUNTIF('Exit Ladder'!$A${LADDER_FIRST}:$A${LADDER_LAST},"
+            f"(COUNTIF(Watch!$B$4:$B${3 + PLAN_COUNT},"
             f"Positions!$A${POS_FIRST}:$A${POS_LAST})=0))",
-            "Every holding should have rungs before it needs them.",
+            f"Every holding should have rungs before it needs them. There are "
+            f"{PLAN_COUNT} plan tabs; duplicate one for a seventh coin.",
+        ),
+        (
+            "Rows the register is ignoring",
+            f'=COUNTIF(Positions!$Y${POS_FIRST}:$Y${POS_LAST},"set*")',
+            "A holding missing a Status, Quantity, Avg cost, Class or Ticker. It counts toward nothing until you finish it, and the row says which field it wants.",
+        ),
+        (
+            "Plans that no longer match the register",
+            "+".join(
+                f"IF('Plan {i}'!$N${TP_INPUT}=\"EDITED\",1,0)"
+                for i in range(1, PLAN_COUNT + 1)
+            ).join(("=", "")),
+            "You typed over a quantity or cost the plan pulled from Positions. Fine for a what-if, misleading if you forgot.",
         ),
         (
             "Portfolio value priced by hand",
@@ -1897,16 +1791,15 @@ def build_start_here(wb: Workbook):
     )
     row += 1
 
-    row = section(row, "Start on Ticker Plan")
+    row = section(row, "Start on a Plan tab")
     row = line(
         row,
-        "Ticker Plan",
-        "Type a ticker, what you paid and how much you hold. It shows the live "
-        "price and every exit rung measured from your cost: what the price has "
-        "to reach, what you make per unit, what selling the lot would return, "
-        "and what taking a slice at each rung leaves you still holding. "
-        "Right-click the tab and choose Duplicate to make one per coin — it "
-        "links to no other tab, so the copy works on its own.",
+        "Plan 1 to Plan 6",
+        "Pick a holding from the dropdown and the register fills in the "
+        "ticker, quantity and average cost. Each rung then shows what the "
+        "price has to reach, what you make per unit, what selling the lot "
+        "would return, and what taking a slice leaves you holding. Six ship "
+        "ready-made; duplicate one for a seventh coin.",
     )
     row += 1
 
@@ -1914,19 +1807,16 @@ def build_start_here(wb: Workbook):
     row = line(
         row,
         "Positions",
-        "Every holding in one table — the portfolio view Ticker Plan does not "
-        "give you. Type the amber columns; the rest follows.",
-    )
-    row = line(
-        row,
-        "Exit Ladder",
-        "The same rungs, but for every coin at once, so nothing sits unplanned. "
-        "The Dashboard counts the holdings missing from it.",
+        "The register. Every holding lives here once, and the plans read from "
+        "it — which is what stops the same coin existing at two different "
+        "average costs. A row missing something says so in its last column and "
+        "turns amber.",
     )
     row = line(
         row,
         "Dashboard",
-        "Totals and three checks that go red when something needs attention.",
+        "Totals and the checks that go red: holdings with no plan, rows the "
+        "register is ignoring, plans that no longer match it.",
     )
     row = line(
         row,
@@ -1935,54 +1825,14 @@ def build_start_here(wb: Workbook):
     )
     row = line(
         row,
+        "Watch",
+        "What the alert watcher reads. Nothing to fill in — publish this one "
+        "tab to the web as CSV and the watcher on your PC polls it.",
+    )
+    row = line(
+        row,
         "Settings",
         "Tax rate, fees, weight limit. Four numbers the other tabs read.",
-    )
-    row += 1
-
-    row = section(row, "Adding to it as the portfolio grows")
-    row = line(
-        row,
-        "A new coin or stock",
-        "First empty row on Positions. Name, ticker, Class, Sector, Status = "
-        "Active, Round = 1, then quantity and average cost. Nothing else needs "
-        "touching.",
-    )
-    row = line(
-        row,
-        "A buy or a sell",
-        "One row on Trade Log. Pick the position from the dropdown and give it "
-        "the same Round number. A sell works out what it realised against what "
-        "that round's buys averaged — you do not enter the profit yourself.",
-    )
-    row = line(
-        row,
-        "Closing a position out",
-        "Set Status to Closed. The row stays where it is with the realised "
-        "profit the log worked out, and stops counting toward portfolio value, "
-        "weight and unrealised profit. Nothing is deleted and nothing is lost.",
-    )
-    row = line(
-        row,
-        "Buying it again later",
-        "Leave the closed row alone. Add a new row with a name you can tell "
-        "apart — Cardano, round 2 — and set Round to 2. The old round's result "
-        "is banked and does not move, and the new round starts from its own "
-        "average cost. Reusing the same name is the one thing that breaks this, "
-        "so the Dashboard counts names used twice.",
-    )
-    row = line(
-        row,
-        "Something you only watch",
-        "Same as a position, but Status = Watchlist. It shows a live price and "
-        "counts toward nothing.",
-    )
-    row = line(
-        row,
-        "Stocks and ETFs",
-        "Same table, same tabs. Set Class to Stock and use the plain symbol as "
-        "the ticker — NVDA, not CURRENCY:NVDA. The Dashboard splits the "
-        "portfolio by class so you can see crypto and equity apart.",
     )
     row += 1
 
@@ -2025,15 +1875,15 @@ def build_start_here(wb: Workbook):
         ),
         (
             "A ladder that oversold",
-            "The Gala plan sold 3,563 coins on its last rung with 891 left, booking roughly $374 of profit on coins already gone. Rungs are now percentages of the original position and column P turns red if they pass 100%.",
+            "The Gala plan sold 3,563 coins on its last rung with 891 left, booking roughly $374 of profit on coins already gone. Each rung is now a share of what the rungs above it left, so a plan cannot sell what you no longer hold.",
         ),
         (
             "The percentage grid",
-            "About 1,900 hand-typed cells across 14 blocks, all of them the same arithmetic. It is now four inputs on Ticker Plan, and the rungs move when you change what you paid.",
+            "About 1,900 hand-typed cells across 14 blocks, all of them the same arithmetic. It is now a handful of cells on a Plan tab, and the rungs move when you change what you paid.",
         ),
         (
             "Six tabs became one",
-            "Working out an exit used to mean reading a percentage table, a sell-profit table and a pull-profits block that did not agree with each other. Ticker Plan answers all three questions in one row: what the price has to reach, what selling the lot returns, and what selling a slice leaves you holding.",
+            "Working out an exit used to mean reading a percentage table, a sell-profit table and a pull-profits block that did not agree with each other. A Plan tab answers all three questions in one row: what the price has to reach, what selling the lot returns, and what selling a slice leaves you holding.",
         ),
         (
             "Prices unfroze",
@@ -2104,11 +1954,12 @@ def build_workbook() -> Workbook:
     # Created in the order they should appear: the daily driver first, the
     # reference tabs behind it.
     build_start_here(wb)
-    build_ticker_plan(wb)
+    for index in range(1, PLAN_COUNT + 1):
+        build_plan_tab(wb, index)
     build_positions(wb)
-    build_ladder(wb)
     build_dashboard(wb)
     build_trade_log(wb)
+    build_watch(wb)
     build_settings(wb)
     build_lists(wb)
     wb.active = 0

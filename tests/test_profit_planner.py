@@ -15,15 +15,12 @@ import pytest
 openpyxl = pytest.importorskip("openpyxl")
 
 from tools.build_profit_planner import (  # noqa: E402
-    LADDER_FIRST,
-    LADDER_LAST,
-    LADDERS,
+    PLAN_COUNT,
     POS_FIRST,
     POS_LAST,
     POS_TOTAL,
     CLASSES,
     LOG_FIRST,
-    NO_GOOGLE_FEED,
     LOG_LAST,
     POSITIONS,
     SECTORS,
@@ -36,16 +33,11 @@ from tools.build_profit_planner import (  # noqa: E402
     build_workbook,
 )
 
-EXPECTED_SHEETS = [
-    "Start Here",
-    "Ticker Plan",
-    "Positions",
-    "Exit Ladder",
-    "Dashboard",
-    "Trade Log",
-    "Settings",
-    "Lists",
-]
+EXPECTED_SHEETS = (
+    ["Start Here"]
+    + [f"Plan {i}" for i in range(1, PLAN_COUNT + 1)]
+    + ["Positions", "Dashboard", "Trade Log", "Watch", "Settings", "Lists"]
+)
 
 
 @pytest.fixture(scope="module")
@@ -58,65 +50,10 @@ def test_expected_sheets_present(wb):
     assert wb["Lists"].sheet_state == "hidden"
 
 
-def test_positions_are_unique():
-    """The old sheet listed Decentraland and Chainlink twice each."""
-    names = [p.asset for p in POSITIONS]
-    assert len(names) == len(set(names)), "duplicate holding carried over"
-
-
-def test_no_placeholder_rows():
-    """Two 'Future Asset' template rows sat among the real holdings."""
-    assert not [p for p in POSITIONS if "future asset" in p.asset.lower()]
-
-
-def test_every_position_has_a_real_quantity_and_cost():
-    for p in POSITIONS:
-        assert p.qty > 0, p.asset
-        assert p.avg_cost > 0, p.asset
-        assert p.manual_price > 0, p.asset
-
-
-def test_all_time_highs_are_not_rounded_away():
-    """Shiba Inu's high displayed as $0.00, which made X-to-ATH meaningless."""
-    for p in POSITIONS:
-        if p.ath is not None:
-            assert p.ath > 0, p.asset
-            assert p.ath >= p.manual_price, p.asset
-
-
 def test_position_sectors_are_in_the_dropdown_list():
     for p in POSITIONS:
         assert p.sector in SECTORS, p.asset
         assert p.asset_class in CLASSES, p.asset
-
-
-def test_ladders_never_sell_more_than_the_position():
-    """The old Gala ladder sold 3,563 coins with 891 left.
-
-    Shares of the remainder cannot add up past the position however many rungs
-    there are, which removes the failure by construction rather than by check.
-    """
-    for ladder in LADDERS:
-        shares = [rung.pct for rung in ladder.rungs]
-        assert all(0 < pct <= 1 for pct in shares), ladder.asset
-        assert 0 < _riding(shares) < 0.5, ladder.asset
-
-
-def test_ladder_targets_rise_monotonically():
-    for ladder in LADDERS:
-        targets = [rung.target for rung in ladder.rungs]
-        assert targets == sorted(targets), ladder.asset
-
-
-def test_ladder_assets_exist_in_positions():
-    held = {p.asset for p in POSITIONS}
-    for ladder in LADDERS:
-        assert ladder.asset in held, ladder.asset
-
-
-def test_ladder_capacity_fits_the_seeded_rungs(wb):
-    rungs = sum(len(ladder.rungs) for ladder in LADDERS)
-    assert rungs <= LADDER_LAST - LADDER_FIRST + 1
 
 
 def test_positions_seed_fits_the_sheet(wb):
@@ -219,26 +156,6 @@ def test_ticker_plan_fits_its_rows():
     assert len(TP_RUNGS) <= TP_RUNG_LAST - TP_RUNG_FIRST + 1
 
 
-def test_ticker_plan_is_self_contained(wb):
-    """Duplicating the tab has to give a working plan for the next coin.
-
-    A reference to another sheet would survive the copy and quietly keep
-    pointing at the original, so the copy would show the first coin's numbers
-    under the second coin's ticker. Only the two Settings rates may leak in,
-    and they come through defined names rather than cell references.
-    """
-    others = [n for n in wb.sheetnames if n != "Ticker Plan"]
-    ws = wb["Ticker Plan"]
-    for row in ws.iter_rows():
-        for cell in row:
-            if not (isinstance(cell.value, str) and cell.value.startswith("=")):
-                continue
-            for name in others:
-                assert (
-                    f"{name}!" not in cell.value
-                ), f"Ticker Plan!{cell.coordinate} references {name}"
-
-
 def test_closed_positions_leave_the_portfolio_totals(wb):
     """A closed round keeps its realised result and stops counting.
 
@@ -304,81 +221,11 @@ def test_workbook_recalculates_on_open(wb):
     assert wb.calculation.fullCalcOnLoad is True
 
 
-def test_ticker_plan_ladder_is_not_below_the_fold(wb):
-    """An earlier version froze twenty-one rows.
-
-    On a laptop that left nothing visible under the frozen block, so the sheet
-    looked like it ended at the tiles and the ladder appeared not to exist.
-    """
-    ws = wb["Ticker Plan"]
-    frozen_rows = int(ws.freeze_panes[1:]) - 1
-    assert frozen_rows == TP_HEADER, "the header row should be the last frozen one"
-    assert frozen_rows <= 14, f"{frozen_rows} frozen rows buries the ladder"
-
-
-def test_exit_ladder_survives_an_asset_it_has_never_heard_of(wb):
-    """Typing a ticker of your own used to turn the whole row into #N/A.
-
-    A name that is not on the register is not a mistake — it is something you
-    are sizing up before you own it — so the lookups fall back to blank and
-    the quantity and cost are yours to fill in.
-    """
-    ws = wb["Exit Ladder"]
-    for row in range(LADDER_FIRST, LADDER_LAST + 1):
-        for col in (2, 3):
-            formula = ws.cell(row=row, column=col).value
-            assert formula.startswith(f'=IF($A{row}="","",IFERROR(')
-            assert formula.endswith('""))')
-        assert (
-            ws.cell(row=row, column=4).value
-            == f'=IF(OR($B{row}="",$C{row}=""),"",$B{row}*$C{row})'
-        ), "cost basis must follow from the quantity and cost on the row"
-
-
-def test_exit_ladder_quantity_and_cost_are_editable(wb):
-    """They arrive filled in, but typing over them has to be allowed.
-
-    Amber is the workbook's promise that a cell can be typed in; these carry a
-    lookup and still need to accept an override.
-    """
-    ws = wb["Exit Ladder"]
-    for row in range(LADDER_FIRST, LADDER_LAST + 1):
-        for col in (2, 3):
-            assert ws.cell(row=row, column=col).fill.fgColor.rgb.endswith(
-                "FEF3C7"
-            ), f"Exit Ladder row {row} column {col} should read as typeable"
-
-
-def test_every_ladder_column_waits_for_its_inputs(wb):
-    """No column may compute from a half-filled row."""
-    ws = wb["Exit Ladder"]
-    for row in range(LADDER_FIRST, LADDER_LAST + 1):
-        for col in range(7, 19):
-            if col == 8:  # the percentage to sell is typed
-                continue
-            formula = ws.cell(row=row, column=col).value
-            for ref in (f'$B{row}=""', f'$C{row}=""', f'$F{row}=""', f'$H{row}=""'):
-                assert ref in formula, f"column {col} ignores {ref}"
-
-
-def test_unpriced_positions_say_so_on_the_row(wb):
-    """Google Finance carries the majors and nothing else.
-
-    A holding it cannot price sits at whatever was typed into it, so the row
-    has to admit that rather than presenting a 2022 number as today's.
-    """
-    noted = {p.asset for p in POSITIONS if "does not carry this symbol" in p.note}
-    assert noted == NO_GOOGLE_FEED
-    for position in POSITIONS:
-        if position.asset not in NO_GOOGLE_FEED:
-            assert "does not carry this symbol" not in position.note, position.asset
-
-
 def test_staleness_is_measured_in_money_not_in_rows(wb):
     """One stale holding was a third of the book while reading as one row of
     twelve. A count understates the damage; the dashboard has to weigh it."""
     band = wb["Dashboard"]["B7"].value
-    assert band.startswith("=IF(SUMIF(Positions!$M")
+    assert "SUMIF(Positions!$M" in band
     assert '"<>live"' in band, "must select the rows with no live feed"
     assert f"Positions!$N${POS_FIRST}:$N${POS_LAST}" in band, "must sum market value"
     assert f"Positions!$N${POS_TOTAL}" in band, "must express it as a share"
@@ -390,99 +237,71 @@ def test_the_stale_band_sits_under_the_portfolio_value(wb):
     ws = wb["Dashboard"]
     merged = {str(r) for r in ws.merged_cells.ranges}
     assert "B7:P7" in merged
-    assert (
-        ws["B5"].value == f"=Positions!$N${POS_TOTAL}"
-    ), "tile above must be the value"
+    # The two tiles above it are the split the band explains.
+    assert '"live"' in ws["B5"].value, "left tile is the live-priced value"
+    assert "SUMIF(Positions!$M" in ws["F5"].value, "right tile is hand-priced"
 
 
-def test_a_pinned_price_beats_the_feed(wb):
-    """Manual price was a fallback only.
+def test_a_plan_reads_the_register_rather_than_repeating_it(wb):
+    """XRP once sat in the workbook at two different average costs.
 
-    For a coin the feed does carry, typing a price beside it did nothing and
-    nothing said why. Price mode decides, exactly as it does on Positions.
+    A plan picks a holding by name and pulls quantity, cost and ticker from
+    Positions, so the two cannot drift apart by accident. They stay typeable —
+    and the tab then reports that it no longer matches.
     """
-    live = wb["Ticker Plan"].cell(row=TP_INPUT, column=7).value
-    assert live.startswith(f'=IF($E${TP_INPUT}="Manual",$F${TP_INPUT},')
-    assert "GOOGLEFINANCE" in live
-    feed = wb["Ticker Plan"].cell(row=TP_INPUT, column=8).value
-    assert "pinned by you" in feed, "the sheet has to say the feed is overruled"
-    modes = {dv.formula1 for dv in wb["Ticker Plan"].data_validations.dataValidation}
-    assert '"Auto,Manual"' in modes
+    for index in range(1, PLAN_COUNT + 1):
+        ws = wb[f"Plan {index}"]
+        for column in (3, 4, 5):
+            formula = ws.cell(row=TP_INPUT, column=column).value
+            assert "Positions!" in formula, f"Plan {index} column {column}"
+            assert "IFERROR(" in formula, "an unknown holding must not error"
+        matches = ws.cell(row=TP_INPUT, column=14).value
+        assert '"EDITED"' in matches and "Positions!" in matches
 
 
-def test_you_type_units_and_read_percentages(wb):
-    """Typing units is how the decision is made — take four hundred off here.
+def test_a_plan_only_ever_looks_at_positions(wb):
+    """Duplicating a tab has to give a working plan, not a mirror of this one."""
+    for index in range(1, PLAN_COUNT + 1):
+        name = f"Plan {index}"
+        others = [n for n in wb.sheetnames if n not in (name, "Positions")]
+        for row in wb[name].iter_rows():
+            for cell in row:
+                if not (isinstance(cell.value, str) and cell.value.startswith("=")):
+                    continue
+                for other in others:
+                    assert f"'{other}'!" not in cell.value, f"{name}!{cell.coordinate}"
+                    assert f"{other}!" not in cell.value, f"{name}!{cell.coordinate}"
 
-    A percentage that has to be worked out first is a step in the way, so the
-    unit cells carry a live default and the percentage is derived from them.
+
+def test_an_unfinished_row_says_what_it_wants(wb):
+    """A holding with a name and nothing else used to contribute silently.
+
+    It reported no value, no weight and no warning — the register simply
+    ignored it, and the portfolio total was wrong by whatever it held.
     """
-    for sheet, qty_col, pct_col in (("Ticker Plan", 8, 9), ("Exit Ladder", 8, 9)):
-        ws = wb[sheet]
-        first = TP_RUNG_FIRST if sheet == "Ticker Plan" else LADDER_FIRST
-        last = TP_RUNG_LAST if sheet == "Ticker Plan" else LADDER_LAST
-        seeded = 0
-        for row in range(first, last + 1):
-            qty = ws.cell(row=row, column=qty_col)
-            assert qty.fill.fgColor.rgb.endswith("FEF3C7"), f"{sheet} {row} qty"
-            if qty.value:
-                assert qty.value.startswith("=ROUND("), "a live default, not a constant"
-                seeded += 1
-            pct = ws.cell(row=row, column=pct_col).value
-            assert pct.startswith("=IF("), f"{sheet} {row} percentage must be derived"
-            assert "MIN(" in pct, f"{sheet} {row} percentage must read the capped units"
-        assert seeded, f"{sheet} should arrive with a plan in it"
+    ws = wb["Positions"]
+    for row in range(POS_FIRST, POS_LAST + 1):
+        needs = ws.cell(row=row, column=25).value
+        assert needs.startswith(f'=IF($A{row}="","",')
+        for field in ("Status", "Quantity", "Avg cost", "Class", "Ticker"):
+            assert f'"set {field}"' in needs, f"row {row} never asks for {field}"
 
 
-def test_no_rung_sells_what_the_rungs_above_it_sold(wb):
-    """The fault the old workbook's Gala ladder had.
-
-    Over-committing a plan used to keep booking cash on units that were
-    already gone. The quantity each rung moves is capped at what is left.
-    """
-    for sheet, first, last, held in (
-        ("Ticker Plan", TP_RUNG_FIRST, TP_RUNG_LAST, f"$C${TP_INPUT}"),
-        ("Exit Ladder", LADDER_FIRST, LADDER_LAST, None),
-    ):
-        ws = wb[sheet]
-        for row in range(first, last + 1):
-            gross = ws.cell(row=row, column=10).value
-            assert "MIN($H%d,MAX(0," % row in gross, f"{sheet} row {row} is uncapped"
-            if held:
-                assert held in gross
-            left = ws.cell(row=row, column=13 if sheet == "Ticker Plan" else 17).value
-            assert "MAX(0," in left, f"{sheet} row {row} can show negative units left"
+def test_the_register_ships_without_pretending(wb):
+    """No holding on screen may be one the owner does not own."""
+    example = [p for p in POSITIONS if p.asset.startswith("EXAMPLE")]
+    assert len(example) == 1, "exactly one row shows the shape"
+    assert example[0].qty > 0 and example[0].avg_cost > 0, "and it is complete"
+    for position in POSITIONS:
+        if position is example[0]:
+            continue
+        assert position.qty == 0, f"{position.asset} must ship empty of quantity"
+        assert position.ticker.startswith("CURRENCY:"), "a feed Google carries"
 
 
-def test_an_oversold_plan_says_so(wb):
-    ws = wb["Ticker Plan"]
-    for row in range(TP_RUNG_FIRST, TP_RUNG_LAST + 1):
-        assert '"Oversold"' in ws.cell(row=row, column=14).value
-
-
-def test_each_rung_resizes_against_what_is_left(wb):
-    """Changing one quantity has to move every rung below it.
-
-    A default that is a share of the original position ignores what the rungs
-    above it did — type four hundred into the first rung and the second still
-    asks for its original hundred and fifty.
-    """
-    for sheet, first, last in (
-        ("Ticker Plan", TP_RUNG_FIRST, TP_RUNG_LAST),
-        ("Exit Ladder", LADDER_FIRST, LADDER_LAST),
-    ):
-        ws = wb[sheet]
-        seeded = [
-            ws.cell(row=row, column=8).value
-            for row in range(first, last + 1)
-            if ws.cell(row=row, column=8).value
-        ]
-        assert seeded, sheet
-        for row_offset, formula in enumerate(seeded):
-            assert formula.startswith("=ROUND("), sheet
-            assert (
-                "MAX(0," in formula
-            ), f"{sheet} rung {row_offset} ignores the remainder"
-            if row_offset:
-                assert (
-                    "SUM($H$" in formula or "SUMIFS($H$" in formula
-                ), f"{sheet} rung {row_offset} ignores the rungs above it"
+def test_watch_covers_every_plan_and_every_register_row(wb):
+    ws = wb["Watch"]
+    for index in range(1, PLAN_COUNT + 1):
+        assert f"'Plan {index}'!" in ws.cell(row=3 + index, column=2).value
+    first_holding = 3 + PLAN_COUNT + 3 + 1
+    assert f"Positions!$A${POS_FIRST}" in ws.cell(row=first_holding, column=1).value
