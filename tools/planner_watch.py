@@ -126,6 +126,7 @@ class Report:
     skipped: list[str] = field(default_factory=list)
     unfilled: list[str] = field(default_factory=list)
     no_plans: bool = False
+    no_rows: bool = False
     prices: dict[str, float] = field(default_factory=dict)
 
     def text(self) -> str:
@@ -153,6 +154,20 @@ class Report:
                 "\n\nNo plan rows to watch. Rung alerts need a plan with a "
                 "target price; until one exists that rule is silent whatever "
                 "prices do."
+            )
+        # Nothing parsed at all. Every other line here is derived from rows, so
+        # they are all empty too and the report would otherwise be three words
+        # of reassurance about a tab it never managed to read.
+        if self.no_rows:
+            # Kept to ASCII: this prints to a Windows console, where the em
+            # dashes used elsewhere in this file come out as replacement
+            # characters.
+            body += (
+                "\n\nNo plan or holding rows found on this tab. Neither header "
+                "row ('Plan, Holding' or 'Holding, Ticker') is present, so "
+                "nothing was read and nothing could be checked. The usual "
+                "cause is --gid pointing at a plan tab rather than the Watch "
+                "tab."
             )
         return body
 
@@ -304,9 +319,10 @@ def check(
 
     report.skipped = sorted(skipped)
     report.unfilled = sorted(unfilled)
-    # Only worth saying when there is something to plan for; an entirely blank
-    # tab already says enough through the unfilled list.
+    # Only worth saying when there is something to plan for; a tab that parsed
+    # nothing is covered by no_rows below, which is the more useful complaint.
     report.no_plans = not plans_defined and bool(report.prices or unfilled)
+    report.no_rows = not plans and not holdings
     return report
 
 
