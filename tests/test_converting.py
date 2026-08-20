@@ -4025,6 +4025,36 @@ def test_a_higher_timeframe_series_composes_before_it_is_used():
     assert "bt.indicators.SMA(self._line_spread_2, period=5)" in result.code
 
 
+#: Reads a composed expression off the weekly feed as this bar's number.
+COMPOSED_SECURITY = (
+    '//@version=6\nstrategy("S")\n'
+    'wkRange = request.security(syminfo.tickerid, "W", high - low)\n'
+    "if wkRange > 0 and strategy.position_size == 0\n"
+    '    strategy.entry("L", strategy.long)\n'
+    "if strategy.position_size > 0 and close < open\n"
+    "    strategy.close()\n"
+)
+
+
+def test_a_composed_security_expression_reads_through_a_hoisted_line():
+    """Regression. `request.security(..., high - low)` lowered to
+    `(self.datas[1].high - self.datas[1].low)[0]` inline in next() -- but
+    line arithmetic inside next() runs on this bar's floats, so the read
+    subscripted a float and the first bar raised TypeError. The composition
+    has to be built once in __init__ and read through its handle."""
+    result = convert(COMPOSED_SECURITY)
+    assert result.ok, result.unsupported
+    assert "(self.datas[1].high - self.datas[1].low)[0]" not in result.code
+    assert "self._line_1 = (self.datas[1].high - self.datas[1].low)" in result.code
+
+
+def test_a_composed_security_expression_survives_a_run():
+    """The weekly range is positive on every bar it exists for, so the long
+    keeps re-opening after every down-day close: round trips, not a crash."""
+    value, closed = _run_htf(COMPOSED_SECURITY)
+    assert closed > 0
+
+
 def test_the_line_path_still_records_the_feed_to_supply():
     result = convert(HTF_INDICATOR_STRATEGY)
     assert "resample_spec" in result.code

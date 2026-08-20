@@ -1386,6 +1386,19 @@ class _Generator:
             self.init_lines.append(f"self.{attr} = {construction}")
         return f"self.{attr}"
 
+    def _line_read(self, construction, index=0):
+        """Read a lowered line expression at an index, inside ``next()``.
+
+        A bare handle -- a feed line, a hoisted indicator -- indexes
+        directly. A composed expression only *builds* a line during
+        ``__init__``; the same arithmetic inside ``next()`` runs on this
+        bar's floats, and subscripting the float it returns raises. So
+        anything composed is hoisted first and read through its attribute.
+        """
+        if "(" in construction:
+            construction = self._hoist("line", construction)
+        return f"{construction}[{index}]"
+
     def _reject(self, message):
         if message not in self.unsupported:
             self.unsupported.append(message)
@@ -2134,7 +2147,7 @@ class _Generator:
             lowered = self._line_expr(node)
             if lowered is not None:
                 self._max_lookback = max(self._max_lookback, ago)
-                return f"{lowered}[{-ago}]"
+                return self._line_read(lowered, -ago)
             return None
         return None
 
@@ -2228,7 +2241,7 @@ class _Generator:
                 lowered = self._line_expr(node.base)
                 if lowered is not None:
                     self._max_lookback = max(self._max_lookback, offset)
-                    return f"{lowered}[{-offset}]"
+                    return self._line_read(lowered, -offset)
             if not isinstance(node.base, Name) or not isinstance(offset, int):
                 self._reject("history access is only supported as name[constant]")
                 return "None"
@@ -2832,7 +2845,7 @@ class _Generator:
         try:
             line = self._line_expr(call.args[2])
             if line is not None:
-                return f"{line}[0]"
+                return self._line_read(line)
             return self._value_expr(call.args[2])
         finally:
             self._feed = previous
