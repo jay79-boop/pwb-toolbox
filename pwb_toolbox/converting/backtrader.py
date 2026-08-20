@@ -347,7 +347,7 @@ _TIME_HELPER = (
     '                return unit if count == 1 else "%d%s" % (count, unit)',
     '        return ""',
     "",
-    "    def _pine_time(self, seconds=None, ago=0, session=None):",
+    "    def _pine_time(self, seconds=None, ago=0, session=None, tz=None):",
     '        """Opening time in epoch milliseconds, as Pine\'s time() reports it.',
     "",
     "        With no resolution this is the bar's own stamp. With one, it is that",
@@ -367,7 +367,7 @@ _TIME_HELPER = (
     "            # difference downstream zero, which is what na produces.",
     "            ago = 0",
     "        when = self.data.datetime.datetime(-ago)",
-    "        if session is not None and not self._pine_in_session(when, session):",
+    "        if session is not None and not self._pine_in_session(when, session, tz):",
     "            return float('nan')",
     "        stamp = calendar.timegm(when.utctimetuple())",
     "        if seconds:",
@@ -383,15 +383,18 @@ _TIME_HELPER = (
 #: by ``session is not None``, so it only reaches this method when the
 #: generator also emitted it.
 _SESSION_HELPER = (
-    "    def _pine_in_session(self, when, spec):",
+    "    def _pine_in_session(self, when, spec, tz=None):",
     '        """Whether the bar\'s clock falls inside a Pine session string.',
     "",
     "        The check runs on the feed's own timestamps: Pine consults the",
     "        exchange calendar and timezone, which the feed does not carry, and",
     "        the feed's clock is the one clock a backtest has -- so data stamped",
     "        in another timezone than the exchange filters at shifted hours. A",
-    '        day suffix (":23456", Sunday=1) names the day the session ends on,',
-    "        which for an overnight range is the day after the bar's own.",
+    "        timezone argument reads that clock as UTC and converts it into",
+    "        the named zone first, DST included, so data already stamped in",
+    "        exchange time should pass no timezone at all. A day suffix",
+    '        (":23456", Sunday=1) names the day the session ends on, which',
+    "        for an overnight range is the day after the bar's own.",
     '        """',
     "        parsed = self._pine_sessions.get(spec)",
     "        if parsed is None:",
@@ -416,6 +419,12 @@ _SESSION_HELPER = (
     "            parsed = (ranges, days)",
     "            self._pine_sessions[spec] = parsed",
     "        ranges, days = parsed",
+    "        if tz is not None:",
+    "            when = (",
+    "                when.replace(tzinfo=datetime.timezone.utc)",
+    "                .astimezone(zoneinfo.ZoneInfo(tz))",
+    "                .replace(tzinfo=None)",
+    "            )",
     "        minute = when.hour * 60 + when.minute",
     "        # Pine numbers days from Sunday=1; Python from Monday=0.",
     "        day = (when.weekday() + 1) % 7 + 1",
@@ -780,7 +789,7 @@ _ENTRY_HELPER = (
 )
 
 #: Emitted into a strategy whose ``strategy.entry`` carries a limit or stop
-#: price, or that calls ``strategy.cancel``.
+#: price, or that calls ``strategy.cancel`` or ``strategy.cancel_all``.
 #:
 #: A priced entry in Pine is a standing order: it works until it fills, until
 #: the same id is re-issued at new levels -- which *moves* it -- or until
@@ -867,6 +876,23 @@ _PENDING_HELPER = (
     "        if state and state[1][0].alive():",
     "            del self._pine_working[tag]",
     "            for order in state[1]:",
+    "                self.cancel(order)",
+    "",
+    "    def _pine_cancel_all(self):",
+    '        """Withdraw every unfilled order, as strategy.cancel_all does.',
+    "",
+    "        Pending entries not yet submitted, entry brackets resting on the",
+    "        book, and the standing exits protecting an open position all go.",
+    "        Pine cancels price-triggered exits too, so an open position is",
+    "        left unprotected until something closes it -- which is why the",
+    "        idiom pairs this call with strategy.close_all().",
+    '        """',
+    "        self._pine_pending.clear()",
+    "        for tag in list(self._pine_working):",
+    "            self._pine_cancel(tag)",
+    "        for tag, (_, orders) in list(self._pine_exits.items()):",
+    "            del self._pine_exits[tag]",
+    "            for order in orders:",
     "                self.cancel(order)",
     "",
 )
@@ -2012,6 +2038,122 @@ class _Generator:
         self._promoted[name] = handle
         return handle
 
+    def _shifted_read(self, name, ago):
+        """Read a computed scalar ``ago`` bars back by re-lowering its definition.
+
+        The fallback for history that :meth:`_promote` cannot build a line
+        for. ``inSess = not na(time(timeframe.period, sess))`` has no line
+        behind it -- ``time()`` is a per-bar read of the feed's clock -- but
+        the definition holds on every bar, so ``inSess[1]`` is the same
+        expression with every bar-relative read shifted one bar further back.
+        Only the pure per-bar subset qualifies (:meth:`_value_at` says what
+        that is); anything stateful has moved since and is refused.
+
+        Rejections filed by a failed attempt are unwound: the caller's own
+        message is the one that says what actually blocked the read.
+        """
+        node = self._computed.get(name)
+        if node is None or name in self._promoting:
+            return None
+        mark = len(self.unsupported)
+        self._promoting.add(name)
+        try:
+            lowered = self._value_at(node, ago)
+        finally:
+            self._promoting.discard(name)
+        if lowered is None or len(self.unsupported) != mark:
+            del self.unsupported[mark:]
+            return None
+        return lowered
+
+    def _value_at(self, node, ago):
+        """Lower an expression as it read ``ago`` bars back, or None.
+
+        Covers the reads whose past is still answerable at the current bar:
+        prices and lines, constants and params, ``time()``, ``na``/``nz``
+        and the pure math builtins, and other computed scalars through
+        :meth:`_name_at`. A ``var``, a trade counter, or a call with its
+        own memory holds only its current value, so those answer None.
+        """
+        if isinstance(node, (Num, Str, Bool, Na)):
+            return self._value_expr(node)
+        if isinstance(node, Name):
+            return self._name_at(node.id, ago)
+        if isinstance(node, Index):
+            offset = _literal(node.offset)
+            if not isinstance(offset, int) or offset < 0:
+                return None
+            if isinstance(node.base, Call) and node.base.func == "time":
+                return self._value_time(node.base, ago=ago + offset)
+            if isinstance(node.base, Name):
+                return self._name_at(node.base.id, ago + offset)
+            return None
+        if isinstance(node, Unary):
+            operand = self._value_at(node.operand, ago)
+            if operand is None:
+                return None
+            return f"(not {operand})" if node.op == "not" else f"({node.op}{operand})"
+        if isinstance(node, Binary):
+            op = _BINARY_OPS.get(node.op)
+            left = self._value_at(node.left, ago)
+            right = self._value_at(node.right, ago)
+            if op is None or left is None or right is None:
+                return None
+            return f"({left} {op} {right})"
+        if isinstance(node, Ternary):
+            parts = [
+                self._value_at(part, ago) for part in (node.cond, node.then, node.other)
+            ]
+            if any(part is None for part in parts):
+                return None
+            cond, then, other = parts
+            return f"({then} if {cond} else {other})"
+        if isinstance(node, Call):
+            if node.func == "time":
+                return self._value_time(node, ago=ago)
+            if node.func == "na" and len(node.args) == 1:
+                inner = self._value_at(node.args[0], ago)
+                return None if inner is None else f"({inner} != {inner})"
+            if node.func == "nz" and node.args:
+                inner = self._value_at(node.args[0], ago)
+                fallback = (
+                    self._value_at(node.args[1], ago) if len(node.args) > 1 else "0"
+                )
+                if inner is None or fallback is None:
+                    return None
+                return f"({inner} if {inner} == {inner} else {fallback})"
+            if node.func in _BUILTIN_MATH or node.func in _MODULE_MATH:
+                parts = [self._value_at(arg, ago) for arg in node.args]
+                if not parts or any(part is None for part in parts):
+                    return None
+                if node.func in _MODULE_MATH:
+                    self._uses_math = True
+                    return f"{_MODULE_MATH[node.func]}({', '.join(parts)})"
+                return f"{_BUILTIN_MATH[node.func]}({', '.join(parts)})"
+            # An indicator call is a line, and a line reads at any offset.
+            lowered = self._line_expr(node)
+            if lowered is not None:
+                self._max_lookback = max(self._max_lookback, ago)
+                return f"{lowered}[{-ago}]"
+            return None
+        return None
+
+    def _name_at(self, name, ago):
+        """One name read ``ago`` bars back, where that is derivable."""
+        if name in PRICE_SERIES or name in DERIVED_SERIES or name in self.series:
+            return self._value_name(name, -ago)
+        if name in self.param_names:
+            # A param holds one value for the whole run, so its history is
+            # its present.
+            return f"self.p.{_safe(name)}"
+        if name in self._computed and name not in self._promoting:
+            self._promoting.add(name)
+            try:
+                return self._value_at(self._computed[name], ago)
+            finally:
+                self._promoting.discard(name)
+        return None
+
     def _hoist_indicator(self, call):
         """Build a Backtrader indicator in ``__init__`` and return its handle."""
         spec = INDICATORS.get(call.func)
@@ -2149,6 +2291,9 @@ class _Generator:
                 if handle is not None:
                     self._max_lookback = max(self._max_lookback, -index)
                     return f"{handle}[{index}]"
+                shifted = self._shifted_read(name, -index)
+                if shifted is not None:
+                    return shifted
                 self._reject(
                     f"{name}: history of a computed value needs a Backtrader line"
                 )
@@ -2545,15 +2690,22 @@ class _Generator:
 
         A session argument becomes a per-bar check against the feed's own
         clock -- the generated ``_pine_in_session`` states what that assumes.
+        A timezone argument shifts that clock out of UTC into the named zone
+        first, except ``syminfo.timezone``, which is dropped: the exchange's
+        own zone is exactly what the bare check already assumes of the feed.
         """
-        if len(call.args) > 2:
-            self._reject("time() takes at most a resolution and a session")
+        if len(call.args) > 3:
+            self._reject("time() takes a resolution, a session and a timezone")
             return "None"
         self._uses_time = True
         session = ""
-        if len(call.args) == 2:
+        if len(call.args) >= 2:
             self._uses_session = True
             session = f", session={self._value_expr(call.args[1])}"
+        if len(call.args) == 3:
+            zone = call.args[2]
+            if not (isinstance(zone, Name) and zone.id == "syminfo.timezone"):
+                session += f", tz={self._value_expr(zone)}"
         if not call.args:
             return f"self._pine_time(None, {ago})" if ago else "self._pine_time()"
         resolution = call.args[0]
@@ -2975,6 +3127,11 @@ class _Generator:
             self.next_lines.append(f"{pad}self._pine_cancel({str(literal)!r})")
             return
 
+        if expr.func == "strategy.cancel_all":
+            self._uses_pending = True
+            self.next_lines.append(f"{pad}self._pine_cancel_all()")
+            return
+
         self._reject(f"call to {expr.func}() is not supported")
 
     def _emit_entry(self, call, pad):
@@ -3092,8 +3249,14 @@ class _Generator:
         out = ["import backtrader as bt"]
         if self._uses_time:
             out.append("import calendar")
+        if self._uses_session:
+            # _pine_in_session's timezone branch: datetime names UTC and
+            # zoneinfo names the zone the session is checked in.
+            out.append("import datetime")
         if self._uses_math:
             out.append("import math")
+        if self._uses_session:
+            out.append("import zoneinfo")
         out += ["", ""]
         if self._uses_pivot:
             out.extend(_PIVOT_INDICATOR)
