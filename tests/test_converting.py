@@ -3382,11 +3382,11 @@ if h < s
 # --- the clock: timeframe.period and time() ---------------------------------
 
 
-def _intraday_frame(bars=96, minutes=60, seed=11):
+def _intraday_frame(bars=96, minutes=60, seed=11, start=None):
     """Hourly bars from midnight, so a 4-hour bucket turns over inside the run."""
     rng = random.Random(seed)
     price = 100.0
-    start = datetime.datetime(2022, 1, 1, 0, 0)
+    start = datetime.datetime(2022, 1, 1, 0, 0) if start is None else start
     rows = []
     for i in range(bars):
         price *= 1 + rng.gauss(0, 0.01)
@@ -3532,6 +3532,98 @@ def test_a_session_composes_with_a_resolution_floor():
     strategy = _instance(source, frame=_intraday_frame(bars=8, minutes=60))
     # 00:00-02:00 are admitted and all floor to the day's first 4-hour bucket.
     assert strategy.stamp == calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_a_time_timezone_checks_the_session_on_that_zones_clock():
+    """January 2022 is EST, five hours behind UTC: a 0500-0700 New York
+    session admits the bars stamped 10:00 and 11:00 UTC. The captured stamp
+    is the proof -- an unconverted clock would have admitted 05:00 instead."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        "var int stamp = 0\n"
+        'v = time(timeframe.period, "0500-0700", "America/New_York")\n'
+        "if not na(v)\n"
+        "    seen := seen + 1\n"
+        "    if stamp == 0\n"
+        "        stamp := v\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 4  # 10:00 and 11:00 UTC on each of 2 days
+    assert strategy.stamp == calendar.timegm((2022, 1, 1, 10, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_a_timezone_session_moves_with_dst():
+    """The same New York window sits four hours behind UTC in July, not five:
+    the first admitted bar is 09:00 UTC where the winter test saw 10:00."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int stamp = 0\n"
+        'v = time(timeframe.period, "0500-0700", "America/New_York")\n'
+        "if stamp == 0 and not na(v)\n    stamp := v\n"
+    )
+    july = _intraday_frame(bars=24, minutes=60, start=datetime.datetime(2022, 7, 1))
+    strategy = _instance(source, frame=july)
+    assert strategy.stamp == calendar.timegm((2022, 7, 1, 9, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_syminfo_timezone_is_dropped_as_the_feeds_own_clock():
+    """`time(tf, sess, syminfo.timezone)` names the exchange's zone, which is
+    exactly what the bare session check already assumes the feed's clock to
+    be, so it filters like the two-argument form."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if not na(time(timeframe.period, "0930-1600", syminfo.timezone))\n'
+        "    seen := seen + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 12  # the same 6 hourly bars on each of 2 days
+
+
+def test_history_of_a_session_check_reads_the_previous_bars_clock():
+    """`inSess and not inSess[1]` is Pine's "first bar of the session". No
+    line exists to read `inSess[1]` off -- time() is a per-bar read of the
+    feed's clock -- but the definition holds on every bar, so the previous
+    value is the same expression read one bar back."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'inSess = not na(time(timeframe.period, "0930-1600"))\n'
+        "var int opens = 0\n"
+        "if inSess and not inSess[1]\n    opens := opens + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.opens == 2  # the session opens once on each of 2 days
+
+
+def test_a_shifted_read_moves_every_read_in_the_definition_together():
+    """A definition mixing a price read with the session check still shifts
+    whole: `hot[1]` is yesterday's close against yesterday's clock, so the
+    count is of in-session predecessors, and the price read costs the first
+    bar to the lookback guard."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'hot = close >= low and not na(time(timeframe.period, "0000-1200"))\n'
+        "var int count = 0\n"
+        "if hot[1]\n    count := count + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.count == 24  # 12 in-session predecessors on each of 2 days
+
+
+def test_history_of_a_value_built_on_state_is_still_refused():
+    """A var holds only its current value, so a definition reading one cannot
+    be re-read a bar back; refusing beats answering with today's state."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float anchor = 0.0\n"
+        "anchor := close\n"
+        "gap = close - anchor\n"
+        "if gap[1] > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("needs a Backtrader line" in item for item in result.unsupported)
 
 
 def test_input_session_becomes_a_tunable_string_param():
@@ -4163,6 +4255,50 @@ def test_cancel_withdraws_a_pending_entry_before_it_can_fill():
     assert strategy.position.size == 1
 
 
+def test_cancel_all_withdraws_a_resting_entry_without_naming_it():
+    source = LIMIT_ENTRY + "if bar_index == 3\n    strategy.cancel_all()\n"
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms
+        (100, 100.5, 99.8, 100),  # resting, untouched
+        (100, 100.5, 99.6, 100),  # bar_index 3: everything cancelled
+        (100, 100.5, 98.0, 100),  # the dip that would have filled it
+        (100, 100.5, 99.5, 100),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 0
+    assert _fill_run(LIMIT_ENTRY, rows).position.size == 1  # the control
+
+
+def test_cancel_all_takes_the_standing_exits_off_an_open_position():
+    """strategy.cancel leaves a filled entry's exits protecting the position;
+    strategy.cancel_all withdraws those too, as Pine's does. The tape dips
+    through where the stop rested: a surviving stop would fill and flatten,
+    so the position still being open is the proof it was cancelled."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if bar_index == 1\n"
+        '    strategy.entry("L", strategy.long)\n'
+        "if strategy.position_size > 0 and bar_index < 4\n"
+        '    strategy.exit("Lx", stop=98.0)\n'
+        "if bar_index == 4\n"
+        "    strategy.cancel_all()\n"
+    )
+    rows = [
+        (100, 100.5, 99.5, 100),  # bar 1: market entry placed
+        (100, 100.6, 99.6, 100.2),  # fills at the open; stop 98 goes out
+        (100.2, 100.6, 99.0, 100),  # above the stop, nothing fills
+        (100, 100.4, 99.2, 100.1),  # bar 4: cancel_all takes the stop away
+        (100, 100.2, 97.0, 99.0),  # through 98, which must fill nothing
+        (99, 99.5, 98.5, 99.2),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 1
+
+    control = source.replace("if bar_index == 4\n    strategy.cancel_all()\n", "")
+    strategy = _fill_run(control, rows)
+    assert strategy.position.size == 0
+
+
 def test_exit_reissued_after_the_fill_moves_the_bracket_legs():
     """A `strategy.exit` that keeps running once the position is open has to
     move the bracket's legs, not stack a second pair beside them: two pairs
@@ -4384,6 +4520,202 @@ def test_ict_ob_fvg_session_filter_gates_entries():
     # Daily bars are stamped midnight, which 0930-1600 never contains.
     assert strategy.position.size == 0
     assert strategy.broker.getvalue() == 10_000.0
+
+
+# --- the ICT AM continuation strategy, end to end ------------------------------
+#
+# The script that drove time()'s timezone argument, history of a computed
+# session check and strategy.cancel_all into the converter, kept whole: an
+# opening-drive FVG detector that only trades the New York morning, rests a
+# limit at the gap's midpoint bracketed at an R multiple, and goes flat into
+# the close.
+
+ICT_AM_OB = """//@version=6
+strategy("ICT AM OB Continuation", shorttitle="AM_OB", overlay=true,
+     initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1,
+     margin_long=0, margin_short=0, pyramiding=0,
+     commission_type=strategy.commission.cash_per_order, commission_value=1.0, slippage=1)
+
+// ===== Session (ET) =====
+grpS = "Session (ET)"
+entrySess = input.session("0930-1130", "AM entry window", group=grpS)
+flatSess  = input.session("1555-1600", "Force-flat window", group=grpS)
+tz = "America/New_York"
+
+// ===== Direction / bias =====
+grpD = "Direction / bias"
+useLong  = input.bool(true, "Longs (above the open)",     group=grpD)
+useShort = input.bool(true, "Shorts (below the open)",    group=grpD)
+useBias  = input.bool(true, "Require opening-drive bias", group=grpD)
+
+// ===== Setup quality =====
+grpF = "Setup quality"
+useDisp     = input.bool(true, "Require strong displacement", group=grpF)
+dispMult    = input.float(1.5, "Displacement x avg range(10)", minval=0.1, step=0.1, group=grpF)
+minGapTicks = input.float(8,   "Min FVG size (ticks)", minval=0, group=grpF)
+zoneLife    = input.int(12,    "Entry valid for N bars", minval=1, group=grpF)
+
+// ===== Risk / Reward =====
+grpR = "Risk / Reward"
+rr           = input.float(2.0, "Target R multiple", minval=0.5, step=0.5, group=grpR)
+stopBufTicks = input.float(2,   "Stop buffer (ticks)", minval=0, group=grpR)
+
+grpV = "Visuals"
+showZones = input.bool(true, "Draw FVG zones", group=grpV)
+
+// ===== Helpers =====
+inEntry = not na(time(timeframe.period, entrySess, tz))
+inFlat  = not na(time(timeframe.period, flatSess, tz))
+buf     = stopBufTicks * syminfo.mintick
+minGap  = minGapTicks * syminfo.mintick
+
+var float amOpen = na
+if inEntry and not inEntry[1]
+    amOpen := open
+plot(amOpen, "AM open", color=color.blue, style=plot.style_stepline)
+
+longBias  = not useBias or (not na(amOpen) and close > amOpen)
+shortBias = not useBias or (not na(amOpen) and close < amOpen)
+
+avgRange   = ta.sma(high - low, 10)
+dispRange  = high[1] - low[1]
+strongDisp = not useDisp or dispRange >= dispMult * avgRange[2]
+
+bullFVG = (low > high[2]) and (low - high[2] >= minGap) and close[1] > open[1] and strongDisp
+bearFVG = (high < low[2]) and (low[2] - high >= minGap) and close[1] < open[1] and strongDisp
+
+var int longArm  = na
+var int shortArm = na
+
+// ---- LONG: buy the FVG 50% in an up-drive ----
+if bullFVG and useLong and longBias and inEntry and strategy.position_size == 0
+    gTop = low
+    gBot = high[2]
+    ce   = (gTop + gBot) / 2
+    stopP = gBot - buf
+    risk  = ce - stopP
+    if risk > 0
+        strategy.entry("L", strategy.long, limit=ce)
+        strategy.exit("Lx", "L", stop=stopP, limit=ce + rr * risk)
+        longArm := bar_index
+        if showZones
+            box.new(bar_index, gTop, bar_index + zoneLife, gBot, border_color=color.new(color.teal,40), bgcolor=color.new(color.teal,88))
+
+// ---- SHORT: sell the FVG 50% in a down-drive ----
+if bearFVG and useShort and shortBias and inEntry and strategy.position_size == 0
+    gBot = high
+    gTop = low[2]
+    ce   = (gTop + gBot) / 2
+    stopP = gTop + buf
+    risk  = stopP - ce
+    if risk > 0
+        strategy.entry("S", strategy.short, limit=ce)
+        strategy.exit("Sx", "S", stop=stopP, limit=ce - rr * risk)
+        shortArm := bar_index
+        if showZones
+            box.new(bar_index, gTop, bar_index + zoneLife, gBot, border_color=color.new(color.maroon,40), bgcolor=color.new(color.maroon,88))
+
+// ---- cancel stale pending entries ----
+if not na(longArm) and strategy.position_size == 0 and (bar_index - longArm >= zoneLife or not inEntry)
+    strategy.cancel("L")
+    longArm := na
+if not na(shortArm) and strategy.position_size == 0 and (bar_index - shortArm >= zoneLife or not inEntry)
+    strategy.cancel("S")
+    shortArm := na
+
+// ---- force flat at end of day ----
+if inFlat
+    strategy.cancel_all()
+    strategy.close_all()
+"""
+
+
+def _minute_frame(rows, start, minutes=15):
+    """Intraday bars spelled out as (open, high, low, close), stamped from
+    ``start`` (UTC) every ``minutes``, for session-gated fill scenarios."""
+    out = []
+    for i, (o, h, l, c) in enumerate(rows):
+        out.append(
+            {
+                "datetime": start + datetime.timedelta(minutes=minutes * i),
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": 1000,
+            }
+        )
+    return pd.DataFrame(out).set_index("datetime")
+
+
+def _minute_fill_run(source, rows, start, minutes=15, **params):
+    """_fill_run over intraday bars, for scripts whose sessions gate entries."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_minute_frame(rows, start, minutes),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=minutes,
+        )
+    )
+    cerebro.addstrategy(namespace[result.class_name], **params)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0]
+
+
+def test_ict_am_ob_converts_clean():
+    result = convert(ICT_AM_OB)
+    assert result.ok, result.unsupported
+    assert ("entrySess", "0930-1130") in result.params
+    assert ("flatSess", "1555-1600") in result.params
+    assert ("mintick", 0.01) in result.params
+    assert any("box.new" in item for item in result.ignored)
+
+
+#: A New York morning of 15-minute bars, stamped in UTC on 2022-03-07 -- EST,
+#: so 09:30 ET is 14:30 UTC. Ten quiet premarket bars from 12:00 warm the
+#: displacement SMA, the opening bar captures amOpen at 100, a displacement
+#: bar drives up, and the gap bar leaves a bullish FVG whose midpoint 101.25
+#: the entry rests at -- stop 100.48 behind the order block, 2R target 102.79.
+_AM_START = datetime.datetime(2022, 3, 7, 12, 0)
+_AM_MORNING = [(100, 100.5, 99.5, 100)] * 10 + [  # premarket, 12:00-14:15 UTC
+    (100, 100.5, 99.5, 100.2),  # 14:30, 09:30 ET: amOpen captured at 100
+    (100.2, 103, 100, 102.9),  # 14:45: the opening drive (close > open)
+    (103, 104, 102, 103.5),  # 15:00: gap bar, low 102 > 100.5: entry rests
+    (103.5, 104, 102.5, 103),  # 15:15: no retrace yet
+    (102.6, 102.7, 100.9, 101.5),  # 15:30: trades through 101.25, entry fills
+]
+
+
+def test_ict_am_ob_trades_a_bullish_am_gap_to_its_target():
+    rows = _AM_MORNING + [
+        (101.5, 103.5, 101.4, 103.2),  # trades through the 102.79 target
+        (103, 103.1, 102.4, 102.8),
+    ]
+    strategy = _minute_fill_run(ICT_AM_OB, rows, start=_AM_START)
+    assert strategy.position.size == 0
+    # entry 101.25, stop 100.48, risk 0.77, 2R target 102.79: profit 1.54.
+    assert strategy.broker.getvalue() == pytest.approx(10_001.54)
+
+
+def test_ict_am_ob_goes_flat_into_its_window_with_nothing_left_resting():
+    """The flat window cancels the bracket and closes at market. The bar after
+    it dips through where the stop rested; a surviving stop would sell a
+    second time and flip the book short, so flat is the proof."""
+    rows = _AM_MORNING + [
+        (101.5, 101.8, 101.0, 101.3),  # 15:45: drifting inside the bracket
+        (101.3, 101.6, 100.9, 101.2),  # 16:00, 11:00 ET: force-flat fires
+        (101.0, 101.4, 100.0, 100.8),  # closed at the open; the dip fills nothing
+        (100.8, 101.0, 100.4, 100.6),
+    ]
+    strategy = _minute_fill_run(ICT_AM_OB, rows, start=_AM_START, flatSess="1100-1130")
+    assert strategy.position.size == 0
+    # entry 101.25, market close at the 101.0 open: a 0.25 loss, once.
+    assert strategy.broker.getvalue() == pytest.approx(9_999.75)
 
 
 def test_history_reads_on_the_first_bars_cannot_see_the_future():

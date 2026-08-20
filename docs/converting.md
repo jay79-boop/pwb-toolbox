@@ -103,7 +103,10 @@ duplicate is pure waste.
 | `strategy.entry(..., limit=, stop=)` | a resting bracket parent, submitted at bar close — see below |
 | `strategy.exit(..., from_entry, ...)` on a pending entry | the bracket's exit legs, live when the entry fills |
 | `strategy.cancel(id)` | withdraws the unfilled entry with that id |
+| `strategy.cancel_all()` | withdraws every unfilled order, standing exits included |
 | `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
+| `time(res, session, tz)` | the same, with the feed's clock read as UTC and converted into `tz` |
+| history of a computed value, e.g. `inSess[1]` | a promoted line, or the definition re-read a bar back — see below |
 | `syminfo.mintick` | a `mintick` param, default 0.01 — see below |
 | `strategy.closedtrades`, `opentrades`, `wintrades`, `losstrades`, `eventrades` | counters kept from `notify_trade` |
 | any of those with `[1]` | the previous bar's value |
@@ -243,6 +246,12 @@ the fill moves those legs rather than stacking a second pair beside them.
 Only a literal id works for `strategy.cancel`, because the id is what names
 the pending order; a computed one is reported.
 
+`strategy.cancel_all()` needs no id: it withdraws every unfilled order at
+once — pending entries, resting brackets, *and* the standing exits protecting
+an open position, exactly as Pine's does. That last part means a position can
+be left unprotected, which is why the force-flat idiom pairs it with
+`strategy.close_all()`.
+
 ## Sessions and tick size
 
 `time(res, session)` answers na on bars outside the session, which is how
@@ -254,6 +263,15 @@ at shifted hours. Ranges (`"0930-1600"`, comma-separated, overnight allowed)
 and a day suffix (`":23456"`, Sunday=1, naming the day the session ends on)
 are understood; `input.session` becomes an ordinary string param, so the
 window stays tunable from `addstrategy`.
+
+A third argument names the timezone the session is meant in —
+`time(timeframe.period, "0930-1130", "America/New_York")` is how a script
+pins its window to New York regardless of the chart. The generated check then
+reads the feed's clock as UTC and converts it into that zone, DST included,
+so data already stamped in exchange time should not pass a timezone at all.
+`syminfo.timezone` as the argument is dropped rather than converted: the
+exchange's own zone is exactly what the bare check already assumes of the
+feed's clock.
 
 `syminfo.mintick` becomes a param named `mintick`, defaulting to the 0.01 of a
 US equity. A Backtrader feed does not know its instrument's tick size, so the
@@ -814,6 +832,20 @@ means, and each of these is a separate rule:
 - **assigned more than once** — two assignments are two different values
 - **assigned inside an `if`** — it holds a value on some bars and not others, where a line is computed on every one
 - **reassigned with `:=`, or a `var`** — the same objection, spread over time
+
+### History without a line
+
+`inSess = not na(time(timeframe.period, sess))` cannot be promoted — `time()`
+is a per-bar read of the feed's clock, not a line — yet `inSess and not
+inSess[1]` is Pine's standard "first bar of the session". So history of a
+computed value has a fallback: since the definition holds on every bar, the
+previous bar's value is the same expression with every bar-relative read
+shifted one bar further back — `time()[1]` reads the previous bar's stamp,
+`close` becomes `close[1]`, and so on, recursively through other computed
+values. Only the pure per-bar subset shifts (prices and lines, constants and
+params, `time()`, `na`/`nz`, the math builtins); a definition reading a
+`var` or a trade counter holds only its current value, so that history stays
+refused rather than answered with today's state.
 
 ### A conditional needs a function, not a line operation
 
