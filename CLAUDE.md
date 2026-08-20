@@ -32,6 +32,36 @@ next step — so "where was I" is answered before it has to be asked.
 the thread is lost. It wants where things stand right now — branch, working
 tree, what is in flight — not a replay of how it got there.
 
+## Brainstorm before building
+
+The owner asked for this after several rounds where a guess was shipped and they
+found the hole in it: a spreadsheet that reported a portfolio value four tenths
+of which had not moved since 2022, a ladder that collapsed to `#N/A` on a ticker
+typed by hand, a tab whose frozen header hid everything under it.
+
+So for anything beyond a small correction: explore what they are actually trying
+to do, put the trade-offs to them, and get an answer before writing code. Ask few
+questions and make them count — use `AskUserQuestion` so they can click rather
+than type, lead each option list with a recommendation, and say which one you
+would pick and why.
+
+**Put it in a box they can click.** Anything that can be a choice should be one:
+`multiSelect: true` wherever more than one answer can be true at once, so they
+tick what they want instead of composing a reply. Their answers are often
+combinations — "do 1 but incorporate 2 and 3" — and a checkbox list gets that in
+one click. Prose is for the two cases a box cannot carry: a PowerShell step they
+have to run themselves, and an answer only they hold, like a number or a URL.
+
+**Push back.** They want the disagreement, not the compliance. If their framing
+has a flaw, say so before building to it. If something they asked for last week
+is now dead weight — an empty tab, a feature nothing reads — raise it rather than
+maintaining it silently. Recommend the thing you would do if it were yours.
+
+This is a standing preference and it is not limited to this repository. The
+cross-project copy belongs in the `gexio-machine` skill, which is synced from
+their account: a cloud session cannot durably edit it, so that copy has to be
+written from a local session or pasted by them.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
@@ -84,6 +114,13 @@ A worked example, for this repo's 21st MCP key:
   exemption against a savings account. Reads Treasury's daily bill CSV, which
   `home.treasury.gov` blocks from cloud containers — every command takes
   `--rate` overrides so the math still runs offline
+- `tools/build_profit_planner.py` — generates the exit-planning workbook (six
+  plan tabs bound to one register); prices go live off `GOOGLEFINANCE` once the
+  file is opened as a Google Sheet
+- `tools/planner_watch.py` — reads that workbook's Watch tab, published as CSV,
+  and says when a rung is within reach, a holding has moved, or a position has
+  outgrown its limit. Skips anything without a live price rather than alerting
+  on a number somebody typed months ago
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
@@ -160,6 +197,7 @@ pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
+python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
