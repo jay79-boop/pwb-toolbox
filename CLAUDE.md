@@ -124,6 +124,10 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `tools/audit_electron_app.ps1` — reads a closed-source Electron app off disk without
+  running it and reports signature, every host baked into the bundle, credential-reading
+  code and auto-update. PowerShell, for the user's machine; see
+  `docs/tradingview-agent-security.md`
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -137,10 +141,13 @@ A worked example, for this repo's 21st MCP key:
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
-  `index.html` (the published landing page; see "Design tooling" below) and
+  `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
-  traps that otherwise get rediscovered every time)
+  traps that otherwise get rediscovered every time) and
+  `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
+  and on which account — the CDP threat model, the two-login rule, and what was
+  actually verified about the open-source bridge by reading its source)
 
 ## Environment
 
