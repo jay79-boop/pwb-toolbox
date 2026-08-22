@@ -139,6 +139,15 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `tools/audit_electron_app.ps1` — reads a closed-source Electron app off disk without
+  running it and reports signature, every host baked into the bundle, credential-reading
+  code and auto-update. PowerShell, for the user's machine; see
+  `docs/tradingview-agent-security.md`
+- `tools/desk_agent/` — the unattended agent: a playbook, five job files, a run log
+  it writes after every run, and a weekly review that revises the playbook from that
+  log and opens a draft PR. Guardrails live in a section of the playbook the review
+  is forbidden to edit. `tools/register_desk_agent.ps1` registers the Windows
+  scheduled tasks; see `tools/desk_agent/README.md`
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
   redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
   status/owner coloring, layered auto-layout, undo, and Paper/Slate themes.
@@ -160,10 +169,13 @@ A worked example, for this repo's 21st MCP key:
   tested against closed forms in `static/option-lab.test.js`
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
-  `index.html` (the published landing page; see "Design tooling" below) and
+  `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
-  traps that otherwise get rediscovered every time)
+  traps that otherwise get rediscovered every time) and
+  `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
+  and on which account — the CDP threat model, the two-login rule, and what was
+  actually verified about the open-source bridge by reading its source)
 
 ## Environment
 
@@ -225,6 +237,8 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
+python -m tools.desk_agent.runlog summary --last 20   # is the agent actually working
+python -m tools.desk_agent.runlog review  --last 40   # what the weekly review reads
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
@@ -292,6 +306,28 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## The desk agent runs itself, and reports on itself
+
+`tools/desk_agent/` is a Claude Code agent that runs on a schedule and revises its
+own playbook. Two things about it are worth knowing before touching it, because both
+are deliberate and both look like oversights.
+
+**The run log is committed.** `runs.jsonl` is one JSON line per unattended run. It is
+tracked rather than ignored because it is the only part of the agent a cloud session
+can see, and because `git log` over it is the audit trail. Raw stdout under `logs/`
+is ignored — that is noise, and it can carry chart detail.
+
+**The agent may not edit its own guardrails, its own log, or `runlog.py`.** The
+weekly review rewrites the rest of the playbook freely and opens a draft PR for it,
+which is the self-improvement loop. But an agent that can loosen its own limits does
+not have limits, and one that can edit its own record of what happened cannot be
+reviewed — so those three are walled off, and a review that wants to change them has
+to stop and say so instead.
+
+The autonomy ceiling is "everything except order entry", on a TradingView login with
+no broker connected. The reasoning behind that specific line, and why it beats
+auditing the tooling, is in `docs/tradingview-agent-security.md`.
 
 ## The trade journal is not in this repository
 
@@ -362,6 +398,17 @@ not.** As of 2026-08-18, both directories have `jay` = the fork
 `git pull origin main` means two different things depending on which directory
 the shell happens to be in, and fails by succeeding against the wrong project
 rather than by erroring.
+
+**Never hand over a `merge` or `checkout` without the `fetch` on the same line.**
+Both fail by succeeding. `git checkout <branch>` on a branch that already exists
+locally is a no-op that reports "Already on ..." and brings nothing down;
+`git merge --ff-only jay/<branch>` merges the remote-tracking ref *as of the last
+fetch*, so it happily fast-forwards to a commit that is already stale. Each cost a
+round trip on 2026-08-22, and in both cases the terminal said what had happened —
+"Your branch is behind ... by 2 commits" — while the next step failed with an
+unrelated-looking error about a missing file. Write
+`git fetch jay <branch>; git merge --ff-only jay/<branch>` as one line, every time,
+and end it with a `Test-Path` on a file the new commit adds so success is visible.
 
 **So use `jay` and `upstream` explicitly and never write a bare `origin`
 command.** `git fetch jay <branch>` now works identically in both — which was not

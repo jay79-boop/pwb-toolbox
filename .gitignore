@@ -29,6 +29,11 @@ graphify-out/.vocab.txt
 graphify-out/graph.html
 graphify-out/manifest.json
 
+# desk agent: raw per-run stdout. Noise, and it can contain chart detail.
+# runs.jsonl (the structured record) and out/ (gameplans, Pine reports) stay
+# tracked -- they are the agent's memory and its deliverables.
+tools/desk_agent/logs/
+
 # per-business engagement data (tools/engagement.py) — this fork is public,
 # and a client's process map and findings are confidential. Only the README
 # explaining that is tracked.
