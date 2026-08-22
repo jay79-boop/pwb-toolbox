@@ -88,6 +88,28 @@ run did something. A week of clean skips is not health — it is a scheduler
 firing faithfully into a job with nothing to do, which is the failure mode this
 is built to surface.
 
+## The agent's TradingView login
+
+**Checked 2026-08-22: no broker connected.** The Trading Panel shows brokers with
+`Connect` buttons — no account number, no balance, no order ticket.
+
+This is the control the whole arrangement rests on. The permission model removes
+the agent's *means* to place an order; a broker-free login removes the
+*possibility*, and it keeps holding even if a future change to the deny list gets
+it wrong. `docs/tradingview-agent-security.md` has the reasoning.
+
+Two things about that line worth being honest about:
+
+**It is a point-in-time observation, not a standing property.** Connecting a
+broker to this login later removes the protection silently, and nothing in the
+system can detect it happening. The agent's obligation is to fail closed on
+positive evidence — an account number, a balance, an order ticket seen in
+passing — which reacts to seeing one but cannot prove absence. If you ever link a
+broker for live trading, put it on a different login, or stop the scheduled tasks
+until the agent is moved.
+
+**The account is deliberately not named here.** This fork is public.
+
 ## Three design decisions worth knowing before you change anything
 
 **Skipped and failed are different.** A holiday morning is `skipped`; a refused
