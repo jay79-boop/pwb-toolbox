@@ -142,16 +142,26 @@ try {
   # agent has to remember, and it still runs when the agent crashes.
   if (-not $tvWasAlreadyRunning) {
     $tvAfter = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
-    foreach ($proc in $tvAfter) {
-      try {
-        Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-        Write-Log ("closed TradingView pid " + $proc.Id)
-      } catch {
-        Write-Log ("could NOT close TradingView pid " + $proc.Id + ": " + $_.Exception.Message)
-        Write-Log 'WARNING: the CDP debug port may still be open. Close TradingView by hand.'
+    if ($tvAfter.Count -eq 0) {
+      Write-Log 'no TradingView process to close'
+    } else {
+      foreach ($proc in $tvAfter) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
+      }
+      # Verify by re-querying, not by whether Stop-Process threw. Electron runs
+      # several processes under one name, and killing the main one takes its
+      # children with it -- so a "no such process" error here is usually success
+      # arriving early. Warning on the throw would fire on every normal
+      # shutdown, and a warning that cries wolf is how a log stops being read.
+      Start-Sleep -Milliseconds 500
+      $stillUp = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
+      if ($stillUp.Count -eq 0) {
+        Write-Log ("closed TradingView (" + $tvAfter.Count + " process(es))")
+      } else {
+        Write-Log ("WARNING: " + $stillUp.Count + " TradingView process(es) survived Stop-Process.")
+        Write-Log 'The CDP debug port may still be open. Close TradingView by hand.'
       }
     }
-    if ($tvAfter.Count -eq 0) { Write-Log 'no TradingView process to close' }
   } else {
     Write-Log 'left TradingView running: it was already open before this run'
   }
