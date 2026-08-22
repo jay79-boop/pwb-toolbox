@@ -658,4 +658,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        code = main()
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Downstream (e.g. `... | head`) closed the pipe: that is their say,
+        # not our failure. Point stdout at devnull so interpreter shutdown
+        # does not raise a second time trying to flush it.
+        import os
+
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        code = 0
+    raise SystemExit(code)
