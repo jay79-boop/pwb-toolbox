@@ -486,19 +486,19 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Active Branch:** `claude/master-blueprint-review-n78rak` (1 commit ahead of main, clean working tree)
+**Main Branch:** Merged operating system (d087261). Synced with remote.
 
-**Live Strategies:**
-- **ICT AM OB Strategy** (PR #77, #76) — Session timezones, history tracking, order cancellation. Live for testing.
-- **ICT OB+FVG Strategy** (PR #75) — Priced entries, session management, mintick conversion. Backtest only.
-- **15-Minute Reversal** (PR #71, draft) — New strategy in development. Needs comparison harness.
+**Active Development (3 drafts in flight):**
+- **#87: Cross-Instrument Backtest Lab** (started 2026-08-22) — Test all three strategies head-to-head on same data. Detects correlation risk, diversification gaps. *In progress.*
+- **#78: Desk Agent + Risk Model** (started 2026-08-20) — Position limit manager, exposure tracking across strategies, live alerts. *In progress.*
+- **#71: 15-Minute Reversal** (started 2026-08-19) — New strategy + comparison harness vs. ICT AM/OB. *Pending backtest lab.*
+
+**Live/Backtesting Strategies:**
+- **ICT AM OB** (PR #77, #76, merged) — Session timezones, history tracking, order cancellation. Live for testing.
+- **ICT OB+FVG** (PR #75, merged) — Priced entries, session management, mintick conversion. Backtest baseline.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
-**Open Drafts:** 2
-- #78: Tray companion security (CDP port audit)
-- #71: 15-Minute Reversal (comparison + strategy)
-
-**Velocity:** 1 merged PR/day (7 in last 8 days)
+**Velocity:** 1 PR merged/day (7 in last 8 days). 3 PRs in parallel development (new mode).
 
 ## Tech Stack & Dependencies
 
@@ -520,10 +520,22 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Decision Log
 
+### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
+**Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
+**Why:** Can't compare strategies in a vacuum. Need to see: Do they hedge each other? Do they amplify losses? What's the portfolio win rate vs. individual strategy win rates?
+**What it measures:** Win rate, Sharpe ratio, max drawdown, correlation, portfolio cumulative return, monthly breakdown.
+**Target:** Identify if 15-Min Reversal adds value to ICT AM/OB, or if they're too correlated.
+
+### [2026-08-22] Desk Agent + Risk Model (PR #78)
+**Decision:** Build an agent that enforces position limits, exposure caps, and live risk alerts across all three strategies.
+**Why:** Live execution will have real consequences. Can't trade three correlated strategies if position sizes aren't coordinated. Need automatic stops and alerts.
+**What it does:** Reads live positions from IB, calculates portfolio Greeks, enforces per-strategy position caps, enforces max portfolio exposure, alerts on margin usage >80%.
+**Dependency:** Needs backtest lab results to set appropriate position sizing rules.
+
 ### [2026-08-22] Blueprint as Operating System
 **Decision:** Turn CLAUDE.md into a machine-readable operating system that drives both the dashboard and Claude's decision context.
 **Why:** Scattered info (Git, GitHub, spreadsheets, chat) → single source of truth. Allows Claude to make better decisions without asking for status updates.
-**Outcome:** Building now. Syncs to live dashboard via GitHub MCP.
+**Outcome:** Merged into main. Syncs to live dashboard via GitHub MCP.
 
 ### [2026-08-20] Live Work Dashboard
 **Decision:** Build GitHub-connected dashboard instead of static blueprint.
@@ -547,21 +559,46 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Roadmap
 
-**Now (This week):**
-- [ ] Finish 15-Minute Reversal strategy + comparison harness (PR #71)
-- [ ] Resolve Tray companion CDP port audit (PR #78)
-- [ ] Merge both into main
+**Now (This week — parallel tracks):**
 
-**Next (This sprint):**
-- [ ] Backtest 15-Minute Reversal across 90 days
-- [ ] Compare all three active strategies side-by-side (win rate, Sharpe, drawdown)
-- [ ] Document strategy decision criteria (when to trade which one)
+*Backtest Lab (PR #87):*
+- [ ] Implement `StrategyComparator` — runs all three strategies on identical price data
+- [ ] Add correlation matrix calculation (Pearson + rolling)
+- [ ] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
+- [ ] Test on 90-day ICT price history
+- [ ] Success: See if 15-Min Reversal adds value or just adds noise
+
+*Desk Agent (PR #78):*
+- [ ] Implement risk model: Greeks calculator, margin tracker, exposure aggregator
+- [ ] Define position size rules (per-strategy caps, portfolio exposure cap)
+- [ ] Add live IB position feed + alerts on >80% margin usage
+- [ ] Add position limit enforcement (reject trades that violate caps)
+- [ ] Success: Can trade all three strategies without blowing up
+
+*15-Minute Reversal (PR #71):*
+- [ ] Finish strategy logic (entry, exit, hold conditions)
+- [ ] Backtest on 6 months of data
+- [ ] Validate win rate, Sharpe, max drawdown vs. ICT strategies
+- [ ] Await backtest lab results before deciding if it's live-tradeable
+
+**Next (After "Now" merges — 2-3 days):**
+- [ ] Merge #87 (backtest lab) → use results to size positions in desk agent
+- [ ] Merge #78 (desk agent) → build live execution harness on top of it
+- [ ] Merge #71 (15-Min Reversal) → add to desk agent position tracking
+- [ ] Run full portfolio backtest: all three strategies with desk agent constraints
 
 **Later (Backlog):**
-- [ ] Live execution harness for chosen strategy
-- [ ] Performance analytics dashboard (cumulative return, monthly breakdown)
-- [ ] Trade journal automation (hook journal to live execution)
-- [ ] Upgrade Backtrader (1.9.78 → investigate modern fork or alternative)
+- [ ] Live execution: connect desk agent to IB, enable live trading
+- [ ] Performance analytics: daily P&L dashboard, monthly statement generation
+- [ ] Trade journal automation: hook desk agent events to trade journal
+- [ ] Strategy upgrade: Backtrader 1.9.78 → investigate modern fork or Zipline
+- [ ] Risk monitoring: multi-day drawdown alerts, portfolio stress tests
+
+**Done (Reference):**
+- [x] ICT AM/OB Strategy (PR #77, #76) — live testing
+- [x] ICT OB+FVG Strategy (PR #75) — backtest baseline
+- [x] T-Bill Ladder Tool (PR #68) — live with planner watcher
+- [x] Operating System (PR #88) — CLAUDE.md as single source of truth
 
 ## Why This Format
 
