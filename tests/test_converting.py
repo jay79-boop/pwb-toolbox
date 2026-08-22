@@ -4991,3 +4991,420 @@ def test_generated_relative_strength_strategy_runs_on_two_instruments():
 
     closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
     assert closed > 0
+
+
+# --- the date window, and the risk rules that stop a strategy ----------------
+
+
+def test_pine_timestamp_spellings_fold_to_epoch_milliseconds():
+    """Every spelling in the corpus, and the ones nothing there happens to use.
+
+    A timestamp is a constant, so it is folded here rather than parsed again on
+    every bar. Getting the fold wrong would move a strategy's start date by
+    hours or years without anything failing, so the numbers are pinned.
+    """
+    from pwb_toolbox.converting.backtrader import parse_timestamp
+
+    assert parse_timestamp("01 Jan 2020 00:00 +0000") == 1577836800000
+    assert parse_timestamp("31 Dec 2030 23:59 +0000") == 1924991940000
+    assert parse_timestamp("01 Jan 2024") == 1704067200000
+    assert parse_timestamp("2023-01-01") == 1672531200000
+    assert parse_timestamp("2025-08-20 00:00") == 1755648000000
+    assert parse_timestamp("2024-06-01T12:30:00") == 1717245000000
+    # No offset means UTC, which is what Pine assumes when none is given.
+    assert parse_timestamp("01 Jan 2020 00:00") == parse_timestamp(
+        "01 Jan 2020 00:00 +0000"
+    )
+    # An offset is honoured rather than ignored.
+    assert parse_timestamp("01 Jan 2020 00:00 +0200") == 1577836800000 - 2 * 3600 * 1000
+
+
+def test_a_timestamp_that_is_not_a_literal_date_is_reported():
+    """The value has to be known before the run, so a shape that cannot be
+    folded is reported rather than guessed at.
+
+    ``timestamp("GMT+0", 2025, 2, 1, 0, 0)`` -- the numeric form with a
+    timezone -- is the one shape in the corpus this does not read. It appears
+    once, in an indicator, so it is a named gap rather than a silent one.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'start = timestamp("GMT+0", 2025, 2, 1, 0, 0)\n'
+        "if time > start\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("only a literal date string" in i for i in result.unsupported)
+
+
+def test_a_timestamp_is_folded_rather_than_parsed_on_every_bar():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("01 Jan 2020 00:00 +0000"), "From")\n'
+        "if time > dFrom\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "('dFrom', 1577836800000)," in result.code
+    assert "timestamp(" not in result.code
+    assert "strptime" not in result.code
+
+
+def test_input_time_becomes_a_param_the_run_can_override():
+    """The date window is the most-overridden input there is -- walking a
+    strategy forward means moving it -- so it has to be a live param.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("09 Mar 2022 00:00 +0000"), "From")\n'
+        'dTo = input.time(timestamp("11 Mar 2022 00:00 +0000"), "To")\n'
+        "inRange = time >= dFrom and time <= dTo\n"
+        "if inRange\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [(100, 101, 99, 100)] * 7
+    strategy = _fill_run(source, rows)
+    assert strategy.p.dFrom == 1646784000000  # 9 March 2022, UTC
+    assert strategy.p.dTo == 1646956800000  # 11 March 2022, UTC
+    assert strategy.position.size == 1
+
+    moved = _fill_run(source, rows, dFrom=0, dTo=1)
+    assert moved.p.dFrom == 0
+    # A window that closed before the feed starts lets nothing through, which
+    # it could not do if the dates had been folded into the body.
+    assert moved.position.size == 0
+
+
+def _window_sizes(source, rows, **params):
+    """Position size at the close of every bar."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_explicit_frame(rows)))
+    cerebro.addstrategy(Watched, **params)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    return seen
+
+
+def test_a_date_window_gates_the_entries_and_shuts_the_position_after_it():
+    """The shape nine of the corpus strategies are written in: an input.time
+    pair, a `time` comparison, and every order behind it.
+
+    The feed runs 7 March to 13 March; the window is 9 March to 11 March. An
+    entry inside it fills on the next bar's open, and the bar after the window
+    shuts closes what is left.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("09 Mar 2022 00:00 +0000"), "From")\n'
+        'dTo = input.time(timestamp("11 Mar 2022 00:00 +0000"), "To")\n'
+        "inRange = time >= dFrom and time <= dTo\n"
+        "if inRange\n"
+        '    strategy.entry("L", strategy.long)\n'
+        "if not inRange\n"
+        '    strategy.close("L")\n'
+    )
+    rows = [(100, 101, 99, 100)] * 7
+    #        7th 8th 9th 10th 11th 12th 13th
+    assert _window_sizes(source, rows) == [0, 0, 0, 1, 1, 1, 0]
+    # The control: with the window opened wide the same script is long from
+    # the second bar and never lets go, so the window is what shaped the run.
+    assert _window_sizes(source, rows, dFrom=0, dTo=99999999999999) == [
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+    ]
+
+
+def test_a_risk_rule_reads_its_limit_and_its_basis():
+    """`strategy.percent_of_equity` and `strategy.cash` mean different numbers,
+    and Pine's default when neither is named is percent."""
+
+    def emitted(line):
+        result = convert(
+            '//@version=6\nstrategy("S")\n'
+            + line
+            + "\nif close > 0\n    strategy.close()\n"
+        )
+        assert result.ok, result.unsupported
+        return [
+            l.strip()
+            for l in result.code.splitlines()
+            if "_pine_risk(" in l and not l.strip().startswith("def ")
+        ]
+
+    assert emitted("strategy.risk.max_drawdown(20)") == [
+        "self._pine_risk(20, True, False)"
+    ]
+    assert emitted("strategy.risk.max_drawdown(20, strategy.percent_of_equity)") == [
+        "self._pine_risk(20, True, False)"
+    ]
+    assert emitted("strategy.risk.max_drawdown(40, strategy.cash)") == [
+        "self._pine_risk(40, False, False)"
+    ]
+    assert emitted(
+        "strategy.risk.max_intraday_loss(5, strategy.percent_of_equity)"
+    ) == ["self._pine_risk(5, True, True)"]
+    assert emitted("strategy.risk.max_intraday_loss(250, strategy.cash)") == [
+        "self._pine_risk(250, False, True)"
+    ]
+
+
+def test_a_risk_rule_without_a_limit_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown()\n"
+        "if close > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs a limit" in i for i in result.unsupported)
+
+
+def test_a_strategy_with_no_risk_rule_carries_no_halt_check():
+    """The halt flags exist only alongside the rule that sets them, so the
+    check that reads them has to be emitted alongside it too. Emitting it
+    unconditionally made every entry raise AttributeError.
+    """
+    plain = convert(
+        '//@version=6\nstrategy("S")\n'
+        "if close > open\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert plain.ok, plain.unsupported
+    assert "_pine_entry" in plain.code
+    assert "_pine_halted" not in plain.code
+
+    guarded = convert(
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown(20)\n"
+        "if close > open\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert guarded.ok, guarded.unsupported
+    assert "if self._pine_halted or self._pine_day_halted:" in guarded.code
+
+
+#: Enters every bar it can, so anything that stops it showing up as flat is
+#: the risk rule rather than the entry condition running out.
+ALWAYS_ENTERS = (
+    '//@version=6\nstrategy("S")\n'
+    "strategy.risk.max_drawdown(40, strategy.cash)\n"
+    "if close > 0\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+#: 1 unit bought near 100 against 10,000 of cash, then a collapse to 55. The
+#: equity drop is 45 -- past a 40-of-cash limit, nowhere near 20% of equity.
+COLLAPSE = [(100, 101, 99, 100)] * 3 + [(55, 56, 54, 55)] * 3
+
+
+def _risk_run(source, rows, mutate=None, **params):
+    """Run a conversion, optionally mutating the generated source first.
+
+    Returns the strategy and the position size at the close of every bar. The
+    mutation hook is how each guard gets tested on its own: take one line out
+    and the run has to change.
+    """
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    code = result.code if mutate is None else mutate(result.code)
+    namespace = {}
+    exec(compile(code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_explicit_frame(rows)))
+    cerebro.addstrategy(Watched, **params)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0], seen
+
+
+def test_a_drawdown_breach_flattens_the_position_and_keeps_it_flat():
+    strategy, sizes = _risk_run(ALWAYS_ENTERS, COLLAPSE)
+    assert sizes == [0, 1, 1, 1, 0, 0]
+    assert strategy._pine_halted is True
+
+    # The control: the same tape with the rule taken out holds the position to
+    # the end, so the collapse is not what closed it -- the rule is.
+    control = ALWAYS_ENTERS.replace(
+        "strategy.risk.max_drawdown(40, strategy.cash)\n", ""
+    )
+    _, unguarded = _risk_run(control, COLLAPSE)
+    assert unguarded == [0, 1, 1, 1, 1, 1]
+
+
+def test_the_halt_flag_is_what_refuses_the_entries_after_a_breach():
+    """Flattening is only half of it. Pine places no new orders after a breach,
+    and this script asks for one on every bar -- so with the check taken out of
+    `_pine_entry` it walks straight back in on the next bar.
+    """
+    guard = (
+        "        if self._pine_halted or self._pine_day_halted:\n"
+        "            # A risk rule stopped trading; Pine places no new orders.\n"
+        "            return\n"
+    )
+    _, sizes = _risk_run(
+        ALWAYS_ENTERS, COLLAPSE, mutate=lambda c: c.replace(guard, "", 1)
+    )
+    assert sizes[-1] == 1
+    assert sizes != [0, 1, 1, 1, 0, 0]
+
+
+def test_a_percent_limit_is_measured_against_equity_not_currency():
+    """Reading the basis backwards is silent: the number is the same, and only
+    the tape says which one was meant. On this collapse a 40-of-cash limit
+    halts and a 20-percent limit does not, so the pair pins the reading.
+    """
+    cash_rule, cash_sizes = _risk_run(ALWAYS_ENTERS, COLLAPSE)
+    assert cash_rule._pine_halted is True
+    assert cash_sizes[-1] == 0
+
+    percent = ALWAYS_ENTERS.replace(
+        "40, strategy.cash", "20, strategy.percent_of_equity"
+    )
+    percent_rule, percent_sizes = _risk_run(percent, COLLAPSE)
+    assert percent_rule._pine_halted is False
+    assert percent_sizes[-1] == 1
+
+
+def _hourly_frame(days):
+    """Hourly bars, `days` being a list of per-day (open, high, low, close)."""
+    out = []
+    for day, rows in enumerate(days):
+        stamp = datetime.datetime(2022, 3, 7 + day, 10, 0)
+        for o, h, l, c in rows:
+            out.append(
+                {
+                    "datetime": stamp,
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": 1000,
+                }
+            )
+            stamp += datetime.timedelta(hours=1)
+    return pd.DataFrame(out).set_index("datetime")
+
+
+def _intraday_run(source, days, mutate=None):
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    code = result.code if mutate is None else mutate(result.code)
+    namespace = {}
+    exec(compile(code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_hourly_frame(days),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=60,
+        )
+    )
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0], seen
+
+
+INTRADAY_RULE = ALWAYS_ENTERS.replace(
+    "strategy.risk.max_drawdown(40, strategy.cash)",
+    "strategy.risk.max_intraday_loss(40, strategy.cash)",
+)
+
+#: Six hourly bars over two days: the collapse and the halt on the first, a
+#: fresh start on the second.
+TWO_DAYS = [
+    [(100, 101, 99, 100)] * 3 + [(55, 56, 54, 55)] * 3,
+    [(55, 56, 54, 55)] * 3,
+]
+
+
+def test_an_intraday_loss_halt_lifts_when_the_day_turns():
+    """`max_intraday_loss` stops the day, not the backtest. The difference is
+    the whole reason it is a separate rule from `max_drawdown`.
+    """
+    strategy, sizes = _intraday_run(INTRADAY_RULE, TWO_DAYS)
+    assert sizes == [0, 1, 1, 1, 0, 0, 0, 1, 1]
+    # Neither flag survives the day boundary: the run is trading again.
+    assert strategy._pine_halted is False
+    assert strategy._pine_day_halted is False
+
+
+def test_without_the_day_reset_an_intraday_halt_never_lifts():
+    _, sizes = _intraday_run(
+        INTRADAY_RULE,
+        TWO_DAYS,
+        mutate=lambda c: c.replace(
+            "            self._pine_day_halted = False\n", "", 1
+        ),
+    )
+    assert sizes[-1] == 0
+
+
+def test_a_halt_withdraws_orders_still_resting_on_the_book():
+    """A breach is not just 'stop entering'. Anything already working has to
+    come off, or the tape fills it afterwards and the strategy is in a trade
+    the risk rule was there to prevent.
+
+    The sell-stop rests at 50 from the second bar. The collapse to 55 breaches
+    the limit and the halt cancels it; the tape then goes through 50, which an
+    order left on the book would have filled.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown(40, strategy.cash)\n"
+        "if bar_index == 1\n"
+        '    strategy.entry("S", strategy.short, stop=50.0)\n'
+        "if bar_index == 2\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [
+        (100, 101, 99, 100),  # bar_index 1: the sell-stop goes out at the close
+        (100, 101, 99, 100),  # bar_index 2: a market long is placed
+        (100, 101, 99, 100),  # the long fills at the open
+        (55, 56, 54, 55),  # the breach: cancel the stop, close the long
+        (55, 56, 54, 55),  # the close fills
+        (45, 46, 44, 45),  # through 50 -- a surviving sell-stop fires here
+        (45, 46, 44, 45),
+    ]
+    strategy, sizes = _risk_run(source, rows)
+    assert strategy._pine_halted is True
+    assert sizes == [0, 0, 1, 1, 0, 0, 0]
+
+    cancel = (
+        "        for order in list(self.broker.get_orders_open()):\n"
+        "            if order.owner is self:\n"
+        "                self.cancel(order)\n"
+    )
+    _, uncancelled = _risk_run(source, rows, mutate=lambda c: c.replace(cancel, "", 1))
+    assert uncancelled[-1] == -1  # the short the halt was supposed to prevent

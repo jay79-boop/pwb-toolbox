@@ -153,6 +153,7 @@ a starting point plus a list of what you still have to write yourself.
 """
 
 import collections
+import datetime
 import keyword
 import re
 from dataclasses import dataclass, field
@@ -209,6 +210,10 @@ INDICATORS = {
 #: Pine cross helpers, mapped to a CrossOver line plus the comparison that
 #: recovers the direction Pine means.
 PIVOTS = ("ta.pivothigh", "ta.pivotlow")
+
+#: Pine's account-level risk rules. Both halt trading on a breach;
+#: max_intraday_loss lets it resume the next day, max_drawdown does not.
+RISK_RULES = ("strategy.risk.max_drawdown", "strategy.risk.max_intraday_loss")
 
 #: Moving averages Backtrader either lacks or spells differently enough to
 #: matter. Each is built from what Pine says it is made of.
@@ -444,6 +449,40 @@ _SESSION_HELPER = (
 )
 
 
+#: The shapes Pine writes a timestamp in. Every one is a constant, so it is
+#: folded to epoch milliseconds here rather than parsed again on every bar.
+#: No offset means UTC, which is what Pine assumes when none is given.
+_TIMESTAMP_FORMATS = (
+    "%d %b %Y %H:%M %z",
+    "%d %b %Y %H:%M:%S %z",
+    "%d %b %Y %H:%M",
+    "%d %b %Y",
+    "%Y-%m-%d %H:%M %z",
+    "%Y-%m-%d %H:%M:%S %z",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S",
+)
+
+
+def parse_timestamp(text):
+    """Pine's ``timestamp("...")`` as epoch milliseconds, or ``None``."""
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    for shape in _TIMESTAMP_FORMATS:
+        try:
+            moment = datetime.datetime.strptime(cleaned, shape)
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        return int(moment.timestamp() * 1000)
+    return None
+
+
 #: Pine builtins that read straight across to a Backtrader expression.
 #: ``strategy.position_size`` is signed and in units on both sides, so the
 #: mapping is exact rather than approximate.
@@ -507,6 +546,7 @@ INPUT_FUNCS = {
     "input.session",
     "input.timeframe",
     "input.symbol",
+    "input.time",
 }
 
 #: Presentational calls: dropped from the output, reported as ignored.
@@ -776,7 +816,7 @@ _EXPR_INDICATOR = (
 #: An entry against the position is a reversal in Pine -- close the old, open
 #: the new -- which is two orders here rather than one resize, so the entry
 #: size still comes from the strategy's own sizer.
-_ENTRY_HELPER = (
+_ENTRY_HELPER_HEAD = (
     "    def _pine_entry(self, long, size=None, tag=None, limit=None, stop=None):",
     '        """Open or reverse a position, as Pine\'s strategy.entry does.',
     "",
@@ -791,6 +831,19 @@ _ENTRY_HELPER = (
     "            limit = None",
     "        if stop is not None and stop != stop:",
     "            stop = None",
+)
+
+#: The three lines ``_pine_entry`` gains when the script carries a
+#: ``strategy.risk`` rule -- and only then, because the flags they read are
+#: initialised alongside the rule. A strategy with no risk rule would otherwise
+#: carry a check on attributes that do not exist.
+_ENTRY_HALT_GUARD = (
+    "        if self._pine_halted or self._pine_day_halted:",
+    "            # A risk rule stopped trading; Pine places no new orders.",
+    "            return",
+)
+
+_ENTRY_HELPER_TAIL = (
     "        held = self.position.size",
     "        if held > 0 if long else held < 0:",
     "            # pyramiding is 0: Pine allows one entry per direction.",
@@ -919,6 +972,58 @@ _PENDING_HELPER = (
     "            del self._pine_exits[tag]",
     "            for order in orders:",
     "                self.cancel(order)",
+    "",
+)
+
+#: Emitted when a script declares one of Pine's account-level risk rules.
+#:
+#: Pine cancels pending orders, closes the position and refuses new entries
+#: once the limit is passed -- for good in the case of `max_drawdown`, and
+#: until the next trading day for `max_intraday_loss`. The rule is checked
+#: where it is declared, which is where Pine evaluates it.
+#:
+#: A bar-close run can only act at a close, so the halt lands up to a bar
+#: later than Pine's intrabar one. That errs toward showing more loss rather
+#: than less, which is the direction to be wrong in.
+_RISK_HELPER = (
+    "",
+    "    def _pine_risk(self, limit, percent, intraday):",
+    '        """One of Pine\'s strategy.risk rules, checked once per bar."""',
+    "        value = self.broker.getvalue()",
+    "        if value > self._pine_peak:",
+    "            self._pine_peak = value",
+    "        day = self.data.datetime.date(0)",
+    "        if day != self._pine_day:",
+    "            self._pine_day = day",
+    "            self._pine_day_open = value",
+    "            self._pine_day_halted = False",
+    "        if self._pine_halted or self._pine_day_halted:",
+    "            return",
+    "        reference = self._pine_day_open if intraday else self._pine_peak",
+    "        if reference is None or limit is None:",
+    "            return",
+    "        threshold = reference * limit / 100.0 if percent else limit",
+    "        if reference - value < threshold:",
+    "            return",
+    "        self._pine_halt()",
+    "        if intraday:",
+    "            self._pine_day_halted = True",
+    "        else:",
+    "            self._pine_halted = True",
+    "",
+    "    def _pine_halt(self):",
+    '        """Withdraw what is pending and flatten, as Pine does on a breach."""',
+    "        pending = getattr(self, '_pine_pending', None)",
+    "        if pending is not None:",
+    "            pending.clear()",
+    "        # No argument: get_orders_open(safe=True) is documented to hand",
+    "        # back clones to manipulate rather than the live orders, and only",
+    "        # cancels anything because this backtrader's clone() returns self.",
+    "        for order in list(self.broker.get_orders_open()):",
+    "            if order.owner is self:",
+    "                self.cancel(order)",
+    "        if self.position:",
+    "            self.close()",
     "",
 )
 
@@ -1363,6 +1468,7 @@ class _Generator:
         #: the feed -- bars from the future, silently.
         self._max_lookback = 0
         self._uses_back = False
+        self._uses_risk = False
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
         self._computed = {}
@@ -2357,6 +2463,11 @@ class _Generator:
             if index:
                 self._reject(f"{name}: a parameter has no bar history")
             return f"self.p.{_safe(name)}"
+        if name == "time":
+            # `time` on its own is what `time()` answers with no resolution.
+            self._uses_time = True
+            return f"self._pine_time(None, {-index})" if index else "self._pine_time()"
+
         if name in TRADE_COUNTERS:
             current, slot = TRADE_COUNTERS[name]
             self._uses_trades = True
@@ -2672,6 +2783,16 @@ class _Generator:
         if call.func == "time":
             return self._value_time(call)
 
+        if call.func == "timestamp":
+            folded = self._fold_timestamp(call)
+            if folded is None:
+                self._reject(
+                    "timestamp: only a literal date string is understood, "
+                    "because the value has to be known before the run"
+                )
+                return "None"
+            return repr(folded)
+
         if call.func == "request.security":
             return self._value_security(call)
 
@@ -2934,7 +3055,18 @@ class _Generator:
     #: The timeframe half of the same question, kept under its old name.
     _timeframe_text = _constant_text
 
+    def _fold_timestamp(self, call):
+        """``timestamp("01 Jan 2020 00:00 +0000")`` as epoch milliseconds."""
+        if not isinstance(call, Call) or call.func != "timestamp":
+            return None
+        text = _literal(call.args[0]) if call.args else None
+        return parse_timestamp(text)
+
     def _input_default(self, call):
+        for arg in call.args:
+            folded = self._fold_timestamp(arg)
+            if folded is not None:
+                return folded
         default = None
         for arg in call.args:
             literal = _literal(arg)
@@ -3207,12 +3339,36 @@ class _Generator:
             self.next_lines.append(f"{pad}self._pine_cancel({str(literal)!r})")
             return
 
+        if expr.func in RISK_RULES:
+            self._emit_risk(expr, pad)
+            return
+
         if expr.func == "strategy.cancel_all":
             self._uses_pending = True
             self.next_lines.append(f"{pad}self._pine_cancel_all()")
             return
 
         self._reject(f"call to {expr.func}() is not supported")
+
+    def _emit_risk(self, call, pad):
+        """Lower one of Pine's account-level risk rules.
+
+        The limit is an ordinary per-bar expression -- scripts routinely write
+        `useMaxDD ? maxDD : 100`, which turns the rule off by making it
+        unreachable -- so it is evaluated where the call sits rather than
+        folded to a constant.
+        """
+        if not call.args:
+            self._reject(f"{call.func} needs a limit")
+            return
+        limit = self._value_expr(call.args[0])
+        percent = True
+        for value in list(call.args[1:]) + [v for _, v in call.kwargs]:
+            if isinstance(value, Name) and value.id == "strategy.cash":
+                percent = False
+        intraday = call.func == "strategy.risk.max_intraday_loss"
+        self._uses_risk = True
+        self.next_lines.append(f"{pad}self._pine_risk({limit}, {percent}, {intraday})")
 
     def _emit_entry(self, call, pad):
         direction = None
@@ -3398,6 +3554,12 @@ class _Generator:
             out.append("        self._pine_working = {}")
         if self._uses_session:
             out.append("        self._pine_sessions = {}")
+        if self._uses_risk:
+            out.append("        self._pine_peak = float('-inf')")
+            out.append("        self._pine_day = None")
+            out.append("        self._pine_day_open = None")
+            out.append("        self._pine_halted = False")
+            out.append("        self._pine_day_halted = False")
         if self._uses_trades:
             out.append("        self._pine_closed = []")
             out.append("        self._pine_open = []")
@@ -3430,11 +3592,16 @@ class _Generator:
         if self._uses_session:
             out.extend(_SESSION_HELPER)
         if self._uses_entry:
-            out.extend(_ENTRY_HELPER)
+            out.extend(_ENTRY_HELPER_HEAD)
+            if self._uses_risk:
+                out.extend(_ENTRY_HALT_GUARD)
+            out.extend(_ENTRY_HELPER_TAIL)
         if self._uses_exit:
             out.extend(_EXIT_HELPER)
         if self._uses_pending:
             out.extend(_PENDING_HELPER)
+        if self._uses_risk:
+            out.extend(_RISK_HELPER)
         if self._uses_trades:
             out.extend(_TRADES_HELPER)
         if self._uses_back:

@@ -105,6 +105,9 @@ duplicate is pure waste.
 | `strategy.cancel(id)` | withdraws the unfilled entry with that id |
 | `strategy.cancel_all()` | withdraws every unfilled order, standing exits included |
 | `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
+| `time`, `time[n]` | the bar's own opening stamp, in epoch milliseconds |
+| `timestamp("01 Jan 2020 00:00 +0000")` | the number it means, folded at conversion time |
+| `input.time(...)` | an integer param, so the window moves without an edit |
 | `time(res, session, tz)` | the same, with the feed's clock read as UTC and converted into `tz` |
 | history of a computed value, e.g. `inSess[1]` | a promoted line, or the definition re-read a bar back — see below |
 | `syminfo.mintick` | a `mintick` param, default 0.01 — see below |
@@ -113,6 +116,9 @@ duplicate is pure waste.
 | `strategy.closedtrades.entry_price/exit_price/profit/size(i)` | a ledger built as trades close |
 | `.entry_bar_index(i)`, `.exit_bar_index(i)` | likewise, on the same bar numbering as `bar_index` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
+| `strategy.risk.max_drawdown(x)` | a per-bar equity check that flattens and stops — see below |
+| `strategy.risk.max_intraday_loss(x)` | the same, lifting when the day turns |
+| `strategy.percent_of_equity`, `strategy.cash` | which of the two the limit is measured in |
 | `strategy.exit(..., stop=, limit=)` | an OCO stop/limit pair, maintained |
 | `strategy.position_avg_price` | `self.position.price` |
 | `strategy.position_size` | `self.position.size` |
@@ -165,6 +171,7 @@ Reported in `result.unsupported`, never approximated:
 - arrays, matrices, maps and `type` blocks — all reported, so the rest of the script is still diagnosed
 - a user-defined function that recurses, returns a tuple, expands past the inlining limit, or keeps state and is called from inside an `if` — see below
 - `for` / `while` loops
+- `timestamp(tz, year, month, day, hour, minute)` — the numeric form; only the literal date string is read
 - a `switch` used as a statement rather than for its value — that is a side-effecting block
 - an `if` read for its value whose branch carries more than one expression — see below
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
@@ -277,6 +284,40 @@ feed's clock.
 `syminfo.mintick` becomes a param named `mintick`, defaulting to the 0.01 of a
 US equity. A Backtrader feed does not know its instrument's tick size, so the
 knob is handed to the caller and the report says to set it per instrument.
+
+## The date window
+
+Nine of the seventeen strategies in the corpus open the same way: two dates, a
+comparison against `time`, and every order behind the result.
+
+```pinescript
+dFrom   = input.time(timestamp("01 Jan 2020 00:00 +0000"), "From")
+dTo     = input.time(timestamp("31 Dec 2030 23:59 +0000"), "To")
+inRange = time >= dFrom and time <= dTo
+```
+
+A timestamp is a constant, so it is folded to epoch milliseconds once, here,
+rather than parsed again on every bar:
+
+```python
+params = (('dFrom', 1577836800000), ('dTo', 1924991940000))
+...
+inRange = ((self._pine_time() >= self.p.dFrom) and (self._pine_time() <= self.p.dTo))
+```
+
+`input.time` becomes an ordinary integer param because the window is the input
+most likely to be moved — walking a strategy forward is exactly that edit — and
+a folded constant in the body could not be moved without regenerating the file.
+
+Bare `time` is the bar's own opening stamp on the feed's clock, read as UTC,
+which is the same convention `time(res, session)` above already uses. A
+timestamp written without an offset is read as UTC too, which is what Pine
+assumes when none is given.
+
+The numeric spelling — `timestamp("GMT+0", 2025, 2, 1, 0, 0)` — is refused
+rather than guessed at. It appears once in the corpus, in an indicator, and
+resolving an arbitrary timezone name would mean guessing at a calendar the
+feed does not carry.
 
 ## Reading history before it exists
 
@@ -626,6 +667,53 @@ one.
 `pyramiding` above 0 is refused. Above zero Pine really can hold several trades
 in one direction, and Backtrader nets them into one position per feed — the two
 models diverge, and `strategy.opentrades` is exactly where you would notice.
+
+## Risk rules, and what a halt means
+
+`strategy.risk.max_drawdown` and `strategy.risk.max_intraday_loss` are not
+filters on a condition — they are a rule about the account, checked by Pine
+itself, that ends trading when equity has fallen far enough.
+
+```pinescript
+strategy.risk.max_drawdown(20, strategy.percent_of_equity)
+strategy.risk.max_intraday_loss(5, strategy.percent_of_equity)
+```
+
+Both become a call at the top of `next()`, before any of the bar's own
+statements run:
+
+```python
+self._pine_risk(20, True, False)
+self._pine_risk(5, True, True)
+```
+
+`_pine_risk` tracks peak equity for the drawdown rule and the day's opening
+equity for the intraday one, and on a breach does three things: clears whatever
+entries are waiting to be placed, cancels every order of its own still
+working on the book, and closes the position. Then it sets a flag, and
+`_pine_entry` refuses while that flag is up — because flattening alone is only
+half of it. Pine places no new orders after a breach, and a script whose entry
+condition is still true would otherwise walk straight back in on the next bar.
+
+The two flags differ in how long they last. `max_drawdown` stops the run for
+good. `max_intraday_loss` stops the *day*: the flag clears at the first bar of
+the next one, along with a fresh opening-equity reference. That difference is
+the whole reason Pine has two rules rather than one.
+
+`strategy.percent_of_equity` and `strategy.cash` are not interchangeable, and
+reading the wrong one is silent — the number in the source is the same either
+way, and only the tape says which was meant. Percent is Pine's default when
+neither is named.
+
+Two divergences worth knowing:
+
+- **The check lands on a close.** Pine evaluates the rule intrabar; a bar-close
+  run can only act at a close, so the halt arrives up to a bar later, and the
+  close it flattens at is the next bar's open. That errs toward showing *more*
+  loss than Pine would, not less, which is the direction to be wrong in.
+- **The intraday reference is a bar, not the session open.** The day's opening
+  equity is taken at the first bar the feed carries for that date. On a feed
+  that starts mid-session, that is not where the session started.
 
 ## The trade counters, and a ledger to answer them from
 
