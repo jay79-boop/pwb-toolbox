@@ -23,7 +23,8 @@ Pick one or combine several:
 |--------|----------|----------|
 | **JSON** (`blueprint-example.json`) | Developers, automation, integration | Structured, version-control friendly, programmatic |
 | **Excel** (`blueprint-template.xlsx`) | Non-technical stakeholders, visual review | Spreadsheet familiarity, easy to share |
-| **Interactive Web Tool** (`blueprint-builder.html`) | Collaborative teams, live editing | No installation, visual dashboards, instant export |
+| **Interactive Builder** (`blueprint-builder.html`) | Creating blueprints from scratch | Form-based editor with export/import |
+| **Visual Dashboard** (`blueprint-dashboard.html`) | Exploring connections visually | 3 views: diagram, canvas editor, status dashboard |
 | **Markdown + YAML** | Documentation-first teams | Human-readable, GitHub-friendly |
 
 ### 2. Understand the Structure
@@ -55,6 +56,7 @@ See **Getting Started** below for detailed guidance.
 
 ### Tools & Templates
 
+- **[Visual Dashboard](blueprint-dashboard.html)** – 3-in-1 interactive view: connection diagram, canvas editor, status dashboard
 - **[Interactive Builder](blueprint-builder.html)** – Web-based editor with export/import (no installation)
 - **[Excel Template](blueprint-template.xlsx)** – Spreadsheet template with tabs for each section
 - **[JSON Template](blueprint-example.json)** – Use as a starting point, customize for your business
@@ -298,7 +300,8 @@ Before considering your blueprint "done":
 4. Add 5-10 main processes
 5. Add 5-10 tools you pay for
 6. Export as JSON
-7. Done!
+7. Open `blueprint-dashboard.html` and load your JSON to visualize
+8. Done!
 
 ### Path 2: "I want to do this right" (2 hours)
 
