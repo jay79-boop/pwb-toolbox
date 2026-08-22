@@ -121,6 +121,12 @@ A worked example, for this repo's 21st MCP key:
   and says when a rung is within reach, a holding has moved, or a position has
   outgrown its limit. Skips anything without a live price rather than alerting
   on a number somebody typed months ago
+- `tools/engagement.py` — tracks a business through the AI & automation
+  readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
+  from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
+  lessons retro. The `engagement-flow` skill is what actually does the phase
+  work; this is the state and the gates. Engagement data lands in
+  `engagements/`, which is gitignored because this fork is public
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
@@ -136,7 +142,8 @@ A worked example, for this repo's 21st MCP key:
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
+  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below) and
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
@@ -201,6 +208,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
+python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
