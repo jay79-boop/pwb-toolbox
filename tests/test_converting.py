@@ -5408,3 +5408,162 @@ def test_a_halt_withdraws_orders_still_resting_on_the_book():
     )
     _, uncancelled = _risk_run(source, rows, mutate=lambda c: c.replace(cancel, "", 1))
     assert uncancelled[-1] == -1  # the short the halt was supposed to prevent
+
+
+# --- the chart's own timeframe, as a number ----------------------------------
+
+
+def test_timeframe_in_seconds_reads_the_feed_it_was_given():
+    """`timeframe.in_seconds()` asks the feed, not a string, which is what lets
+    it be answered from `__init__` as readily as from `next()`.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "secs = timeframe.in_seconds()\n"
+        "if secs > 3600\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self._pine_tf_seconds()" in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+
+    seen = {}
+
+    class Watched(strategy_cls):
+        def next(self):
+            super().next()
+            seen["secs"] = self._pine_tf_seconds()
+
+    for timeframe, compression, expected in (
+        (bt.TimeFrame.Minutes, 60, 3600),
+        (bt.TimeFrame.Minutes, 240, 14400),
+        (bt.TimeFrame.Days, 1, 86400),
+        (bt.TimeFrame.Weeks, 1, 604800),
+    ):
+        cerebro = bt.Cerebro()
+        cerebro.adddata(
+            bt.feeds.PandasData(
+                dataname=_price_frame(bars=30),
+                timeframe=timeframe,
+                compression=compression,
+            )
+        )
+        cerebro.addstrategy(Watched)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        assert seen["secs"] == expected, (timeframe, compression)
+
+
+def test_timeframe_in_seconds_spells_the_written_timeframes_pines_way():
+    """The literal and input forms take the text, so the numbers have to match
+    Pine's: a month is a flat 30 days there, not a calendar one."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'htf = input.timeframe("240", "HTF")\n'
+        'a = timeframe.in_seconds("15")\n'
+        'b = timeframe.in_seconds("D")\n'
+        "c = timeframe.in_seconds(htf)\n"
+        "if a + b + c > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self._pine_tf_seconds('15')" in result.code
+    assert "self._pine_tf_seconds('D')" in result.code
+    # An input keeps its param: unlike a feed's timeframe, this one is only
+    # read, so overriding it at addstrategy still moves the answer.
+    assert "self._pine_tf_seconds(self.p.htf)" in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+
+    seen = {}
+
+    class Watched(strategy_cls):
+        def next(self):
+            super().next()
+            seen["got"] = [
+                self._pine_tf_seconds(t) for t in ("15", "D", "240", "W", "M", "1S")
+            ]
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=30)))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    assert seen["got"] == [900, 86400, 14400, 604800, 2592000, 1]
+
+
+def test_timeframe_period_and_the_bare_call_agree():
+    """`timeframe.in_seconds(timeframe.period)` is the bare call written out,
+    so the two must not lower to different things."""
+
+    def lowered(argument):
+        result = convert(
+            '//@version=6\nstrategy("S")\n'
+            f"secs = timeframe.in_seconds({argument})\n"
+            "if secs > 0\n"
+            '    strategy.entry("L", strategy.long)\n'
+        )
+        assert result.ok, result.unsupported
+        return [l.strip() for l in result.code.splitlines() if "secs =" in l]
+
+    assert (
+        lowered("") == lowered("timeframe.period") == ["secs = self._pine_tf_seconds()"]
+    )
+
+
+def test_a_timeframe_only_known_per_bar_is_reported():
+    """A feed is not built from a value that only exists once bars are running,
+    and neither is the number of seconds in one."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'tf = close > open ? "60" : "240"\n'
+        "secs = timeframe.in_seconds(tf)\n"
+        "if secs > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert not result.ok
+    assert any("timeframe.in_seconds" in i for i in result.unsupported)
+
+
+def test_timeframe_in_seconds_answers_before_the_first_bar():
+    """The reason it reads the feed rather than a string: an indicator chosen
+    by the chart's timeframe has to be chosen when the indicator is built, and
+    `__init__` runs before any bar has arrived.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "secs = timeframe.in_seconds()\n"
+        "if secs > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    asked = {}
+
+    class Watched(namespace[result.class_name]):
+        def __init__(self):
+            asked["in_init"] = self._pine_tf_seconds()
+            super().__init__()
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_price_frame(bars=30),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=240,
+        )
+    )
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    assert asked["in_init"] == 14400

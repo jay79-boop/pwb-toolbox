@@ -357,6 +357,37 @@ _TIME_HELPER = (
     '                return unit if count == 1 else "%d%s" % (count, unit)',
     '        return ""',
     "",
+    "    _PINE_TF_SECONDS = {",
+    "        bt.TimeFrame.Seconds: 1,",
+    "        bt.TimeFrame.Minutes: 60,",
+    "        bt.TimeFrame.Days: 86400,",
+    "        bt.TimeFrame.Weeks: 604800,",
+    "        bt.TimeFrame.Months: 2592000,",
+    "    }",
+    "",
+    "    def _pine_tf_seconds(self, text=None):",
+    '        """Seconds in one bar, as Pine\'s timeframe.in_seconds reports it.',
+    "",
+    "        With no argument it is the feed's own bar, read off the feed rather",
+    "        than off a string -- which is why this can be called from __init__,",
+    "        where the answer is already settled but no bar has arrived yet.",
+    "        Pine's month is a flat 30 days, which is what keeps the answer a",
+    "        number rather than a calendar question.",
+    '        """',
+    "        if text:",
+    "            token = str(text).strip().upper()",
+    "            digits = ''.join(c for c in token if c.isdigit())",
+    "            unit = ''.join(c for c in token if c.isalpha())",
+    "            per = {'S': 1, '': 60, 'D': 86400, 'W': 604800,",
+    "                   'M': 2592000}.get(unit)",
+    "            if per is None:",
+    "                return float('nan')",
+    "            return per * (int(digits) if digits else 1)",
+    "        per = self._PINE_TF_SECONDS.get(self.data._timeframe)",
+    "        if per is None:",
+    "            return float('nan')",
+    "        return per * int(self.data._compression or 1)",
+    "",
     "    def _pine_time(self, seconds=None, ago=0, session=None, tz=None):",
     '        """Opening time in epoch milliseconds, as Pine\'s time() reports it.',
     "",
@@ -2789,6 +2820,17 @@ class _Generator:
             parts = [self._value_expr(a) for a in call.args]
             return f"(({' + '.join(parts)}) / {len(parts)})"
 
+        if call.func == "timeframe.in_seconds":
+            lowered = self._tf_seconds(call)
+            if lowered is None:
+                self._reject(
+                    "timeframe.in_seconds: the timeframe must be the chart's "
+                    "own, a literal string, or an input, because a feed is "
+                    "not built from a value that only exists per bar"
+                )
+                return "None"
+            return lowered
+
         if call.func == "time":
             return self._value_time(call)
 
@@ -3063,6 +3105,30 @@ class _Generator:
 
     #: The timeframe half of the same question, kept under its old name.
     _timeframe_text = _constant_text
+
+    def _tf_seconds(self, call):
+        """``timeframe.in_seconds(...)`` as an expression, or ``None``.
+
+        Unlike a feed's timeframe this one stays live: the helper takes the
+        text, so an input the caller overrides is still read. Only the bare
+        form has to be, since it asks the feed rather than a string.
+
+        Answered from `__init__` as readily as from `next()`, which is the
+        whole point of it -- the commonest use in the corpus picks a moving
+        average by the chart's timeframe, and that choice has to be made
+        when the indicator is built.
+        """
+        self._uses_time = True
+        args = list(call.args)
+        node = args[0] if args else None
+        if node is None or (isinstance(node, Name) and node.id == "timeframe.period"):
+            return "self._pine_tf_seconds()"
+        text, param = self._constant_text(node)
+        if param is not None:
+            return f"self._pine_tf_seconds(self.p.{_safe(param)})"
+        if text is not None:
+            return f"self._pine_tf_seconds({text!r})"
+        return None
 
     def _fold_timestamp(self, call):
         """``timestamp("01 Jan 2020 00:00 +0000")`` as epoch milliseconds."""

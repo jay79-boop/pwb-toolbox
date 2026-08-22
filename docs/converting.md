@@ -106,6 +106,8 @@ duplicate is pure waste.
 | `strategy.cancel_all()` | withdraws every unfilled order, standing exits included |
 | `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
 | `time`, `time[n]` | the bar's own opening stamp, in epoch milliseconds |
+| `timeframe.in_seconds()` | seconds in one bar of the feed, answerable from `__init__` |
+| `timeframe.in_seconds("240")`, or an `input.timeframe` | the same for a written timeframe, the input still live |
 | `timestamp("01 Jan 2020 00:00 +0000")` | the number it means, folded at conversion time |
 | `input.time(...)` | an integer param, so the window moves without an edit |
 | `time(res, session, tz)` | the same, with the feed's clock read as UTC and converted into `tz` |
@@ -318,6 +320,26 @@ The numeric spelling — `timestamp("GMT+0", 2025, 2, 1, 0, 0)` — is refused
 rather than guessed at. It appears once in the corpus, in an indicator, and
 resolving an arbitrary timezone name would mean guessing at a calendar the
 feed does not carry.
+
+### Seconds in a bar
+
+`timeframe.in_seconds()` reads the feed rather than a string, and that is the
+point rather than an implementation detail: the answer is settled before the
+first bar, so it can be asked from `__init__`. Scripts use it to pick an
+indicator by the chart's timeframe —
+
+```pinescript
+mode = timeframe.in_seconds() == 3600 ? smooth1H : timeframe.in_seconds() == 14400 ? smooth4H : 'EMA'
+```
+
+— and that choice has to be made where the indicator is built, not per bar.
+
+The written forms take the text instead, so an `input.timeframe` stays live:
+unlike the timeframe of a `request.security` feed, which is baked in because
+the feed is built before the strategy exists, this one is only read. Pine's
+month is a flat 30 days and its week 7, which is what keeps the answer a
+number rather than a calendar question. A timeframe that is only known per
+bar is reported.
 
 ## Reading history before it exists
 
