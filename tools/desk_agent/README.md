@@ -169,6 +169,45 @@ So the strict list costs nothing that was wanted. Worth stating plainly, because
 the opposite conclusion — "we had to loosen it to make the feature work" — is
 how guardrails usually die.
 
+### What the claim above missed, and what it did not
+
+That "costs nothing that was wanted" claim was checked against the Strategy
+Tester path and held there. It was not checked against the guardrail's own
+broker check, and that is where it failed: the playbook told the agent to open
+the Trading Panel and confirm no broker was linked, but `ui_open_panel` is
+denied — and, worse, **no tool in the bridge reports broker linkage at all**.
+`tv_ui_state` returns which panels are open, not what is connected. Only
+`ui_evaluate` could read it, and that is denied for the reasons that make it
+able to.
+
+So the check was unperformable whatever the permission list said, and every run
+would have abandoned on a precondition it could never satisfy. The agent found
+this on its second unattended run and, correctly, flagged it as an open question
+rather than asserting it — it could neither read the bridge source nor test live
+with CDP down.
+
+The fix is not to loosen the deny list. It is to stop pretending a negative can
+be proven: the guardrail now rests on the permission system and a login
+established broker-free at setup, and the agent's obligation is to **fail closed
+on positive evidence** — an account number, a balance, an order ticket seen in
+passing — rather than to prove absence every run. Re-checking the Pine and
+Strategy Tester paths after this: `pine.js` opens the editor itself through
+`bottomWidgetBar.activateScriptEditorTab()` and `data.js` opens the backtesting
+panel through `showWidget('backtesting')`, so neither needs `ui_open_panel`. That
+part of the claim stands.
+
+### Launching and closing TradingView
+
+`run_job.ps1` records whether TradingView was already running, and closes it
+after the agent exits if it was not — on success, on failure, and on crash.
+
+This lives in the launcher rather than the playbook because the agent's first
+real run got it right for the right reason: it refused to `tv_launch` while it
+had no permitted way to quit, since that would leave an unauthenticated debug
+port open on a sleeping machine. Making shutdown mechanical rather than a
+request the agent has to remember removes the one-way door. If the owner already
+had TradingView open, it is left alone — killing it would destroy their session.
+
 ### What this does and does not buy
 
 It removes the agent's **means** to place an order. It does not remove the

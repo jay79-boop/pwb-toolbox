@@ -105,11 +105,22 @@ if (-not $claude) {
 }
 Write-Log ("claude: " + $claude)
 
+# Whether TradingView was already running decides whether we are allowed to
+# close it afterwards. If the owner had it open, killing it would destroy their
+# session; if the agent started it, leaving it open would leave an
+# unauthenticated debug port on the machine -- which is the risk
+# docs/tradingview-agent-security.md exists for.
+$tvBefore = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
+$tvWasAlreadyRunning = $tvBefore.Count -gt 0
+Write-Log ("tradingview already running: " + $tvWasAlreadyRunning)
+
 # -- run -----------------------------------------------------------------------
 $prompt = @(
   'You are the desk agent running unattended.',
   ('Read tools/desk_agent/playbook.md, then tools/desk_agent/jobs/' + $Job + '.md,'),
   'and carry out that job now.',
+  'If you need a chart and the CDP port is not up, call tv_launch: this launcher',
+  'closes TradingView after you exit, so launching is no longer a one-way door.',
   'Append exactly one run record when you finish, as the playbook describes -',
   'including if you did nothing.'
 ) -join ' '
@@ -123,6 +134,27 @@ try {
   $code = 1
 } finally {
   Pop-Location
+
+  # Close the debug port the agent opened. This lives here rather than in the
+  # playbook on purpose: the agent correctly refused to tv_launch while it had
+  # no permitted way to quit, because launching would have been a one-way door.
+  # Doing it in the launcher makes shutdown mechanical instead of a request the
+  # agent has to remember, and it still runs when the agent crashes.
+  if (-not $tvWasAlreadyRunning) {
+    $tvAfter = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
+    foreach ($proc in $tvAfter) {
+      try {
+        Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+        Write-Log ("closed TradingView pid " + $proc.Id)
+      } catch {
+        Write-Log ("could NOT close TradingView pid " + $proc.Id + ": " + $_.Exception.Message)
+        Write-Log 'WARNING: the CDP debug port may still be open. Close TradingView by hand.'
+      }
+    }
+    if ($tvAfter.Count -eq 0) { Write-Log 'no TradingView process to close' }
+  } else {
+    Write-Log 'left TradingView running: it was already open before this run'
+  }
 }
 
 Write-Log $output

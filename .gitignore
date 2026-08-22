@@ -33,3 +33,9 @@ graphify-out/manifest.json
 # runs.jsonl (the structured record) and out/ (gameplans, Pine reports) stay
 # tracked -- they are the agent's memory and its deliverables.
 tools/desk_agent/logs/
+
+# per-business engagement data (tools/engagement.py) — this fork is public,
+# and a client's process map and findings are confidential. Only the README
+# explaining that is tracked.
+engagements/*
+!engagements/README.md

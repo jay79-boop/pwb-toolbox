@@ -343,7 +343,6 @@ def _unsupported(source):
 @pytest.mark.parametrize(
     "snippet, marker",
     [
-        ("s = request.security('AAPL', '1D', close)\n", "syminfo.tickerid"),
         ("varip count = 0\n", "varip count"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
@@ -915,10 +914,15 @@ def _run_htf(source, feeds=None):
     cerebro = bt.Cerebro()
     data = bt.feeds.PandasData(dataname=_price_frame())
     cerebro.adddata(data)
-    for timeframe, compression in (
-        feeds if feeds is not None else strategy_cls.resample_spec
+    for _symbol, timeframe, compression in (
+        feeds if feeds is not None else strategy_cls.feed_spec
     ):
-        cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+        # Every symbol here is stood up from the same frame; what is being
+        # tested is the wiring, not that two instruments differ.
+        if timeframe is None:
+            cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+        else:
+            cerebro.resampledata(data, timeframe=timeframe, compression=compression)
     cerebro.addstrategy(strategy_cls)
     cerebro.broker.setcash(10_000.0)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
@@ -930,11 +934,11 @@ def _run_htf(source, feeds=None):
 @pytest.mark.parametrize(
     "timeframe, expected",
     [
-        ("D", "(bt.TimeFrame.Days, 1)"),
-        ("1D", "(bt.TimeFrame.Days, 1)"),
-        ("W", "(bt.TimeFrame.Weeks, 1)"),
-        ("240", "(bt.TimeFrame.Minutes, 240)"),
-        ("30S", "(bt.TimeFrame.Seconds, 30)"),
+        ("D", "(None, bt.TimeFrame.Days, 1)"),
+        ("1D", "(None, bt.TimeFrame.Days, 1)"),
+        ("W", "(None, bt.TimeFrame.Weeks, 1)"),
+        ("240", "(None, bt.TimeFrame.Minutes, 240)"),
+        ("30S", "(None, bt.TimeFrame.Seconds, 30)"),
     ],
 )
 def test_security_records_the_feed_it_needs(timeframe, expected):
@@ -981,16 +985,19 @@ def test_chart_timeframe_needs_no_second_feed():
     )
     result = convert(source)
     assert result.ok, result.unsupported
-    assert "resample_spec" not in result.code
+    assert "feed_spec" not in result.code
     assert "h = self.data.close[0]" in result.code
 
 
-def test_security_on_another_symbol_is_reported():
+def test_security_on_another_symbol_asks_for_that_instrument():
+    """A second instrument is a feed to load, and now it is recorded as one."""
     result = convert(
         "//@version=6\nstrategy(\"S\")\nh = request.security('AAPL', 'D', close)\n"
+        "if h > close\n    strategy.close()\n"
     )
-    assert not result.ok
-    assert any("syminfo.tickerid" in item for item in result.unsupported)
+    assert result.ok, result.unsupported
+    assert "('AAPL', bt.TimeFrame.Days, 1)," in result.code
+    assert "h = self.datas[1].close[0]" in result.code
 
 
 def test_lookahead_on_is_reported():
@@ -1019,7 +1026,7 @@ def test_timeframe_from_a_param_says_the_param_cannot_move_the_feed():
     """A knob that looks live and is not would be a silently wrong backtest."""
     result = convert(HTF_STRATEGY)
     assert result.ok, result.unsupported
-    assert any("htfTF" in item and "resample_spec" in item for item in result.ignored)
+    assert any("htfTF" in item and "feed_spec" in item for item in result.ignored)
 
 
 def test_security_with_a_non_literal_timeframe_is_reported():
@@ -4057,7 +4064,7 @@ def test_a_composed_security_expression_survives_a_run():
 
 def test_the_line_path_still_records_the_feed_to_supply():
     result = convert(HTF_INDICATOR_STRATEGY)
-    assert "resample_spec" in result.code
+    assert "feed_spec" in result.code
     assert "needs 2 data feeds" in result.code
 
 
@@ -4073,10 +4080,6 @@ def test_the_line_path_still_records_the_feed_to_supply():
             'request.security(syminfo.tickerid, "240", high,'
             " lookahead=barmerge.lookahead_on)",
             "lookahead_on reads a bar before it closes",
-        ),
-        (
-            'request.security("SPY", "240", close)',
-            "needs a second instrument",
         ),
         (
             'request.security(syminfo.tickerid, "zz", close)',
@@ -4113,7 +4116,7 @@ def test_generated_htf_indicator_strategy_runs_and_trades():
     cerebro = bt.Cerebro()
     frame = _price_frame(bars=600)
     cerebro.adddata(bt.feeds.PandasData(dataname=frame))
-    for timeframe, compression in strategy.resample_spec:
+    for _symbol, timeframe, compression in strategy.feed_spec:
         cerebro.resampledata(
             bt.feeds.PandasData(dataname=frame),
             timeframe=timeframe,
@@ -4769,3 +4772,222 @@ def test_history_reads_on_the_first_bars_cannot_see_the_future():
     ]
     strategy = _fill_run(source, rows)
     assert strategy.position.size == 0
+
+
+# --- history at an offset only known per bar ---------------------------------
+
+
+def test_a_computed_offset_reads_history():
+    """`close[rsPeriod]` where rsPeriod is a param, not a constant."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(10, "N")\n'
+        "v = close[n]\n"
+        "if v > close\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "v = self._pine_back(self.data.close, self.p.n)" in result.code
+
+
+def test_a_computed_offset_reads_an_indicators_history():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(3, "N")\n'
+        "m = ta.sma(close, 20)\n"
+        "v = m[n]\n"
+        "if v > close\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "v = self._pine_back(self._sma_1, self.p.n)" in result.code
+
+
+def test_reading_back_past_the_start_answers_na_not_the_future():
+    """Backtrader's `line[-step]` past the start returns a bar from the *end*.
+
+    The series is preloaded, so Python's negative indexing wraps: on bar 1 of
+    a thirty-bar feed, `close[5]` hands back bar 26. Not an error, not `na` --
+    a price the strategy could not have seen. A constant offset is handled by
+    sitting the early bars out; a computed one has to be checked where it is
+    read, and this is that check.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(5, "N")\n'
+        "var float seen = 0.0\n"
+        "var int leaks = 0\n"
+        "seen := close[n]\n"
+        "if na(close[n])\n"
+        "    leaks := leaks\n"
+        "else\n"
+        "    leaks := leaks + 1\n"
+        "if close > open\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    closes = [100.0 + i for i in range(30)]
+    start = datetime.datetime(2022, 1, 1)
+    frame = pd.DataFrame(
+        [
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": 1000,
+            }
+            for i, close in enumerate(closes)
+        ]
+    ).set_index("datetime")
+
+    readings = {}
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            readings[len(self)] = self.seen
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(Watched)
+    cerebro.run()
+
+    # The first five bars cannot reach five back, and must say so.
+    for bar in range(1, 6):
+        assert readings[bar] != readings[bar], f"bar {bar} answered {readings[bar]}"
+    # From the sixth they are ordinary reads, and never a future price.
+    for bar in range(6, len(closes) + 1):
+        assert readings[bar] == closes[bar - 1 - 5]
+    assert max(v for v in readings.values() if v == v) < closes[-1]
+
+
+def test_a_computed_offset_on_something_that_is_not_a_series_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(5, "N")\n'
+        "var float acc = 0.0\n"
+        "acc := acc + close\n"
+        "v = acc[n]\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs a series to read back over" in i for i in result.unsupported)
+
+
+def test_the_back_helper_is_only_emitted_when_it_is_used():
+    assert "_pine_back" not in convert(DUAL_MA).code
+
+
+# --- a second instrument -----------------------------------------------------
+
+RELATIVE_STRENGTH = """//@version=6
+strategy("RS")
+peerSymbol = input.symbol("SPY", "Comparative Symbol")
+lookback = input.int(20, "Lookback")
+base = request.security(syminfo.tickerid, timeframe.period, close)
+peer = request.security(peerSymbol, timeframe.period, close)
+rs = (base / base[lookback]) / (peer / peer[lookback]) - 1
+if rs > 0
+    strategy.entry("l", strategy.long)
+if rs < 0
+    strategy.close()
+"""
+
+
+def test_a_named_symbol_becomes_a_feed_to_load():
+    result = convert(RELATIVE_STRENGTH)
+    assert result.ok, result.unsupported
+    assert "('SPY', None, None)," in result.code
+    assert "peer = self.datas[1].close[0]" in result.code
+
+
+def test_input_symbol_is_a_param_that_cannot_move_the_feed():
+    """Same reasoning as a timeframe: the feed is chosen before the strategy.
+
+    The param stays, because the script may read it elsewhere, and the
+    conversion says plainly that it is no longer wired to the data.
+    """
+    result = convert(RELATIVE_STRENGTH)
+    assert "('peerSymbol', 'SPY')," in result.code
+    assert any("peerSymbol" in item and "feed_spec" in item for item in result.ignored)
+
+
+def test_a_symbol_and_a_timeframe_are_separate_feeds():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "peer = request.security('SPY', timeframe.period, close)\n"
+        "htf = request.security(syminfo.tickerid, '1D', close)\n"
+        "both = request.security('SPY', '1D', close)\n"
+        "if peer > htf and both > 0\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "('SPY', None, None)," in result.code
+    assert "(None, bt.TimeFrame.Days, 1)," in result.code
+    assert "('SPY', bt.TimeFrame.Days, 1)," in result.code
+    assert "needs 4 data feeds" in result.code
+
+
+def test_two_reads_of_one_symbol_share_a_feed():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "a = request.security('SPY', 'D', close)\n"
+        "b = request.security('SPY', 'D', high)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert result.code.count("('SPY', bt.TimeFrame.Days, 1),") == 1
+    assert "self.datas[2]" not in result.code
+
+
+def test_a_symbol_that_is_not_a_constant_is_reported():
+    """The feed is loaded before the strategy, so the name has to be known."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "sym = close > open ? 'SPY' : 'QQQ'\n"
+        "peer = request.security(sym, 'D', close)\n"
+        "if peer > close\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("must be a literal string" in i for i in result.unsupported)
+
+
+def test_a_second_instrument_still_refuses_lookahead():
+    """Naming another symbol must not become a way around the lookahead guard."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "peer = request.security('SPY', '240', close, barmerge.gaps_off,"
+        " barmerge.lookahead_on)\n"
+        "if peer > close\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("lookahead_on reads a bar" in i for i in result.unsupported)
+
+
+def test_generated_relative_strength_strategy_runs_on_two_instruments():
+    """The whole point: a strategy that compares one symbol against another."""
+    result = convert(RELATIVE_STRENGTH)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+    assert strategy_cls.feed_spec == (("SPY", None, None),)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(seed=1)))
+    for _symbol, timeframe, compression in strategy_cls.feed_spec:
+        peer = bt.feeds.PandasData(dataname=_price_frame(seed=99))
+        if timeframe is None:
+            cerebro.adddata(peer)
+        else:
+            cerebro.resampledata(peer, timeframe=timeframe, compression=compression)
+    cerebro.addstrategy(strategy_cls)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+
+    closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
+    assert closed > 0

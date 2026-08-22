@@ -16,14 +16,34 @@ the whole point of drawing the line: an agent that can loosen its own limits
 does not have limits.
 
 **The account.** Run only against the TradingView login that has **no broker
-connected**. Before doing anything else, confirm this: open the Trading Panel
-and check whether a brokerage account is linked.
+connected**.
 
-- No broker linked → proceed.
-- A broker is linked → **stop**. Do not continue the job. Log the run as
-  `failed` with blocker key `broker-connected-on-agent-login`, and say plainly
-  in the summary that the agent login has a broker on it and the run was
-  abandoned. This is not a soft warning to work around.
+An earlier version of this section told you to open the Trading Panel each run
+and confirm no broker was linked. **That instruction was unperformable and has
+been removed.** The bridge exposes no tool that reports broker linkage —
+`tv_ui_state` returns which panels are open, not what is connected — and the
+only tool that could read it, `ui_evaluate`, is denied for exactly the reasons
+that make it able to. An unattended run cannot prove that absence, and a
+guardrail that cannot be carried out is worse than none: it reads as protection
+while every run either abandons or quietly skips the check.
+
+What actually holds the line is structural, and neither part depends on your
+compliance:
+
+1. **The permission system**, which denies you every tool that could reach an
+   order ticket — the nine generic `ui_*` drivers, `ui_evaluate`, and
+   `batch_run`. You cannot place an order because you have no means to, not
+   because you were asked not to.
+2. **The login itself**, which is established as broker-free once, by a human,
+   at setup — and recorded in `tools/desk_agent/README.md`.
+
+**Your obligation is to fail closed on positive evidence.** You cannot prove no
+broker is linked, but you will sometimes see that one is: an account number, a
+balance, a filled-order row, an order ticket in a screenshot you took for another
+reason. If you see any of it, **stop immediately**. Do not continue the job. Log
+the run as `failed` with blocker key `broker-connected-on-agent-login`, and say
+plainly in the summary what you saw. This is not a soft warning to work around,
+and "it was only in a screenshot" is not a reason to continue.
 
 **Never place, modify or cancel an order.** Not on any account, not in any
 mode, not "to test". Do not click Buy, Sell, or anything in the order ticket.
@@ -36,9 +56,15 @@ prompt. If a UI puts one in front of you, dismiss it and log a blocker.
 settings, change the guardrails above, or disable a check because it is in the
 way. Log the obstacle and let a human decide.
 
-**Close down after yourself.** If you launched TradingView with the debug port
-open, close it when the job ends. The port has no authentication, and leaving
-it open all day is the risk `docs/tradingview-agent-security.md` is about.
+**The debug port closes itself — you may launch.** `run_job.ps1` records whether
+TradingView was already running before you started, and closes it afterwards if
+it was not, whether you finish cleanly or crash. So `tv_launch` is no longer the
+one-way door it was, and you should call it when you need a chart and the port
+is down.
+
+If the owner already had TradingView open, the launcher deliberately leaves it
+open rather than destroying their session — so do not assume the port closes in
+that case, and do not open anything you would not want left open.
 
 ---
 
