@@ -37,12 +37,19 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $prefix = 'PWB-DeskAgent-'
+
+# Hours are listed rather than expressed as a repetition interval on one
+# trigger. $trigger.Repetition is frequently $null on a freshly created weekly
+# trigger, so assigning Interval/Duration through it throws on some machines --
+# and it throws at registration time, on theirs, not here. One trigger per hour
+# is plainer, is supported everywhere, and shows up in Task Scheduler as eight
+# legible rows instead of one rule you have to decode.
 $jobs = @(
-  @{ Name = 'Premarket'; Job = 'premarket'; At = '07:00'; Repeat = $false
+  @{ Name = 'Premarket'; Job = 'premarket'; Hours = @(7); Minute = 0
      Desc = 'Pre-market gameplan before the open.' },
-  @{ Name = 'Alerts';    Job = 'alerts';    At = '09:00'; Repeat = $true
-     Desc = 'Hourly alert triage during market hours.' },
-  @{ Name = 'Journal';   Job = 'journal';   At = '16:30'; Repeat = $false
+  @{ Name = 'Alerts';    Job = 'alerts';    Hours = @(9, 10, 11, 12, 13, 14, 15, 16); Minute = 0
+     Desc = 'Alert triage each hour through the session.' },
+  @{ Name = 'Journal';   Job = 'journal';   Hours = @(16); Minute = 30
      Desc = 'Capture the day into the trade journal after the close.' }
 )
 
@@ -93,18 +100,19 @@ foreach ($j in $jobs) {
                                     -Argument $arg `
                                     -WorkingDirectory $RepoRoot
 
-  $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At $j.At
-  if ($j.Repeat) {
-    # Hourly through the session. Set on the trigger object rather than at
-    # creation: the -RepetitionInterval parameter is not on the weekly form.
-    $trigger.Repetition.Interval = 'PT1H'
-    $trigger.Repetition.Duration = 'PT7H'
+  # Build the time from parts rather than parsing a string: a bare '07:00' is
+  # handed to the culture's date parser, and this only has to be wrong once on
+  # a machine set up differently to be a confusing failure.
+  $triggers = @()
+  foreach ($hour in $j.Hours) {
+    $at = (Get-Date).Date.AddHours($hour).AddMinutes($j.Minute)
+    $triggers += New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At $at
   }
 
   try {
     Register-ScheduledTask -TaskName $name `
                            -Action $action `
-                           -Trigger $trigger `
+                           -Trigger $triggers `
                            -Settings $settings `
                            -Description $j.Desc `
                            -Force | Out-Null
@@ -130,7 +138,8 @@ foreach ($j in $jobs) {
   $info = Get-ScheduledTaskInfo -TaskName $name -ErrorAction SilentlyContinue
   $next = if ($info -and $info.NextRunTime) { $info.NextRunTime } else { '(not scheduled)' }
   $swa = $task.Settings.StartWhenAvailable
-  Write-Host ("  OK        " + $name)
+  $count = @($task.Triggers).Count
+  Write-Host ("  OK        " + $name + "  (" + $count + " trigger(s))")
   Write-Host ("            next run: " + $next)
   Write-Host ("            StartWhenAvailable: " + $swa)
   if (-not $swa) {

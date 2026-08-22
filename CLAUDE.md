@@ -375,6 +375,17 @@ not.** As of 2026-08-18, both directories have `jay` = the fork
 the shell happens to be in, and fails by succeeding against the wrong project
 rather than by erroring.
 
+**Never hand over a `merge` or `checkout` without the `fetch` on the same line.**
+Both fail by succeeding. `git checkout <branch>` on a branch that already exists
+locally is a no-op that reports "Already on ..." and brings nothing down;
+`git merge --ff-only jay/<branch>` merges the remote-tracking ref *as of the last
+fetch*, so it happily fast-forwards to a commit that is already stale. Each cost a
+round trip on 2026-08-22, and in both cases the terminal said what had happened —
+"Your branch is behind ... by 2 commits" — while the next step failed with an
+unrelated-looking error about a missing file. Write
+`git fetch jay <branch>; git merge --ff-only jay/<branch>` as one line, every time,
+and end it with a `Test-Path` on a file the new commit adds so success is visible.
+
 **So use `jay` and `upstream` explicitly and never write a bare `origin`
 command.** `git fetch jay <branch>` now works identically in both — which was not
 true before: the second checkout had no `jay` remote at all, so the command this

@@ -92,7 +92,10 @@ if (-not $claude) {
   if ($found) { $claude = $found.Source }
 }
 
-Write-Log ("[" + (Get-Date).ToString('u') + "] job=" + $Job + " repo=" + $RepoRoot)
+# ToUniversalTime matters: ToString('u') appends a 'Z' but does NOT convert, so
+# a local timestamp goes into the log labelled as UTC and disagrees with
+# runs.jsonl, which is real UTC.
+Write-Log ("[" + (Get-Date).ToUniversalTime().ToString('u') + "] job=" + $Job + " repo=" + $RepoRoot)
 
 if (-not $claude) {
   Write-Log 'Claude Code not found (looked for claude.exe then claude.cmd).'

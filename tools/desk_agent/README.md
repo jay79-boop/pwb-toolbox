@@ -124,9 +124,55 @@ is the precise failure the rule exists to prevent.
 
 ## Permissions
 
-`.claude/settings.json` allowlists the handful of commands these jobs actually
-need. It deliberately does **not** use `--dangerously-skip-permissions`: an
-unattended agent hitting a permission it lacks should fail loudly, log a
-blocker, and have the weekly review surface it once it recurs. That feedback
-loop is the intended way the allowlist grows — narrowly, with a reason, and in
-a reviewable commit.
+`.claude/settings.json` classifies **every one of the bridge's 84 tools**, by
+name, as allowed or denied. Nothing is left to omission by accident — checking
+that each tool appears in exactly one list is cheap, and the first version of
+this file allowlisted the Bash commands and forgot the MCP tools entirely.
+That is not a gap at the margins; it is the agent having no chart access at
+all. The first unattended run was denied on its very first call and could not
+even establish whether it was permitted to proceed.
+
+The reasoning that produced the hole is still right and is kept: this
+deliberately does **not** use `--dangerously-skip-permissions`, because an
+unattended agent hitting a permission it lacks should fail loudly and log a
+blocker rather than quietly having root. What was wrong was treating "fail
+loudly" as sufficient without also granting the tools the jobs obviously need.
+Loud failure is a safety net, not a configuration.
+
+### What is denied, and why those twelve
+
+| denied | why |
+| --- | --- |
+| `ui_evaluate` | runs arbitrary JavaScript in the logged-in page. The most dangerous tool here by a distance: it can do anything the page can, order entry included. |
+| `ui_click`, `ui_mouse_click`, `ui_type_text`, `ui_keyboard`, `ui_hover`, `ui_scroll`, `ui_open_panel`, `ui_find_element`, `ui_fullscreen` | generic UI driving. The Buy button is a DOM element like any other. |
+| `batch_run` | composes arbitrary tool calls, so it routes around every line above. |
+| `tv_update` | changes the bridge's own code unattended, which would silently invalidate the audit in `docs/tradingview-agent-security.md`. |
+
+These sit in `deny` rather than merely being absent from `allow`, because deny
+beats allow: a later blanket grant of the whole server cannot quietly
+re-enable them.
+
+### The step this was expected to cost, and did not
+
+The obvious objection is that locking out `ui_click` breaks premarket step 3 —
+deploy a strategy and read the Strategy Tester. Checked against the bridge's
+source rather than assumed, it does not:
+
+- `data_get_strategy_results`, `data_get_equity` and `data_get_trades` read
+  `dataSources()` and `performance()` straight off the chart model.
+  `src/core/data.js` imports nothing from `core/ui.js`.
+- `pine_save`, `pine_compile` and `pine_smart_compile` do click Pine editor
+  buttons — but inside their own implementations, on named editor controls. The
+  agent never needs the generic clicking tool to get a script deployed.
+
+So the strict list costs nothing that was wanted. Worth stating plainly, because
+the opposite conclusion — "we had to loosen it to make the feature work" — is
+how guardrails usually die.
+
+### What this does and does not buy
+
+It removes the agent's **means** to place an order. It does not remove the
+port's **power** to: anything holding a CDP connection can still drive the
+chart, which is what `docs/tradingview-agent-security.md` is about and why the
+broker-free login stays the load-bearing control. Defence in depth, not a
+replacement for it.
