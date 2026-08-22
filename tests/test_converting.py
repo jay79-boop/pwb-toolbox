@@ -343,7 +343,7 @@ def _unsupported(source):
 @pytest.mark.parametrize(
     "snippet, marker",
     [
-        ("varip count = 0\n", "varip count"),
+        ("while true\n    x = close\n", "while"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
         ("a = array.new_float(0)\n", "array.new_float"),
@@ -391,8 +391,10 @@ def test_convert_notes_indicator_scripts_place_no_orders():
 
 
 def test_unsupported_items_appear_in_generated_docstring():
-    code = convert('//@version=5\nstrategy("S")\nvarip c = 0\n').code
-    assert "Not translated" in code and "varip c" in code
+    code = convert(
+        '//@version=5\nstrategy("S")\n[m, s, h] = ta.macd(close, 12, 26, 9)\n'
+    ).code
+    assert "Not translated" in code and "tuple destructuring" in code
 
 
 def test_reserved_names_are_renamed_to_avoid_clobbering_strategy_attrs():
@@ -1147,11 +1149,60 @@ def test_var_with_a_non_literal_initialiser_is_reported():
     assert any("literal initial value" in item for item in result.unsupported)
 
 
-def test_varip_is_still_refused():
-    """varip updates intrabar; a bar-close run has no ticks to update on."""
-    result = convert('//@version=6\nstrategy("S")\nvarip int n = 0\n')
-    assert not result.ok
-    assert any("intrabar" in item for item in result.unsupported)
+def test_varip_is_read_as_var():
+    """`varip` and `var` differ only on a realtime bar, where varip is not
+    rolled back between ticks. A backtest has no realtime bars, and Pine's own
+    documentation says the distinction cannot be reproduced on historical ones
+    -- so on the bars a backtest runs, reading varip as var is what Pine
+    itself does rather than an approximation of it.
+
+    Refusing it used to cascade: the name never entered scope, so every later
+    read and every reassignment reported separately. Three corpus strategies
+    spent about seventy per cent of their gap lists on that one refusal.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "varip int n = 0\n"
+        "if close > open\n"
+        "    n := n + 1\n"
+        "if n > 3\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "self.n = 0" in result.code
+    assert "self.n = (self.n + 1)" in result.code
+    # Noted rather than silent: the author wanted intrabar behaviour
+    # somewhere, and a live run is where they would not get it.
+    assert any("varip read as var" in item for item in result.notes)
+
+
+def test_varip_and_var_generate_the_same_code():
+    """The claim in one assertion: on the bars a backtest has there is no
+    difference between the two to generate.
+
+    Compared past the docstring, which is the one place they *should* differ
+    -- the varip reading is recorded there, and recording it is the point.
+    """
+
+    def body_for(qualifier):
+        code = convert(
+            '//@version=6\nstrategy("S")\n'
+            f"{qualifier} int n = 0\n"
+            "if close > open\n"
+            "    n := n + 1\n"
+            "if n > 3\n"
+            '    strategy.entry("L", strategy.long)\n'
+        ).code
+        # Everything after the class docstring's closing quotes.
+        return code.split('"""', 2)[2]
+
+    assert body_for("varip") == body_for("var")
+    assert (
+        "varip"
+        in convert(
+            '//@version=6\nstrategy("S")\nvarip int n = 0\nif n > 3\n    strategy.close()\n'
+        ).code
+    )  # the note itself survives into the generated docstring
 
 
 def test_var_history_access_is_reported():
@@ -2154,8 +2205,9 @@ def test_a_stateful_call_from_inside_an_if_is_reported():
     assert any("top-level statement" in i for i in result.unsupported)
 
 
-def test_varip_in_a_body_is_refused_for_being_intrabar():
-    """The objection to varip is ticks, not inlining -- say the right one."""
+def test_varip_in_a_body_carries_state_the_way_var_does():
+    """A function body gets the same reading, and keeps the per-call-site
+    state that makes an inlined Pine function behave like Pine's."""
     source = (
         '//@version=6\nstrategy("S")\n'
         "f(x) =>\n"
@@ -2163,10 +2215,30 @@ def test_varip_in_a_body_is_refused_for_being_intrabar():
         "    a := a + x\n"
         "    a\n"
         "y = f(close)\n"
+        "if y > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
     )
     result = convert(source)
-    assert not result.ok
-    assert any("updates intrabar" in i for i in result.unsupported)
+    assert result.ok, result.unsupported
+    assert any("varip read as var" in i for i in result.notes)
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    seen = []
+
+    class Watched(namespace[result.class_name]):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=40)))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(100_000.0)
+    cerebro.run()
+    # The running total climbs from the first bar, so the entry fires and the
+    # state is genuinely carried rather than reset each bar.
+    assert seen[-1] > 0
 
 
 def test_a_non_literal_var_initial_value_is_reported():
@@ -4991,3 +5063,821 @@ def test_generated_relative_strength_strategy_runs_on_two_instruments():
 
     closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
     assert closed > 0
+
+
+# --- the date window, and the risk rules that stop a strategy ----------------
+
+
+def test_pine_timestamp_spellings_fold_to_epoch_milliseconds():
+    """Every spelling in the corpus, and the ones nothing there happens to use.
+
+    A timestamp is a constant, so it is folded here rather than parsed again on
+    every bar. Getting the fold wrong would move a strategy's start date by
+    hours or years without anything failing, so the numbers are pinned.
+    """
+    from pwb_toolbox.converting.backtrader import parse_timestamp
+
+    assert parse_timestamp("01 Jan 2020 00:00 +0000") == 1577836800000
+    assert parse_timestamp("31 Dec 2030 23:59 +0000") == 1924991940000
+    assert parse_timestamp("01 Jan 2024") == 1704067200000
+    assert parse_timestamp("2023-01-01") == 1672531200000
+    assert parse_timestamp("2025-08-20 00:00") == 1755648000000
+    assert parse_timestamp("2024-06-01T12:30:00") == 1717245000000
+    # No offset means UTC, which is what Pine assumes when none is given.
+    assert parse_timestamp("01 Jan 2020 00:00") == parse_timestamp(
+        "01 Jan 2020 00:00 +0000"
+    )
+    # An offset is honoured rather than ignored.
+    assert parse_timestamp("01 Jan 2020 00:00 +0200") == 1577836800000 - 2 * 3600 * 1000
+
+
+def test_a_timestamp_that_is_not_a_literal_date_is_reported():
+    """The value has to be known before the run, so a shape that cannot be
+    folded is reported rather than guessed at.
+
+    ``timestamp("GMT+0", 2025, 2, 1, 0, 0)`` -- the numeric form with a
+    timezone -- is the one shape in the corpus this does not read. It appears
+    once, in an indicator, so it is a named gap rather than a silent one.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'start = timestamp("GMT+0", 2025, 2, 1, 0, 0)\n'
+        "if time > start\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("only a literal date string" in i for i in result.unsupported)
+
+
+def test_a_timestamp_is_folded_rather_than_parsed_on_every_bar():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("01 Jan 2020 00:00 +0000"), "From")\n'
+        "if time > dFrom\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "('dFrom', 1577836800000)," in result.code
+    assert "timestamp(" not in result.code
+    assert "strptime" not in result.code
+
+
+def test_input_time_becomes_a_param_the_run_can_override():
+    """The date window is the most-overridden input there is -- walking a
+    strategy forward means moving it -- so it has to be a live param.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("09 Mar 2022 00:00 +0000"), "From")\n'
+        'dTo = input.time(timestamp("11 Mar 2022 00:00 +0000"), "To")\n'
+        "inRange = time >= dFrom and time <= dTo\n"
+        "if inRange\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [(100, 101, 99, 100)] * 7
+    strategy = _fill_run(source, rows)
+    assert strategy.p.dFrom == 1646784000000  # 9 March 2022, UTC
+    assert strategy.p.dTo == 1646956800000  # 11 March 2022, UTC
+    assert strategy.position.size == 1
+
+    moved = _fill_run(source, rows, dFrom=0, dTo=1)
+    assert moved.p.dFrom == 0
+    # A window that closed before the feed starts lets nothing through, which
+    # it could not do if the dates had been folded into the body.
+    assert moved.position.size == 0
+
+
+def _window_sizes(source, rows, **params):
+    """Position size at the close of every bar."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_explicit_frame(rows)))
+    cerebro.addstrategy(Watched, **params)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    return seen
+
+
+def test_a_date_window_gates_the_entries_and_shuts_the_position_after_it():
+    """The shape nine of the corpus strategies are written in: an input.time
+    pair, a `time` comparison, and every order behind it.
+
+    The feed runs 7 March to 13 March; the window is 9 March to 11 March. An
+    entry inside it fills on the next bar's open, and the bar after the window
+    shuts closes what is left.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'dFrom = input.time(timestamp("09 Mar 2022 00:00 +0000"), "From")\n'
+        'dTo = input.time(timestamp("11 Mar 2022 00:00 +0000"), "To")\n'
+        "inRange = time >= dFrom and time <= dTo\n"
+        "if inRange\n"
+        '    strategy.entry("L", strategy.long)\n'
+        "if not inRange\n"
+        '    strategy.close("L")\n'
+    )
+    rows = [(100, 101, 99, 100)] * 7
+    #        7th 8th 9th 10th 11th 12th 13th
+    assert _window_sizes(source, rows) == [0, 0, 0, 1, 1, 1, 0]
+    # The control: with the window opened wide the same script is long from
+    # the second bar and never lets go, so the window is what shaped the run.
+    assert _window_sizes(source, rows, dFrom=0, dTo=99999999999999) == [
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+    ]
+
+
+def test_a_risk_rule_reads_its_limit_and_its_basis():
+    """`strategy.percent_of_equity` and `strategy.cash` mean different numbers,
+    and Pine's default when neither is named is percent."""
+
+    def emitted(line):
+        result = convert(
+            '//@version=6\nstrategy("S")\n'
+            + line
+            + "\nif close > 0\n    strategy.close()\n"
+        )
+        assert result.ok, result.unsupported
+        return [
+            l.strip()
+            for l in result.code.splitlines()
+            if "_pine_risk(" in l and not l.strip().startswith("def ")
+        ]
+
+    assert emitted("strategy.risk.max_drawdown(20)") == [
+        "self._pine_risk(20, True, False)"
+    ]
+    assert emitted("strategy.risk.max_drawdown(20, strategy.percent_of_equity)") == [
+        "self._pine_risk(20, True, False)"
+    ]
+    assert emitted("strategy.risk.max_drawdown(40, strategy.cash)") == [
+        "self._pine_risk(40, False, False)"
+    ]
+    assert emitted(
+        "strategy.risk.max_intraday_loss(5, strategy.percent_of_equity)"
+    ) == ["self._pine_risk(5, True, True)"]
+    assert emitted("strategy.risk.max_intraday_loss(250, strategy.cash)") == [
+        "self._pine_risk(250, False, True)"
+    ]
+
+
+def test_a_risk_rule_without_a_limit_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown()\n"
+        "if close > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs a limit" in i for i in result.unsupported)
+
+
+def test_a_strategy_with_no_risk_rule_carries_no_halt_check():
+    """The halt flags exist only alongside the rule that sets them, so the
+    check that reads them has to be emitted alongside it too. Emitting it
+    unconditionally made every entry raise AttributeError.
+    """
+    plain = convert(
+        '//@version=6\nstrategy("S")\n'
+        "if close > open\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert plain.ok, plain.unsupported
+    assert "_pine_entry" in plain.code
+    assert "_pine_halted" not in plain.code
+
+    guarded = convert(
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown(20)\n"
+        "if close > open\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert guarded.ok, guarded.unsupported
+    assert "if self._pine_halted or self._pine_day_halted:" in guarded.code
+
+
+#: Enters every bar it can, so anything that stops it showing up as flat is
+#: the risk rule rather than the entry condition running out.
+ALWAYS_ENTERS = (
+    '//@version=6\nstrategy("S")\n'
+    "strategy.risk.max_drawdown(40, strategy.cash)\n"
+    "if close > 0\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+#: 1 unit bought near 100 against 10,000 of cash, then a collapse to 55. The
+#: equity drop is 45 -- past a 40-of-cash limit, nowhere near 20% of equity.
+COLLAPSE = [(100, 101, 99, 100)] * 3 + [(55, 56, 54, 55)] * 3
+
+
+def _risk_run(source, rows, mutate=None, **params):
+    """Run a conversion, optionally mutating the generated source first.
+
+    Returns the strategy and the position size at the close of every bar. The
+    mutation hook is how each guard gets tested on its own: take one line out
+    and the run has to change.
+    """
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    code = result.code if mutate is None else mutate(result.code)
+    namespace = {}
+    exec(compile(code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_explicit_frame(rows)))
+    cerebro.addstrategy(Watched, **params)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0], seen
+
+
+def test_a_drawdown_breach_flattens_the_position_and_keeps_it_flat():
+    strategy, sizes = _risk_run(ALWAYS_ENTERS, COLLAPSE)
+    assert sizes == [0, 1, 1, 1, 0, 0]
+    assert strategy._pine_halted is True
+
+    # The control: the same tape with the rule taken out holds the position to
+    # the end, so the collapse is not what closed it -- the rule is.
+    control = ALWAYS_ENTERS.replace(
+        "strategy.risk.max_drawdown(40, strategy.cash)\n", ""
+    )
+    _, unguarded = _risk_run(control, COLLAPSE)
+    assert unguarded == [0, 1, 1, 1, 1, 1]
+
+
+def test_the_halt_flag_is_what_refuses_the_entries_after_a_breach():
+    """Flattening is only half of it. Pine places no new orders after a breach,
+    and this script asks for one on every bar -- so with the check taken out of
+    `_pine_entry` it walks straight back in on the next bar.
+    """
+    guard = (
+        "        if self._pine_halted or self._pine_day_halted:\n"
+        "            # A risk rule stopped trading; Pine places no new orders.\n"
+        "            return\n"
+    )
+    _, sizes = _risk_run(
+        ALWAYS_ENTERS, COLLAPSE, mutate=lambda c: c.replace(guard, "", 1)
+    )
+    assert sizes[-1] == 1
+    assert sizes != [0, 1, 1, 1, 0, 0]
+
+
+def test_a_percent_limit_is_measured_against_equity_not_currency():
+    """Reading the basis backwards is silent: the number is the same, and only
+    the tape says which one was meant. On this collapse a 40-of-cash limit
+    halts and a 20-percent limit does not, so the pair pins the reading.
+    """
+    cash_rule, cash_sizes = _risk_run(ALWAYS_ENTERS, COLLAPSE)
+    assert cash_rule._pine_halted is True
+    assert cash_sizes[-1] == 0
+
+    percent = ALWAYS_ENTERS.replace(
+        "40, strategy.cash", "20, strategy.percent_of_equity"
+    )
+    percent_rule, percent_sizes = _risk_run(percent, COLLAPSE)
+    assert percent_rule._pine_halted is False
+    assert percent_sizes[-1] == 1
+
+
+def _hourly_frame(days):
+    """Hourly bars, `days` being a list of per-day (open, high, low, close)."""
+    out = []
+    for day, rows in enumerate(days):
+        stamp = datetime.datetime(2022, 3, 7 + day, 10, 0)
+        for o, h, l, c in rows:
+            out.append(
+                {
+                    "datetime": stamp,
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": 1000,
+                }
+            )
+            stamp += datetime.timedelta(hours=1)
+    return pd.DataFrame(out).set_index("datetime")
+
+
+def _intraday_run(source, days, mutate=None):
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    code = result.code if mutate is None else mutate(result.code)
+    namespace = {}
+    exec(compile(code, "<converted>", "exec"), namespace)
+
+    seen = []
+    base = namespace[result.class_name]
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_hourly_frame(days),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=60,
+        )
+    )
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0], seen
+
+
+INTRADAY_RULE = ALWAYS_ENTERS.replace(
+    "strategy.risk.max_drawdown(40, strategy.cash)",
+    "strategy.risk.max_intraday_loss(40, strategy.cash)",
+)
+
+#: Six hourly bars over two days: the collapse and the halt on the first, a
+#: fresh start on the second.
+TWO_DAYS = [
+    [(100, 101, 99, 100)] * 3 + [(55, 56, 54, 55)] * 3,
+    [(55, 56, 54, 55)] * 3,
+]
+
+
+def test_an_intraday_loss_halt_lifts_when_the_day_turns():
+    """`max_intraday_loss` stops the day, not the backtest. The difference is
+    the whole reason it is a separate rule from `max_drawdown`.
+    """
+    strategy, sizes = _intraday_run(INTRADAY_RULE, TWO_DAYS)
+    assert sizes == [0, 1, 1, 1, 0, 0, 0, 1, 1]
+    # Neither flag survives the day boundary: the run is trading again.
+    assert strategy._pine_halted is False
+    assert strategy._pine_day_halted is False
+
+
+def test_without_the_day_reset_an_intraday_halt_never_lifts():
+    _, sizes = _intraday_run(
+        INTRADAY_RULE,
+        TWO_DAYS,
+        mutate=lambda c: c.replace(
+            "            self._pine_day_halted = False\n", "", 1
+        ),
+    )
+    assert sizes[-1] == 0
+
+
+def test_a_halt_withdraws_orders_still_resting_on_the_book():
+    """A breach is not just 'stop entering'. Anything already working has to
+    come off, or the tape fills it afterwards and the strategy is in a trade
+    the risk rule was there to prevent.
+
+    The sell-stop rests at 50 from the second bar. The collapse to 55 breaches
+    the limit and the halt cancels it; the tape then goes through 50, which an
+    order left on the book would have filled.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "strategy.risk.max_drawdown(40, strategy.cash)\n"
+        "if bar_index == 1\n"
+        '    strategy.entry("S", strategy.short, stop=50.0)\n'
+        "if bar_index == 2\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [
+        (100, 101, 99, 100),  # bar_index 1: the sell-stop goes out at the close
+        (100, 101, 99, 100),  # bar_index 2: a market long is placed
+        (100, 101, 99, 100),  # the long fills at the open
+        (55, 56, 54, 55),  # the breach: cancel the stop, close the long
+        (55, 56, 54, 55),  # the close fills
+        (45, 46, 44, 45),  # through 50 -- a surviving sell-stop fires here
+        (45, 46, 44, 45),
+    ]
+    strategy, sizes = _risk_run(source, rows)
+    assert strategy._pine_halted is True
+    assert sizes == [0, 0, 1, 1, 0, 0, 0]
+
+    cancel = (
+        "        for order in list(self.broker.get_orders_open()):\n"
+        "            if order.owner is self:\n"
+        "                self.cancel(order)\n"
+    )
+    _, uncancelled = _risk_run(source, rows, mutate=lambda c: c.replace(cancel, "", 1))
+    assert uncancelled[-1] == -1  # the short the halt was supposed to prevent
+
+
+# --- the chart's own timeframe, as a number ----------------------------------
+
+
+def test_timeframe_in_seconds_reads_the_feed_it_was_given():
+    """`timeframe.in_seconds()` asks the feed, not a string, which is what lets
+    it be answered from `__init__` as readily as from `next()`.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "secs = timeframe.in_seconds()\n"
+        "if secs > 3600\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self._pine_tf_seconds()" in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+
+    seen = {}
+
+    class Watched(strategy_cls):
+        def next(self):
+            super().next()
+            seen["secs"] = self._pine_tf_seconds()
+
+    for timeframe, compression, expected in (
+        (bt.TimeFrame.Minutes, 60, 3600),
+        (bt.TimeFrame.Minutes, 240, 14400),
+        (bt.TimeFrame.Days, 1, 86400),
+        (bt.TimeFrame.Weeks, 1, 604800),
+    ):
+        cerebro = bt.Cerebro()
+        cerebro.adddata(
+            bt.feeds.PandasData(
+                dataname=_price_frame(bars=30),
+                timeframe=timeframe,
+                compression=compression,
+            )
+        )
+        cerebro.addstrategy(Watched)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        assert seen["secs"] == expected, (timeframe, compression)
+
+
+def test_timeframe_in_seconds_spells_the_written_timeframes_pines_way():
+    """The literal and input forms take the text, so the numbers have to match
+    Pine's: a month is a flat 30 days there, not a calendar one."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'htf = input.timeframe("240", "HTF")\n'
+        'a = timeframe.in_seconds("15")\n'
+        'b = timeframe.in_seconds("D")\n'
+        "c = timeframe.in_seconds(htf)\n"
+        "if a + b + c > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self._pine_tf_seconds('15')" in result.code
+    assert "self._pine_tf_seconds('D')" in result.code
+    # An input keeps its param: unlike a feed's timeframe, this one is only
+    # read, so overriding it at addstrategy still moves the answer.
+    assert "self._pine_tf_seconds(self.p.htf)" in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+
+    seen = {}
+
+    class Watched(strategy_cls):
+        def next(self):
+            super().next()
+            seen["got"] = [
+                self._pine_tf_seconds(t) for t in ("15", "D", "240", "W", "M", "1S")
+            ]
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=30)))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    assert seen["got"] == [900, 86400, 14400, 604800, 2592000, 1]
+
+
+def test_timeframe_period_and_the_bare_call_agree():
+    """`timeframe.in_seconds(timeframe.period)` is the bare call written out,
+    so the two must not lower to different things."""
+
+    def lowered(argument):
+        result = convert(
+            '//@version=6\nstrategy("S")\n'
+            f"secs = timeframe.in_seconds({argument})\n"
+            "if secs > 0\n"
+            '    strategy.entry("L", strategy.long)\n'
+        )
+        assert result.ok, result.unsupported
+        return [l.strip() for l in result.code.splitlines() if "secs =" in l]
+
+    assert (
+        lowered("") == lowered("timeframe.period") == ["secs = self._pine_tf_seconds()"]
+    )
+
+
+def test_a_timeframe_only_known_per_bar_is_reported():
+    """A feed is not built from a value that only exists once bars are running,
+    and neither is the number of seconds in one."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'tf = close > open ? "60" : "240"\n'
+        "secs = timeframe.in_seconds(tf)\n"
+        "if secs > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert not result.ok
+    assert any("timeframe.in_seconds" in i for i in result.unsupported)
+
+
+def test_timeframe_in_seconds_answers_before_the_first_bar():
+    """The reason it reads the feed rather than a string: an indicator chosen
+    by the chart's timeframe has to be chosen when the indicator is built, and
+    `__init__` runs before any bar has arrived.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "secs = timeframe.in_seconds()\n"
+        "if secs > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    asked = {}
+
+    class Watched(namespace[result.class_name]):
+        def __init__(self):
+            asked["in_init"] = self._pine_tf_seconds()
+            super().__init__()
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_price_frame(bars=30),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=240,
+        )
+    )
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()
+    assert asked["in_init"] == 14400
+
+
+# --- choosing between indicators before the first bar ------------------------
+
+
+#: The commonest shape in the corpus: a `switch` picking a moving average,
+#: reached through a function and keyed off an input.
+MA_SELECTOR = (
+    '//@version=6\nstrategy("S")\n'
+    'mode = input.string("HMA", "Mode")\n'
+    'avgLen = input.int(21, "Length")\n'
+    "f_smooth(src, length, m) =>\n"
+    "    switch m\n"
+    "        'SMA' => ta.sma(src, length)\n"
+    "        'RMA' => ta.rma(src, length)\n"
+    "        'HMA' => ta.hma(src, length)\n"
+    "        =>       ta.ema(src, length)\n"
+    "wt1 = f_smooth(close, avgLen, mode)\n"
+    "wt2 = ta.sma(wt1, 4)\n"
+    "if ta.crossover(wt1, wt2)\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+
+def test_a_switch_between_indicators_becomes_one_construction():
+    result = convert(MA_SELECTOR)
+    assert result.ok, result.unsupported
+    # One conditional expression, not one hoisted average per branch.
+    assert result.code.count("bt.indicators.SMA(") == 2  # the choice, and wt2
+    assert "if (self.p.mode == 'SMA')" in result.code
+    # The per-bar read comes off the line the choice built rather than
+    # lowering the whole switch a second time.
+    assert "wt1 = self._choice_1[0]" in result.code
+
+
+def test_only_the_chosen_branch_is_built():
+    """The reason this is a conditional *expression* rather than a selector
+    over pre-built branches.
+
+    Backtrader's minimum period is the maximum over every indicator the
+    strategy holds, read or not -- an unused 80-period average delays the
+    first `next()` to bar 80 exactly as a used one would. So building the
+    branch not taken would move the bar a converted strategy starts trading
+    on, and nothing in the generated source would look wrong.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("FAST", "Mode")\n'
+        "f_pick(source) =>\n"
+        "    switch mode\n"
+        "        'FAST' => ta.sma(source, 5)\n"
+        "        =>       ta.sma(source, 80)\n"
+        "ma = f_pick(close)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    def first_bar(mode):
+        seen = {}
+
+        class Watched(base):
+            def next(self):
+                super().next()
+                seen.setdefault("first", len(self.data))
+
+        cerebro = bt.Cerebro()
+        cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=150)))
+        cerebro.addstrategy(Watched, mode=mode)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        return seen["first"]
+
+    assert first_bar("FAST") == 5
+    assert first_bar("SLOW") == 80
+
+
+def test_a_conditional_between_numbers_stays_a_number():
+    """Only a choice between *lines* is a line. `mode == 'A' ? 5 : 20` is a
+    number, and a number cannot be read at `[0]`."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("A", "Mode")\n'
+        "len = mode == 'A' ? 5 : 20\n"
+        "ma = ta.sma(close, len)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "_choice" not in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()  # the regression: this used to raise on `(5 if c else 20)[0]`
+
+
+def test_a_per_bar_condition_is_still_lazy():
+    """`d != 0 ? x / d : 0` is a guard, not a choice between indicators.
+
+    Its condition moves per bar, so it cannot be settled in `__init__` and
+    must not become a `_choice`. Fed to an indicator it needs a line, and the
+    line it gets is a `PineExpr` -- a Python lambda, evaluated per bar and
+    lazily, which is the whole reason `bt.If` is not used here.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "d = ta.stdev(close, 20)\n"
+        "z = d != 0 ? (close - ta.sma(close, 20)) / d : 0.0\n"
+        "smoothed = ta.sma(z, 5)\n"
+        "if smoothed > 1\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "PineExpr" in result.code
+    assert "_choice" not in result.code
+
+
+def test_a_branch_that_will_not_lower_declines_without_inventing_a_reason():
+    """The attempt is speculative, so a branch that cannot be a line must not
+    leave its own rejection behind -- the fallback path is what decides what
+    to report, and two messages for one gap reads as two gaps."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("SMA", "Mode")\n'
+        "f_state(src) =>\n"
+        "    var float carried = 0.0\n"
+        "    carried := carried + src\n"
+        "    carried\n"
+        "pick = mode == 'SMA' ? ta.sma(close, 10) : f_state(close)\n"
+        "if close > pick\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    # Whatever it reports, it must not report the same gap twice.
+    assert len(result.unsupported) == len(set(result.unsupported))
+
+
+#: A switch offering three modes, one of them a stateful function that has no
+#: Backtrader line. The shape three corpus strategies are written in.
+MIXED_SELECTOR = (
+    '//@version=6\nstrategy("S")\n'
+    'mode = input.string("SMA", "Mode")\n'
+    "f_jma(src, length) =>\n"
+    "    var float jma = 0.0\n"
+    "    jma := nz(jma[1], src) + (src - nz(jma[1], src)) / length\n"
+    "    jma\n"
+    "f_smooth(src, length) =>\n"
+    "    switch mode\n"
+    "        'SMA' => ta.sma(src, length)\n"
+    "        'EMA' => ta.ema(src, length)\n"
+    "        =>       f_jma(src, length)\n"
+    "ma = f_smooth(close, 10)\n"
+    "if close > ma\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+
+def test_one_unbuildable_mode_does_not_refuse_the_whole_strategy():
+    """Which branch a construction-time choice takes is not known until the
+    feed is attached, so a script offering one mode this converter cannot
+    build is not a script that cannot be converted. Pine would never evaluate
+    the branch not chosen either.
+    """
+    result = convert(MIXED_SELECTOR)
+    assert result.ok, result.unsupported
+    assert any("no Backtrader line" in note for note in result.notes)
+    # Named so it can be found in the original source, without the generated
+    # counter that means nothing to a reader.
+    assert any("f_jma" in note for note in result.notes)
+
+
+def test_the_modes_that_do_convert_run_and_the_one_that_does_not_says_so():
+    result = convert(MIXED_SELECTOR)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    def run(mode):
+        cerebro = bt.Cerebro()
+        cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+        cerebro.addstrategy(base, mode=mode)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        return cerebro.broker.getvalue()
+
+    assert run("SMA") > 0
+    assert run("EMA") > 0
+
+    with pytest.raises(NotImplementedError) as raised:
+        run("JMA")
+    assert "f_jma" in str(raised.value)
+    assert "another mode" in str(raised.value)
+
+
+def test_the_unbuildable_mode_fails_before_a_single_bar_is_priced():
+    """A backtest that stops part way through is worse than one that never
+    starts: it produces numbers. The raise comes from `__init__`, so a run
+    either has every indicator it needs or does not begin.
+    """
+    result = convert(MIXED_SELECTOR)
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    bars = []
+
+    class Watched(namespace[result.class_name]):
+        def next(self):
+            bars.append(len(self))
+            super().next()
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+    cerebro.addstrategy(Watched, mode="JMA")
+    cerebro.broker.setcash(10_000.0)
+    with pytest.raises(NotImplementedError):
+        cerebro.run()
+    assert bars == []
+
+
+def test_a_choice_with_no_line_on_either_side_is_left_alone():
+    """The escape hatch is for a *choice between indicators* that has one bad
+    branch, not for a conditional that was never one."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("A", "Mode")\n'
+        "n = mode == 'A' ? 5 : 20\n"
+        "ma = ta.sma(close, n)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "_pine_no_mode" not in result.code
+    assert result.notes == []

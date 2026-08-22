@@ -93,6 +93,8 @@ duplicate is pure waste.
 | `close[3]` | `self.data.close[-3]` |
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
 | `cond ? a : b` | `a if cond else b`, or a `PineExpr` line where one is needed |
+| `switch mode` over `ta.sma` / `ta.rma` / ... | one indicator, chosen in `__init__` — see below |
+| a length written as `mode == 'Fast' ? 5 : 20` | resolved the same way, since a period is read once |
 | `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | an `if` read for its value | the conditional expression it means |
@@ -105,6 +107,11 @@ duplicate is pure waste.
 | `strategy.cancel(id)` | withdraws the unfilled entry with that id |
 | `strategy.cancel_all()` | withdraws every unfilled order, standing exits included |
 | `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
+| `time`, `time[n]` | the bar's own opening stamp, in epoch milliseconds |
+| `timeframe.in_seconds()` | seconds in one bar of the feed, answerable from `__init__` |
+| `timeframe.in_seconds("240")`, or an `input.timeframe` | the same for a written timeframe, the input still live |
+| `timestamp("01 Jan 2020 00:00 +0000")` | the number it means, folded at conversion time |
+| `input.time(...)` | an integer param, so the window moves without an edit |
 | `time(res, session, tz)` | the same, with the feed's clock read as UTC and converted into `tz` |
 | history of a computed value, e.g. `inSess[1]` | a promoted line, or the definition re-read a bar back — see below |
 | `syminfo.mintick` | a `mintick` param, default 0.01 — see below |
@@ -113,6 +120,9 @@ duplicate is pure waste.
 | `strategy.closedtrades.entry_price/exit_price/profit/size(i)` | a ledger built as trades close |
 | `.entry_bar_index(i)`, `.exit_bar_index(i)` | likewise, on the same bar numbering as `bar_index` |
 | `strategy.close`, `strategy.close_all`, bare `strategy.exit` | `self.close()` |
+| `strategy.risk.max_drawdown(x)` | a per-bar equity check that flattens and stops — see below |
+| `strategy.risk.max_intraday_loss(x)` | the same, lifting when the day turns |
+| `strategy.percent_of_equity`, `strategy.cash` | which of the two the limit is measured in |
 | `strategy.exit(..., stop=, limit=)` | an OCO stop/limit pair, maintained |
 | `strategy.position_avg_price` | `self.position.price` |
 | `strategy.position_size` | `self.position.size` |
@@ -121,6 +131,7 @@ duplicate is pure waste.
 | `barstate.isrealtime` | `False` |
 | `barstate.isfirst`, `barstate.islast` | a position in the feed, so still live |
 | `var x = <literal>` | an attribute set once in `__init__` |
+| `varip x = <literal>` | the same — the two are identical on historical bars |
 | `x := value` | assignment, writing through to the attribute for a `var` |
 | `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
 | `na(x)` | the NaN test `x != x` |
@@ -160,11 +171,11 @@ every later reference — that is what the Pine source means by the name.
 Reported in `result.unsupported`, never approximated:
 
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
-- `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps and `type` blocks — all reported, so the rest of the script is still diagnosed
 - a user-defined function that recurses, returns a tuple, expands past the inlining limit, or keeps state and is called from inside an `if` — see below
 - `for` / `while` loops
+- `timestamp(tz, year, month, day, hour, minute)` — the numeric form; only the literal date string is read
 - a `switch` used as a statement rather than for its value — that is a side-effecting block
 - an `if` read for its value whose branch carries more than one expression — see below
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
@@ -182,8 +193,14 @@ about how the strategy trades: `plot`, `plotshape`, `bgcolor`, `hline`, `fill`,
 constants they consume, such as `color.green` and `shape.triangleup`. A colour
 cannot change a trade, so refusing one would fail a conversion over nothing.
 
-Both lists are also written into the generated class's docstring, so a
-converted file explains its own gaps without needing the original result object.
+A third list, `result.notes`, records a reading the conversion made
+deliberately that differs from the source as written. Not a gap — the
+translation is faithful on the bars a backtest runs — but the reader should
+know one was made. `varip` read as `var` is one; a switch mode that raises
+rather than building is the other.
+
+All three lists are also written into the generated class's docstring, so a
+converted file explains itself without needing the original result object.
 
 ## Stops and targets
 
@@ -277,6 +294,60 @@ feed's clock.
 `syminfo.mintick` becomes a param named `mintick`, defaulting to the 0.01 of a
 US equity. A Backtrader feed does not know its instrument's tick size, so the
 knob is handed to the caller and the report says to set it per instrument.
+
+## The date window
+
+Nine of the seventeen strategies in the corpus open the same way: two dates, a
+comparison against `time`, and every order behind the result.
+
+```pinescript
+dFrom   = input.time(timestamp("01 Jan 2020 00:00 +0000"), "From")
+dTo     = input.time(timestamp("31 Dec 2030 23:59 +0000"), "To")
+inRange = time >= dFrom and time <= dTo
+```
+
+A timestamp is a constant, so it is folded to epoch milliseconds once, here,
+rather than parsed again on every bar:
+
+```python
+params = (('dFrom', 1577836800000), ('dTo', 1924991940000))
+...
+inRange = ((self._pine_time() >= self.p.dFrom) and (self._pine_time() <= self.p.dTo))
+```
+
+`input.time` becomes an ordinary integer param because the window is the input
+most likely to be moved — walking a strategy forward is exactly that edit — and
+a folded constant in the body could not be moved without regenerating the file.
+
+Bare `time` is the bar's own opening stamp on the feed's clock, read as UTC,
+which is the same convention `time(res, session)` above already uses. A
+timestamp written without an offset is read as UTC too, which is what Pine
+assumes when none is given.
+
+The numeric spelling — `timestamp("GMT+0", 2025, 2, 1, 0, 0)` — is refused
+rather than guessed at. It appears once in the corpus, in an indicator, and
+resolving an arbitrary timezone name would mean guessing at a calendar the
+feed does not carry.
+
+### Seconds in a bar
+
+`timeframe.in_seconds()` reads the feed rather than a string, and that is the
+point rather than an implementation detail: the answer is settled before the
+first bar, so it can be asked from `__init__`. Scripts use it to pick an
+indicator by the chart's timeframe —
+
+```pinescript
+mode = timeframe.in_seconds() == 3600 ? smooth1H : timeframe.in_seconds() == 14400 ? smooth4H : 'EMA'
+```
+
+— and that choice has to be made where the indicator is built, not per bar.
+
+The written forms take the text instead, so an `input.timeframe` stays live:
+unlike the timeframe of a `request.security` feed, which is baked in because
+the feed is built before the strategy exists, this one is only read. Pine's
+month is a flat 30 days and its week 7, which is what keeps the answer a
+number rather than a calendar question. A timeframe that is only known per
+bar is reported.
 
 ## Reading history before it exists
 
@@ -627,6 +698,53 @@ one.
 in one direction, and Backtrader nets them into one position per feed — the two
 models diverge, and `strategy.opentrades` is exactly where you would notice.
 
+## Risk rules, and what a halt means
+
+`strategy.risk.max_drawdown` and `strategy.risk.max_intraday_loss` are not
+filters on a condition — they are a rule about the account, checked by Pine
+itself, that ends trading when equity has fallen far enough.
+
+```pinescript
+strategy.risk.max_drawdown(20, strategy.percent_of_equity)
+strategy.risk.max_intraday_loss(5, strategy.percent_of_equity)
+```
+
+Both become a call at the top of `next()`, before any of the bar's own
+statements run:
+
+```python
+self._pine_risk(20, True, False)
+self._pine_risk(5, True, True)
+```
+
+`_pine_risk` tracks peak equity for the drawdown rule and the day's opening
+equity for the intraday one, and on a breach does three things: clears whatever
+entries are waiting to be placed, cancels every order of its own still
+working on the book, and closes the position. Then it sets a flag, and
+`_pine_entry` refuses while that flag is up — because flattening alone is only
+half of it. Pine places no new orders after a breach, and a script whose entry
+condition is still true would otherwise walk straight back in on the next bar.
+
+The two flags differ in how long they last. `max_drawdown` stops the run for
+good. `max_intraday_loss` stops the *day*: the flag clears at the first bar of
+the next one, along with a fresh opening-equity reference. That difference is
+the whole reason Pine has two rules rather than one.
+
+`strategy.percent_of_equity` and `strategy.cash` are not interchangeable, and
+reading the wrong one is silent — the number in the source is the same either
+way, and only the tape says which was meant. Percent is Pine's default when
+neither is named.
+
+Two divergences worth knowing:
+
+- **The check lands on a close.** Pine evaluates the rule intrabar; a bar-close
+  run can only act at a close, so the halt arrives up to a bar later, and the
+  close it flattens at is the next bar's open. That errs toward showing *more*
+  loss than Pine would, not less, which is the direction to be wrong in.
+- **The intraday reference is a bar, not the session open.** The day's opening
+  equity is taken at the first bar the feed carries for that date. On a feed
+  that starts mid-session, that is not where the session started.
+
 ## The trade counters, and a ledger to answer them from
 
 Backtrader keeps no record of closed trades: `notify_trade` reports each one as
@@ -957,6 +1075,112 @@ some bars, in the mode nearly everyone runs. `PinePivot` over `ta.sma(close,
 So both `PineExpr` and `PinePivot` write `once` explicitly, and the test suite
 runs a strategy using both under `runonce=True` and `runonce=False` and asserts
 every bar agrees.
+
+## `varip`, and why it is `var` here
+
+`varip` differs from `var` only on a realtime bar, where it is not rolled back
+between ticks. A backtest has no realtime bars, and Pine's own documentation
+is explicit on both halves of what follows: *"varip will behave similar to var
+on historical bars"*, and *"because varip only affects the behavior of your
+code in the realtime bar, varip behavior cannot be simulated on historical
+bars"*.
+
+So on the bars a backtest actually runs, reading `varip` as `var` is what Pine
+itself does, rather than an approximation of it — and the behaviour being
+protected cannot be reproduced by anything, in Pine or here.
+
+This was refused for a long time, and the refusal bought nothing while costing
+a cascade: the name never entered scope, so every later read and every
+reassignment reported separately. Three corpus strategies spent roughly
+seventy per cent of their gap lists on it.
+
+| script | gaps before | after |
+| --- | --- | --- |
+| `vein_reversal_labeler` | 58 | 16 |
+| `wavetrend_v4` | 80 | 18 |
+| `wavetrend_base` | 73 | 15 |
+
+It is recorded in `result.notes`, not passed over in silence: the script was
+written by someone who wanted intrabar behaviour somewhere, and a live run is
+where they would not get it.
+
+## Choosing between indicators before the first bar
+
+The commonest shape in the corpus after the date window is a `switch` that
+picks a moving average, usually reached through a function:
+
+```pinescript
+f_smooth(src, length, mode) =>
+    switch mode
+        'SMA' => ta.sma(src, length)
+        'RMA' => ta.rma(src, length)
+        'HMA' => ta.hma(src, length)
+        =>       ta.ema(src, length)
+wt1 = f_smooth(close, avgLen, mode)
+```
+
+`mode` is an input, or the chart's timeframe. Neither moves during a run, so
+the choice is made once, in `__init__`:
+
+```python
+self._choice_1 = (bt.indicators.SMA(self.data.close, period=self.p.avgLen)
+                  if (self.p.mode == 'SMA')
+                  else (...))
+wt1 = self._choice_1[0]
+```
+
+That it is a conditional **expression** is the substance, not the style. A
+Python conditional expression evaluates only the branch it takes, so only the
+chosen average is built — and that matters more than it looks:
+
+> Backtrader's minimum period is the maximum over every indicator the strategy
+> *holds*, read or not. A 5-period average built beside an unused 80-period one
+> produces nothing until bar 80.
+
+So building all four branches and selecting between them would move the bar a
+converted strategy starts trading on, by an amount that depends on which
+averages the script happens to offer. Nothing in the generated source would
+look wrong. The test for this runs the same strategy twice, on the fast mode
+and the slow one, and asserts the first bar is 5 and 80 respectively.
+
+Two things deliberately do not take this path:
+
+- **A conditional between numbers.** `mode == 'A' ? 5 : 20` is a number, not a
+  line, and a number cannot be read at `[0]`. It stays a scalar — as does the
+  mixed case, where which branch is a line depends on the condition.
+- **A per-bar guard.** `d != 0 ? x / d : 0` has a condition that moves with the
+  bars, so it cannot be settled in `__init__` at all. It stays a `PineExpr`,
+  lazy, for the reason given under "A conditional needs a function, not a line
+  operation".
+
+A length chosen the same way resolves the same way: `ta.highest(high, mode ==
+'Fast' ? 5 : 20)` reads its period once, when the indicator is built, which is
+exactly when the condition can be answered.
+
+### A mode that cannot be built
+
+Some branch will not be a line at all — a stateful user function such as a
+JMA, which is an iterative per-bar recursion rather than an expression. That
+does not make the strategy unconvertible. Which branch is taken is settled
+when the feed is attached, and Pine would never evaluate the branch not
+chosen, so the modes that *do* build are worth having.
+
+The branch becomes a raise instead of a line:
+
+```python
+self._choice_1 = (bt.indicators.SMA(...) if (self.p.mode == 'SMA')
+                  else (bt.indicators.EMA(...) if (self.p.mode == 'EMA')
+                        else self._pine_no_mode('f_jma_value')))
+```
+
+Selecting that mode fails by name, from `__init__`, before a single bar is
+priced — a backtest that stops part way through is worse than one that never
+starts, because it produces numbers. Every other selection runs untouched.
+
+This is the one place `result.ok` does not mean "every path works". It means
+every path the inputs can reach *as converted* either works or stops the run
+loudly, which is why the reading is recorded in `result.notes` rather than
+passed over.
 
 ## A known simplification
 
