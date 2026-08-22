@@ -155,7 +155,7 @@ import collections
 import keyword
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from .nodes import (
     Assign,
@@ -192,7 +192,7 @@ class IndicatorSpec:
     takes_period: bool = True
 
 
-INDICATORS = {
+INDICATORS: dict[str, IndicatorSpec] = {
     "ta.sma": IndicatorSpec("SMA"),
     "ta.ema": IndicatorSpec("EMA"),
     "ta.wma": IndicatorSpec("WMA"),
@@ -207,22 +207,22 @@ INDICATORS = {
 
 #: Pine cross helpers, mapped to a CrossOver line plus the comparison that
 #: recovers the direction Pine means.
-PIVOTS = ("ta.pivothigh", "ta.pivotlow")
+PIVOTS: tuple[str, ...] = ("ta.pivothigh", "ta.pivotlow")
 
 #: Moving averages Backtrader either lacks or spells differently enough to
 #: matter. Each is built from what Pine says it is made of.
-COMPOSED_AVERAGES = ("ta.hma", "ta.vwma", "ta.alma")
+COMPOSED_AVERAGES: tuple[str, ...] = ("ta.hma", "ta.vwma", "ta.alma")
 
 #: Operators Backtrader overloads on line objects to give another line.
 #: Comparisons are deliberately absent: a truth value is not a source, and
 #: `bt.If` evaluates both branches, which would defeat the `d != 0 ? x / d : 0`
 #: guard scripts write precisely to avoid dividing by zero.
-_LINE_OPS = ("+", "-", "*", "/", "%")
+_LINE_OPS: tuple[str, ...] = ("+", "-", "*", "/", "%")
 
 #: Math that composes on lines rather than on numbers.
-_LINE_MATH = {"math.abs": "abs", "math.max": "bt.Max", "math.min": "bt.Min"}
+_LINE_MATH: dict[str, str] = {"math.abs": "abs", "math.max": "bt.Max", "math.min": "bt.Min"}
 
-CROSSES = {
+CROSSES: dict[str, str] = {
     "ta.crossover": "> 0",
     "ta.crossunder": "< 0",
     "ta.cross": "!= 0",
@@ -231,7 +231,7 @@ CROSSES = {
 #: Pine price series, as line names. The feed they are read from is decided at
 #: lowering time -- inside a ``request.security`` they belong to a resampled
 #: feed rather than the chart's own.
-PRICE_SERIES = {
+PRICE_SERIES: dict[str, str] = {
     "open": "open",
     "high": "high",
     "low": "low",
@@ -242,7 +242,7 @@ PRICE_SERIES = {
 #: Pine's derived price series, which Backtrader has no line for. ``{d}`` is
 #: the feed. Composed of whole lines, so this is itself a line and can be fed
 #: to an indicator.
-DERIVED_LINES = {
+DERIVED_LINES: dict[str, str] = {
     "hl2": "({d}.high + {d}.low) / 2",
     "hlc3": "({d}.high + {d}.low + {d}.close) / 3",
     "ohlc4": "({d}.open + {d}.high + {d}.low + {d}.close) / 4",
@@ -251,14 +251,14 @@ DERIVED_LINES = {
 #: The same, as per-bar reads for ``next()``, with ``{i}`` the bar offset.
 #: Derived rather than written twice: two spellings of one definition drift,
 #: and a mismatch between them would be a wrong number, not a failure.
-DERIVED_SERIES = {
+DERIVED_SERIES: dict[str, str] = {
     name: re.sub(r"(\{d\}\.\w+)", r"\1[{i}]", expression)
     for name, expression in DERIVED_LINES.items()
 }
 
 #: Pine timeframe strings mapped to a Backtrader (timeframe, compression).
 #: A bare number is minutes; a trailing S, D, W or M names the unit.
-_TIMEFRAME_UNITS = {
+_TIMEFRAME_UNITS: dict[str, str] = {
     "S": "bt.TimeFrame.Seconds",
     "": "bt.TimeFrame.Minutes",
     "D": "bt.TimeFrame.Days",
@@ -267,7 +267,7 @@ _TIMEFRAME_UNITS = {
 }
 
 
-def parse_timeframe(text):
+def parse_timeframe(text: Any) -> Optional[tuple[str, int]]:
     """Turn a Pine timeframe string into ``(bt.TimeFrame.X, compression)``.
 
     ``"240"`` is 240 minutes, ``"D"`` and ``"1D"`` are one day. Returns None
@@ -276,7 +276,7 @@ def parse_timeframe(text):
     """
     if not isinstance(text, str):
         return None
-    token = text.strip().upper()
+    token: str = text.strip().upper()
     match = re.fullmatch(r"(\d*)([SDWM]?)", token)
     if not match or token == "":
         return None
@@ -290,10 +290,10 @@ def parse_timeframe(text):
 #: Weeks and months are deliberately absent: a week is a fixed 604800 seconds
 #: only if you accept the week starting on a Thursday, which is where the epoch
 #: falls, and a month is not a fixed number of seconds at all.
-_TIMEFRAME_SECONDS = {"S": 1, "": 60, "D": 86400}
+_TIMEFRAME_SECONDS: dict[str, int] = {"S": 1, "": 60, "D": 86400}
 
 
-def timeframe_seconds(text):
+def timeframe_seconds(text: Any) -> Optional[int]:
     """Seconds in one bar of ``text``, or None where Pine's floor is not a modulo.
 
     ``"240"`` is 14400 and ``"D"`` is 86400. Returns None for the empty string
@@ -302,14 +302,14 @@ def timeframe_seconds(text):
     """
     if not isinstance(text, str):
         return None
-    token = text.strip().upper()
+    token: str = text.strip().upper()
     match = re.fullmatch(r"(\d*)([SDWM]?)", token)
     if not match or token == "":
         return None
     count, unit = match.groups()
     if unit == "" and count == "":
         return None
-    per = _TIMEFRAME_SECONDS.get(unit)
+    per: Optional[int] = _TIMEFRAME_SECONDS.get(unit)
     if per is None:
         return None
     return per * (int(count) if count else 1)
@@ -1263,19 +1263,19 @@ class ConversionResult:
 
 
 def _class_name(title: str, fallback: str = "ConvertedStrategy") -> str:
-    parts = re.findall(r"[A-Za-z0-9]+", title or "")
-    name = "".join(part[:1].upper() + part[1:] for part in parts)
+    parts: list[str] = re.findall(r"[A-Za-z0-9]+", title or "")
+    name: str = "".join(part[:1].upper() + part[1:] for part in parts)
     if not name or name[0].isdigit():
         return fallback
     return name
 
 
-def _slug(title) -> str:
+def _slug(title: Any) -> str:
     """Turn an input's title into a Python identifier: 'Stop %' -> 'stop'."""
     if not isinstance(title, str):
         return ""
-    parts = re.findall(r"[A-Za-z0-9]+", title)
-    name = "_".join(parts).lower()
+    parts: list[str] = re.findall(r"[A-Za-z0-9]+", title)
+    name: str = "_".join(parts).lower()
     return f"p_{name}" if name[:1].isdigit() else name
 
 
@@ -1285,7 +1285,7 @@ def _safe(name: str) -> str:
     return name
 
 
-def _literal(node) -> Any:
+def _literal(node: object) -> Any:
     if isinstance(node, Num):
         value = node.value
         return int(value) if value == int(value) else value
@@ -1297,72 +1297,72 @@ def _literal(node) -> Any:
 
 
 class _Generator:
-    def __init__(self, program, class_name=None):
-        self.program = program
-        self.declaration = program.declaration
-        title = self.declaration[1] if self.declaration else ""
-        self.class_name = class_name or _class_name(title)
-        self.params = []  # (pine_name, default)
-        self.param_names = set()
-        self.series = {}  # pine name -> attribute name in __init__
-        self.scalars = set()  # names computed as locals in next()
-        self.init_lines = []
-        self.next_lines = []
-        self.unsupported = []
-        self.ignored = []
-        self._counter = 0
-        self._hoisted = {}  # construction source -> attribute name
-        self._inputs = {}  # input call signature -> param name
-        self.state = {}  # pine `var` name -> attribute name on the strategy
-        self.feeds = []  # (bt.TimeFrame expression, compression) per extra feed
-        self._feed_index = {}  # timeframe text -> index into self.datas
+    def __init__(self, program: Any, class_name: Optional[str] = None) -> None:
+        self.program: Any = program
+        self.declaration: Optional[tuple[str, str]] = program.declaration
+        title: str = self.declaration[1] if self.declaration else ""
+        self.class_name: str = class_name or _class_name(title)
+        self.params: list[tuple[str, Any]] = []  # (pine_name, default)
+        self.param_names: set[str] = set()
+        self.series: dict[str, str] = {}  # pine name -> attribute name in __init__
+        self.scalars: set[str] = set()  # names computed as locals in next()
+        self.init_lines: list[str] = []
+        self.next_lines: list[str] = []
+        self.unsupported: list[tuple[str, str]] = []
+        self.ignored: list[str] = []
+        self._counter: int = 0
+        self._hoisted: dict[str, str] = {}  # construction source -> attribute name
+        self._inputs: dict[str, str] = {}  # input call signature -> param name
+        self.state: dict[str, str] = {}  # pine `var` name -> attribute name on the strategy
+        self.feeds: list[tuple[str, int]] = []  # (bt.TimeFrame expression, compression) per extra feed
+        self._feed_index: dict[str, int] = {}  # timeframe text -> index into self.datas
         #: The feed expressions currently lower against. Swapped while the
         #: inner expression of a request.security is translated.
-        self._feed = "self.data"
-        self._uses_exit = False
-        self._uses_math = False
-        self._uses_trades = False
-        self._uses_entry = False
-        self._uses_pending = False
-        self._uses_time = False
-        self._uses_session = False
-        self._uses_pivot = False
-        self._uses_expr = False
-        self._uses_alma = False
+        self._feed: str = "self.data"
+        self._uses_exit: bool = False
+        self._uses_math: bool = False
+        self._uses_trades: bool = False
+        self._uses_entry: bool = False
+        self._uses_pending: bool = False
+        self._uses_time: bool = False
+        self._uses_session: bool = False
+        self._uses_pivot: bool = False
+        self._uses_expr: bool = False
+        self._uses_alma: bool = False
         #: The generated param `syminfo.mintick` reads from, once registered.
-        self._mintick = None
+        self._mintick: Optional[str] = None
         #: The deepest `name[k]` history read emitted into ``next()``. Bars
         #: that do not have that much history yet are skipped outright: Pine
         #: answers na there, and no condition on na fires, where Backtrader's
         #: preloaded buffer wraps a read past the start around to the *end* of
         #: the feed -- bars from the future, silently.
-        self._max_lookback = 0
+        self._max_lookback: int = 0
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
-        self._computed = {}
-        self._promoted = {}
-        self._promoting = set()
-        self._promotable = self._promotable_names()
-        self.functions = program.functions
+        self._computed: dict[str, object] = {}
+        self._promoted: dict[str, str] = {}
+        self._promoting: set[str] = set()
+        self._promotable: set[str] = self._promotable_names()
+        self.functions: dict[str, Any] = program.functions
         #: Names currently being inlined, so recursion is caught rather than
         #: followed. A stack catches mutual recursion as well as direct.
-        self._inlining = []
+        self._inlining: list[str] = []
         #: Lines that must run in front of the statement being emitted -- the
         #: per-bar state updates of an inlined function that keeps `var`.
-        self._prelude = []
+        self._prelude: list[str] = []
         #: State slot -> the Pine name it came from, for slots whose `[1]` may
         #: be read. Only function-body vars qualify; see `_state_history`.
-        self._var_history = {}
+        self._var_history: dict[str, str] = {}
         #: State slots already assigned during the body being inlined.
-        self._var_written = set()
+        self._var_written: set[str] = set()
 
     # --- helpers -------------------------------------------------------------
 
-    def _fresh(self, stem):
+    def _fresh(self, stem: str) -> str:
         self._counter += 1
         return f"_{stem}_{self._counter}"
 
-    def _local(self, stem):
+    def _local(self, stem: str) -> str:
         """A fresh name for a local in ``next()``.
 
         Unlike an attribute it carries no leading underscore, which `_safe`
@@ -1371,7 +1371,7 @@ class _Generator:
         """
         return self._fresh(stem)[1:]
 
-    def _hoist(self, stem, construction):
+    def _hoist(self, stem: str, construction: str) -> str:
         """Build ``construction`` in ``__init__`` once, returning its handle.
 
         Identical constructions are shared. Backtrader recomputes every
@@ -1379,14 +1379,14 @@ class _Generator:
         ``ta.crossover``/``ta.crossunder`` on one pair otherwise does -- would
         double that work for no benefit.
         """
-        attr = self._hoisted.get(construction)
+        attr: Optional[str] = self._hoisted.get(construction)
         if attr is None:
             attr = self._fresh(stem)
             self._hoisted[construction] = attr
             self.init_lines.append(f"self.{attr} = {construction}")
         return f"self.{attr}"
 
-    def _line_read(self, construction, index=0):
+    def _line_read(self, construction: str, index: int = 0) -> str:
         """Read a lowered line expression at an index, inside ``next()``.
 
         A bare handle -- a feed line, a hoisted indicator -- indexes
