@@ -136,6 +136,11 @@ A worked example, for this repo's 21st MCP key:
   `static/flow-canvas.html` imports one (each process renders as a chain of
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
+- `tools/backtest_lab.py` — runs one strategy across instruments and vendors and
+  says whether the result clears its own noise floor. Reads a feed's timezone
+  correctly (see "Backtesting" below), normalises to basis points, and compares
+  two vendors of the same instrument — the check that decides whether a
+  single-instrument result meant anything
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
@@ -292,6 +297,50 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## Backtesting: two things that produced confidently wrong answers
+
+`tools/backtest_lab.py` exists because a single-instrument backtest in this
+repo produced a result that survived every check applied to it and was still
+wrong twice over. Both failures are cheap to repeat and neither announces
+itself, so both are pinned by tests in `tests/test_backtest_lab.py`.
+
+**A feed's timestamps are in whatever zone the vendor chose, and the file does
+not say.** histdata's ASCII M1 exports are stamped **New York local time with
+DST**, not the fixed EST they are usually assumed to be. Read with one flat
+offset they are right in January and an hour out in July, and since a strategy
+converts back to an exchange timezone to test its session, that hour moves the
+whole trading window for eight months of every year. The symptom is a result
+that looks plausible: an ICT session strategy measured +39 points over eight
+years that way, and +7 once the stamps were read correctly.
+
+Do not take a vendor's word for the zone, and do not infer it from a volume
+profile — that was ambiguous here. Compare *returns* against a feed whose zone
+is known (`verify_timezone`), separately for a winter month and a summer one.
+Levels are useless for this: two vendors quoting one index differ by a basis
+that swamps the comparison, while their minute returns align at 0.99 and only
+at the right offset. **An offset that changes between the two months is DST**,
+and the feed is local time. oanda's exports, checked the same way, are UTC.
+
+**A backtest result means nothing until it clears the disagreement between two
+vendors of the same instrument.** Running one strategy on the S&P from two
+feeds gave +50bp and −234bp over the same eight years — while correlating 0.93
+year over year, so both agreed about the shape of every year and disagreed
+about the sign of the total. The gap averaged ~35bp/year against a measured
+edge of ~6bp/year.
+
+So `noise_floor()` is the check to run before believing any number here: it
+takes the same strategy's per-year results from two feeds and reports whether
+the edge exceeds the vendor gap. Clearing it is necessary and nowhere near
+sufficient. A high correlation with a large mean gap is the dangerous case and
+the one actually seen — the feeds look like they agree.
+
+Two habits follow. Compare instruments in **basis points of price**, never raw
+points: ten points on \$70 oil and ten on a 20,000 index are not the same
+trade, and summing points across instruments produces a number dominated by
+whichever quote is largest. And **charge costs always** — the strategy above is
+gross-positive and net-negative, so a frictionless run measures nothing
+tradeable.
 
 ## The trade journal is not in this repository
 
