@@ -520,6 +520,12 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Decision Log
 
+### [2026-08-22] StrategyComparator Implementation (PR #87)
+**Decision:** Built a reusable harness (`pwb_toolbox.backtesting.comparator`) to run multiple strategies on identical data and compare them.
+**How:** `StrategyComparator` class orchestrates running registered strategies, extracts NAV series, calculates individual metrics, creates weighted portfolio, computes correlation matrix. Supports custom indicators, strategy kwargs, Cerebro/broker config.
+**What it solves:** Eliminates manual result wrangling. One call returns navs, individual_metrics, portfolio_metrics, correlation_matrix for N strategies. 18 unit tests validate calculations on synthetic data.
+**Dependencies:** Used by backtest lab to compare all three strategies head-to-head.
+
 ### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
 **Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
 **Why:** Can't compare strategies in a vacuum. Need to see: Do they hedge each other? Do they amplify losses? What's the portfolio win rate vs. individual strategy win rates?
@@ -562,9 +568,9 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 **Now (This week — parallel tracks):**
 
 *Backtest Lab (PR #87):*
-- [ ] Implement `StrategyComparator` — runs all three strategies on identical price data
-- [ ] Add correlation matrix calculation (Pearson + rolling)
-- [ ] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
+- [x] Implement `StrategyComparator` — runs all three strategies on identical price data
+- [x] Add correlation matrix calculation (Pearson + rolling)
+- [x] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
 - [ ] Test on 90-day ICT price history
 - [ ] Success: See if 15-Min Reversal adds value or just adds noise
 
