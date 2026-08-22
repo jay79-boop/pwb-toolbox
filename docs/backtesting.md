@@ -6,7 +6,7 @@
 
 `is_tradable(data)` filters out instruments whose price is stale. It requires the close to have moved on each of the last `tradable_lookback` bars, a parameter that defaults to `1` — a single comparison against the previous bar. At that default an instrument that has been flat for weeks becomes tradable again on its first differing close; raise `tradable_lookback` to require sustained movement instead, keeping in mind that a wider window also rejects live instruments that print an unchanged close. Pass `lookback=` to override the parameter for one call.
 
-`run_strategy`: High-level helper that pulls price data, wires a backesting engine, attaches the broker and strategy, and executes the backtest in one call.
+`run_strategy`: High-level helper that pulls price data, wires a backesting engine, attaches the broker and strategy, and executes the backtest in one call. It takes a single `StrategyConfig` dataclass carrying the indicator, strategy, symbols, and cash settings.
 
 ```python
 import numpy as np
@@ -157,7 +157,7 @@ class MonthlyDualMomentumPortfolio(pwb_bt.BaseStrategy):
 def run_strategy():
     symbols = ["SPY", "EFA", "HYG", "LQD", "REM", "VNQ", "TLT", "GLD", "BIL"]
 
-    strategy = pwb_bt.run_strategy(
+    config = pwb_bt.StrategyConfig(
         indicator_cls=DualMomentumSignal,  # per‑asset indicator
         indicator_kwargs={"period": 252},
         strategy_cls=MonthlyDualMomentumPortfolio,
@@ -174,7 +174,7 @@ def run_strategy():
         start_date="1990-01-01",
         cash=100_000.0,
     )
-    return strategy
+    return pwb_bt.run_strategy(config)
 
 
 if __name__ == "__main__":
