@@ -298,7 +298,7 @@ Pick one or combine several:
 - Can be converted to JSON programmatically
 
 #### Option C: Interactive HTML Tool
-- Use `blueprint-builder.html`—web-based editor
+- Use `static/blueprint-builder.html`—web-based editor (double-click, no server)
 - Best for: Collaborative editing, visual dashboards, live updates
 - Stores data locally in your browser
 - Export as JSON when done
@@ -425,7 +425,7 @@ python tools/blueprint-json-to-xlsx.py my-blueprint.json -o my-blueprint.xlsx
 ```
 
 ### From any format to HTML
-Use the interactive tool `blueprint-builder.html`—just load your JSON file and export as needed.
+Use the interactive tool `static/blueprint-builder.html`—just load your JSON file and export as needed. `static/blueprint-dashboard.html` gives the read-only visual overview.
 
 ## Sharing & Collaboration
 

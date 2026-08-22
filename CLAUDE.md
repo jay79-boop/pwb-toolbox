@@ -121,9 +121,31 @@ A worked example, for this repo's 21st MCP key:
   and says when a rung is within reach, a holding has moved, or a position has
   outgrown its limit. Skips anything without a live price rather than alerting
   on a number somebody typed months ago
+- `tools/engagement.py` — tracks a business through the AI & automation
+  readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
+  from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
+  lessons retro. The `engagement-flow` skill is what actually does the phase
+  work; this is the state and the gates. Engagement data lands in
+  `engagements/`, which is gitignored because this fork is public.
+  `export-flow` writes the engagement as a `flow.json` that
+  `static/flow-canvas.html` imports, so an engagement can be seen as a map
+- `tools/blueprint_converter.py` — converts a business blueprint
+  (`docs/blueprint-schema.json`) between JSON and Excel. The blueprint is the
+  shared data model of this trio: `static/blueprint-builder.html` edits one,
+  `static/blueprint-dashboard.html` visualizes one read-only, and
+  `static/flow-canvas.html` imports one (each process renders as a chain of
+  steps). `docs/blueprint-example.json` is a worked example,
+  `docs/blueprint-guide.md` the manual
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
+  redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
+  status/owner coloring, layered auto-layout, undo, and Paper/Slate themes.
+  Opens from `file://`, saves to localStorage, exports JSON. Import accepts
+  its own exports, `engagement.py export-flow` files, and business blueprints
+  (`docs/blueprint-schema.json`). Design spec in
+  `docs/specs/2026-08-22-flow-canvas-design.md`
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -136,7 +158,8 @@ A worked example, for this repo's 21st MCP key:
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
+  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below) and
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
@@ -201,6 +224,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
+python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
