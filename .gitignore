@@ -28,3 +28,9 @@ graphify-out/.vocab.txt
 # machine — so it produced a large diff on every rebuild while meaning nothing.
 graphify-out/graph.html
 graphify-out/manifest.json
+
+# per-business engagement data (tools/engagement.py) — this fork is public,
+# and a client's process map and findings are confidential. Only the README
+# explaining that is tracked.
+engagements/*
+!engagements/README.md

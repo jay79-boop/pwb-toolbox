@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blueprint Builder - Operations Framework</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1e40af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-900: #111827;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary: #3b82f6;
+                --gray-50: #0f172a;
+                --gray-100: #1e293b;
+                --gray-200: #334155;
+                --gray-300: #475569;
+                --gray-600: #cbd5e1;
+                --gray-700: #e2e8f0;
+                --gray-900: #f8fafc;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: var(--gray-50);
+            color: var(--gray-900);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: var(--gray-100);
+            border-bottom: 2px solid var(--gray-200);
+            padding: 20px 0;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: var(--gray-600);
+            font-size: 0.95em;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+            padding: 15px;
+            background: var(--gray-100);
+            border-radius: 8px;
+        }
+
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: var(--primary-dark);
+        }
+
+        button.secondary {
+            background: var(--gray-300);
+            color: var(--gray-900);
+        }
+
+        button.secondary:hover {
+            background: var(--gray-400);
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid var(--gray-200);
+            margin: 20px 0;
+        }
+
+        .tab-button {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 1em;
+            color: var(--gray-600);
+            border-radius: 0;
+        }
+
+        .tab-button.active {
+            border-bottom-color: var(--primary);
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 20px 0;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid var(--gray-200);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .form-section {
+                background: var(--gray-100);
+            }
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="number"],
+        input[type="date"],
+        input[type="url"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            font-size: 0.95em;
+            font-family: inherit;
+            background: white;
+            color: var(--gray-900);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            input[type="text"],
+            input[type="email"],
+            input[type="number"],
+            input[type="date"],
+            input[type="url"],
+            textarea,
+            select {
+                background: var(--gray-50);
+                border-color: var(--gray-300);
+            }
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .list-item {
+            background: var(--gray-50);
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 4px solid var(--primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .list-item {
+                background: var(--gray-200);
+            }
+        }
+
+        .list-item-content {
+            flex: 1;
+        }
+
+        .list-item-title {
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .list-item-desc {
+            font-size: 0.9em;
+            color: var(--gray-600);
+        }
+
+        .list-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        button.sm {
+            padding: 6px 12px;
+            font-size: 0.85em;
+        }
+
+        button.danger {
+            background: var(--danger);
+        }
+
+        button.danger:hover {
+            background: #dc2626;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-essential {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .status-important {
+            background: #fef3c7;
+            color: #78350f;
+        }
+
+        .status-nice {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            background: var(--gray-100);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--primary);
+        }
+
+        .summary-label {
+            font-size: 0.9em;
+            color: var(--gray-600);
+            margin-bottom: 5px;
+        }
+
+        .summary-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--gray-600);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .modal-content {
+                background: var(--gray-100);
+            }
+        }
+
+        .modal-header {
+            font-size: 1.5em;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: flex-end;
+        }
+
+        .chip {
+            display: inline-block;
+            background: var(--gray-200);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin-right: 5px;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .card {
+                background: var(--gray-100);
+            }
+        }
+
+        .card-title {
+            font-size: 1.2em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .help-text {
+            font-size: 0.85em;
+            color: var(--gray-600);
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>📋 Blueprint Builder</h1>
+            <p class="subtitle">Build your operations blueprint—map departments, processes, tools, and changes</p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="toolbar">
+            <button onclick="exportJSON()">📥 Export as JSON</button>
+            <button onclick="importJSON()" class="secondary">📤 Import JSON</button>
+            <button onclick="downloadExample()" class="secondary">📄 Load Example</button>
+            <button onclick="resetBlueprint()" class="secondary">🔄 Reset</button>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="switchTab('meta')">Metadata</button>
+            <button class="tab-button" onclick="switchTab('departments')">Departments</button>
+            <button class="tab-button" onclick="switchTab('processes')">Processes</button>
+            <button class="tab-button" onclick="switchTab('tools')">Tools</button>
+            <button class="tab-button" onclick="switchTab('changes')">Changes</button>
+            <button class="tab-button" onclick="switchTab('roadmap')">Roadmap</button>
+            <button class="tab-button" onclick="switchTab('dashboard')">Dashboard</button>
+        </div>
+
+        <!-- Metadata Tab -->
+        <div id="meta" class="tab-content active">
+            <div class="form-section">
+                <h2>Organization Information</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Organization Name *</label>
+                        <input type="text" id="metaName" placeholder="e.g., TradeCo" onchange="updateMetadata()">
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="metaOwner" placeholder="e.g., Alice Chen" onchange="updateMetadata()">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="metaDesc" placeholder="Overview of your organization..." onchange="updateMetadata()"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Version</label>
+                        <input type="text" id="metaVersion" value="1.0" onchange="updateMetadata()">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Departments Tab -->
+        <div id="departments" class="tab-content">
+            <div class="form-section">
+                <h2>Add Department</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Department Name *</label>
+                        <input type="text" id="deptName" placeholder="e.g., Research & Strategy">
+                    </div>
+                    <div class="form-group">
+                        <label>Department Lead *</label>
+                        <input type="text" id="deptOwner" placeholder="e.g., Bob Martinez">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Number of Members</label>
+                        <input type="number" id="deptMembers" min="1" value="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="deptDesc" placeholder="What does this department do?"></textarea>
+                </div>
+                <button onclick="addDepartment()">Add Department</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Departments</h2>
+                <div id="deptList"></div>
+                <div id="deptEmpty" class="empty-state">No departments yet. Add one above.</div>
+            </div>
+        </div>
+
+        <!-- Processes Tab -->
+        <div id="processes" class="tab-content">
+            <div class="form-section">
+                <h2>Add Process</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Process Name *</label>
+                        <input type="text" id="procName" placeholder="e.g., Live Trade Execution">
+                    </div>
+                    <div class="form-group">
+                        <label>Process Owner *</label>
+                        <input type="text" id="procOwner" placeholder="e.g., Carol Zhang">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <select id="procCategory">
+                            <option value="inbound">Inbound (customer input)</option>
+                            <option value="internal">Internal (operations)</option>
+                            <option value="outbound">Outbound (customer output)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Frequency</label>
+                        <input type="text" id="procFreq" placeholder="e.g., daily, per-transaction">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="procDesc" placeholder="What does this process do?"></textarea>
+                </div>
+                <button onclick="addProcess()">Add Process</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Processes</h2>
+                <div id="procList"></div>
+                <div id="procEmpty" class="empty-state">No processes yet. Add one above.</div>
+            </div>
+        </div>
+
+        <!-- Tools Tab -->
+        <div id="tools" class="tab-content">
+            <div class="form-section">
+                <h2>Add Tool</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Tool Name *</label>
+                        <input type="text" id="toolName" placeholder="e.g., Slack">
+                    </div>
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <input type="text" id="toolCategory" placeholder="e.g., Communication">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Purpose *</label>
+                    <input type="text" id="toolPurpose" placeholder="What is this tool used for?">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="toolOwner" placeholder="e.g., David Lee">
+                    </div>
+                    <div class="form-group">
+                        <label>Criticality</label>
+                        <select id="toolCrit">
+                            <option value="essential">Essential</option>
+                            <option value="important">Important</option>
+                            <option value="nice-to-have">Nice-to-have</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Cost (USD)</label>
+                        <input type="number" id="toolCost" min="0" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Billing Frequency</label>
+                        <select id="toolFreq">
+                            <option value="one-time">One-time</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                            <option value="per-transaction">Per-transaction</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="addTool()">Add Tool</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Tools</h2>
+                <div id="toolList"></div>
+                <div id="toolEmpty" class="empty-state">No tools yet. Add one above.</div>
+            </div>
+        </div>
+
+        <!-- Changes Tab -->
+        <div id="changes" class="tab-content">
+            <div class="form-section">
+                <h2>Log a Change</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Change Title *</label>
+                        <input type="text" id="chgTitle" placeholder="e.g., Implemented automated risk monitoring">
+                    </div>
+                    <div class="form-group">
+                        <label>Date *</label>
+                        <input type="date" id="chgDate">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <select id="chgCategory">
+                            <option value="process">Process</option>
+                            <option value="tool">Tool</option>
+                            <option value="department">Department</option>
+                            <option value="workflow">Workflow</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="chgStatus">
+                            <option value="completed">Completed</option>
+                            <option value="in-progress">In-Progress</option>
+                            <option value="planned">Planned</option>
+                            <option value="rolled-back">Rolled-back</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="chgDesc" placeholder="What changed and why?"></textarea>
+                </div>
+                <button onclick="addChange()">Log Change</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Change History</h2>
+                <div id="chgList"></div>
+                <div id="chgEmpty" class="empty-state">No changes logged yet.</div>
+            </div>
+        </div>
+
+        <!-- Roadmap Tab -->
+        <div id="roadmap" class="tab-content">
+            <div class="form-section">
+                <h2>Add Roadmap Item</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Title *</label>
+                        <input type="text" id="rmTitle" placeholder="e.g., Automate daily P&L reporting">
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="rmOwner" placeholder="e.g., David Lee">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <input type="text" id="rmCategory" placeholder="e.g., process automation">
+                    </div>
+                    <div class="form-group">
+                        <label>Priority</label>
+                        <select id="rmPriority">
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Date</label>
+                        <input type="date" id="rmDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="rmStatus">
+                            <option value="backlog">Backlog</option>
+                            <option value="planned">Planned</option>
+                            <option value="in-progress">In-Progress</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="rmDesc" placeholder="Why and how?"></textarea>
+                </div>
+                <button onclick="addRoadmapItem()">Add Roadmap Item</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Roadmap</h2>
+                <div id="rmList"></div>
+                <div id="rmEmpty" class="empty-state">No roadmap items yet.</div>
+            </div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content">
+            <div class="summary" id="dashboardSummary"></div>
+            <div class="dashboard" id="dashboardContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let blueprint = {
+            meta: { name: '', version: '1.0', owner: '', description: '', created: new Date().toISOString(), lastModified: new Date().toISOString() },
+            departments: [],
+            processes: [],
+            tools: [],
+            changes: [],
+            roadmap: []
+        };
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            if (tabName === 'dashboard') renderDashboard();
+        }
+
+        function updateMetadata() {
+            blueprint.meta.name = document.getElementById('metaName').value;
+            blueprint.meta.owner = document.getElementById('metaOwner').value;
+            blueprint.meta.description = document.getElementById('metaDesc').value;
+            blueprint.meta.version = document.getElementById('metaVersion').value;
+            blueprint.meta.lastModified = new Date().toISOString();
+        }
+
+        function addDepartment() {
+            const name = document.getElementById('deptName').value;
+            const owner = document.getElementById('deptOwner').value;
+            if (!name || !owner) { alert('Name and Owner are required'); return; }
+            blueprint.departments.push({
+                id: `dept-${name.toLowerCase().replace(/\s/g, '-')}`,
+                name, owner,
+                members: parseInt(document.getElementById('deptMembers').value) || 1,
+                description: document.getElementById('deptDesc').value,
+                processes: [],
+                tools: []
+            });
+            document.getElementById('deptName').value = '';
+            document.getElementById('deptOwner').value = '';
+            document.getElementById('deptDesc').value = '';
+            document.getElementById('deptMembers').value = 1;
+            renderDepartments();
+        }
+
+        function renderDepartments() {
+            const list = document.getElementById('deptList');
+            const empty = document.getElementById('deptEmpty');
+            if (blueprint.departments.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.departments.map((d, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${d.name}</div>
+                            <div class="list-item-desc">Lead: ${d.owner} | ${d.members} members</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm danger" onclick="removeDepartment(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeDepartment(i) {
+            blueprint.departments.splice(i, 1);
+            renderDepartments();
+        }
+
+        function addProcess() {
+            const name = document.getElementById('procName').value;
+            const owner = document.getElementById('procOwner').value;
+            const category = document.getElementById('procCategory').value;
+            if (!name || !owner) { alert('Name and Owner are required'); return; }
+            blueprint.processes.push({
+                id: `proc-${name.toLowerCase().replace(/\s/g, '-')}`,
+                name, owner, category,
+                description: document.getElementById('procDesc').value,
+                frequency: document.getElementById('procFreq').value,
+                steps: [],
+                kpi: {}
+            });
+            document.getElementById('procName').value = '';
+            document.getElementById('procOwner').value = '';
+            document.getElementById('procDesc').value = '';
+            document.getElementById('procFreq').value = '';
+            renderProcesses();
+        }
+
+        function renderProcesses() {
+            const list = document.getElementById('procList');
+            const empty = document.getElementById('procEmpty');
+            if (blueprint.processes.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.processes.map((p, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${p.name}</div>
+                            <div class="list-item-desc">${p.category} | Owner: ${p.owner}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm danger" onclick="removeProcess(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeProcess(i) {
+            blueprint.processes.splice(i, 1);
+            renderProcesses();
+        }
+
+        function addTool() {
+            const name = document.getElementById('toolName').value;
+            const owner = document.getElementById('toolOwner').value;
+            const purpose = document.getElementById('toolPurpose').value;
+            if (!name || !owner || !purpose) { alert('Name, Owner, and Purpose are required'); return; }
+            blueprint.tools.push({
+                id: `tool-${name.toLowerCase().replace(/\s/g, '-')}`,
+                name, owner, purpose,
+                category: document.getElementById('toolCategory').value,
+                criticality: document.getElementById('toolCrit').value,
+                cost: {
+                    amount: parseFloat(document.getElementById('toolCost').value) || 0,
+                    currency: 'USD',
+                    frequency: document.getElementById('toolFreq').value
+                },
+                users: []
+            });
+            document.getElementById('toolName').value = '';
+            document.getElementById('toolOwner').value = '';
+            document.getElementById('toolPurpose').value = '';
+            document.getElementById('toolCategory').value = '';
+            document.getElementById('toolCost').value = '';
+            renderTools();
+        }
+
+        function renderTools() {
+            const list = document.getElementById('toolList');
+            const empty = document.getElementById('toolEmpty');
+            if (blueprint.tools.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.tools.map((t, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${t.name}</div>
+                            <div class="list-item-desc">${t.category} | $${t.cost.amount}/${t.cost.frequency} | Owner: ${t.owner}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <span class="status-badge status-${t.criticality}">${t.criticality}</span>
+                            <button class="sm danger" onclick="removeTool(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeTool(i) {
+            blueprint.tools.splice(i, 1);
+            renderTools();
+        }
+
+        function addChange() {
+            const title = document.getElementById('chgTitle').value;
+            const date = document.getElementById('chgDate').value;
+            if (!title || !date) { alert('Title and Date are required'); return; }
+            blueprint.changes.push({
+                id: `chg-${Date.now()}`,
+                title, date,
+                category: document.getElementById('chgCategory').value,
+                status: document.getElementById('chgStatus').value,
+                description: document.getElementById('chgDesc').value,
+                author: ''
+            });
+            document.getElementById('chgTitle').value = '';
+            document.getElementById('chgDate').value = '';
+            document.getElementById('chgDesc').value = '';
+            renderChanges();
+        }
+
+        function renderChanges() {
+            const list = document.getElementById('chgList');
+            const empty = document.getElementById('chgEmpty');
+            if (blueprint.changes.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.changes.map((c, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${c.title}</div>
+                            <div class="list-item-desc">${c.date} | ${c.category} | ${c.status}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm danger" onclick="removeChange(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeChange(i) {
+            blueprint.changes.splice(i, 1);
+            renderChanges();
+        }
+
+        function addRoadmapItem() {
+            const title = document.getElementById('rmTitle').value;
+            const owner = document.getElementById('rmOwner').value;
+            if (!title || !owner) { alert('Title and Owner are required'); return; }
+            blueprint.roadmap.push({
+                id: `roadmap-${Date.now()}`,
+                title, owner,
+                category: document.getElementById('rmCategory').value,
+                priority: document.getElementById('rmPriority').value,
+                targetDate: document.getElementById('rmDate').value,
+                status: document.getElementById('rmStatus').value,
+                description: document.getElementById('rmDesc').value
+            });
+            document.getElementById('rmTitle').value = '';
+            document.getElementById('rmOwner').value = '';
+            document.getElementById('rmCategory').value = '';
+            document.getElementById('rmDesc').value = '';
+            document.getElementById('rmDate').value = '';
+            renderRoadmap();
+        }
+
+        function renderRoadmap() {
+            const list = document.getElementById('rmList');
+            const empty = document.getElementById('rmEmpty');
+            if (blueprint.roadmap.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.roadmap.map((r, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${r.title}</div>
+                            <div class="list-item-desc">${r.targetDate || 'TBD'} | ${r.priority} priority | Owner: ${r.owner}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm danger" onclick="removeRoadmapItem(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeRoadmapItem(i) {
+            blueprint.roadmap.splice(i, 1);
+            renderRoadmap();
+        }
+
+        function renderDashboard() {
+            const summary = document.getElementById('dashboardSummary');
+            const content = document.getElementById('dashboardContent');
+            const toolCost = blueprint.tools.reduce((sum, t) => sum + (t.cost.frequency === 'yearly' ? t.cost.amount : t.cost.frequency === 'monthly' ? t.cost.amount * 12 : 0), 0);
+
+            summary.innerHTML = `
+                <div class="summary-card">
+                    <div class="summary-label">Departments</div>
+                    <div class="summary-value">${blueprint.departments.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Processes</div>
+                    <div class="summary-value">${blueprint.processes.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Tools</div>
+                    <div class="summary-value">${blueprint.tools.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Annual Tool Cost</div>
+                    <div class="summary-value">$${toolCost.toFixed(0)}</div>
+                </div>
+            `;
+
+            content.innerHTML = `
+                <div class="card">
+                    <div class="card-title">Top 5 Most Expensive Tools</div>
+                    ${blueprint.tools.sort((a, b) => b.cost.amount - a.cost.amount).slice(0, 5).map(t => `
+                        <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                            <strong>${t.name}</strong> - $${t.cost.amount}/${t.cost.frequency}
+                        </div>
+                    `).join('') || '<p style="color: var(--gray-600);">No tools yet</p>'}
+                </div>
+                <div class="card">
+                    <div class="card-title">Critical Tools</div>
+                    ${blueprint.tools.filter(t => t.criticality === 'essential').map(t => `
+                        <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                            <strong>${t.name}</strong><br>
+                            <span style="font-size: 0.9em; color: var(--gray-600);">${t.category}</span>
+                        </div>
+                    `).join('') || '<p style="color: var(--gray-600);">No essential tools yet</p>'}
+                </div>
+                <div class="card">
+                    <div class="card-title">Active Roadmap</div>
+                    ${blueprint.roadmap.filter(r => r.status !== 'completed').length > 0 ? `
+                        ${blueprint.roadmap.filter(r => r.status !== 'completed').slice(0, 5).map(r => `
+                            <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                                <strong>${r.title}</strong><br>
+                                <span style="font-size: 0.9em; color: var(--gray-600);">${r.priority} priority | ${r.status}</span>
+                            </div>
+                        `).join('')}
+                    ` : '<p style="color: var(--gray-600);">No active roadmap items</p>'}
+                </div>
+            `;
+        }
+
+        function exportJSON() {
+            blueprint.meta.lastModified = new Date().toISOString();
+            const json = JSON.stringify(blueprint, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${blueprint.meta.name.replace(/\s/g, '-').toLowerCase()}-blueprint.json`;
+            a.click();
+        }
+
+        function importJSON() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/json';
+            input.onchange = e => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = evt => {
+                    try {
+                        blueprint = JSON.parse(evt.target.result);
+                        document.getElementById('metaName').value = blueprint.meta.name;
+                        document.getElementById('metaOwner').value = blueprint.meta.owner;
+                        document.getElementById('metaDesc').value = blueprint.meta.description;
+                        document.getElementById('metaVersion').value = blueprint.meta.version;
+                        renderDepartments();
+                        renderProcesses();
+                        renderTools();
+                        renderChanges();
+                        renderRoadmap();
+                        alert('Blueprint imported successfully!');
+                    } catch (error) {
+                        alert('Error importing JSON: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        function downloadExample() {
+            fetch('blueprint-example.json')
+                .then(r => r.json())
+                .then(data => {
+                    blueprint = data;
+                    document.getElementById('metaName').value = blueprint.meta.name;
+                    document.getElementById('metaOwner').value = blueprint.meta.owner;
+                    document.getElementById('metaDesc').value = blueprint.meta.description;
+                    document.getElementById('metaVersion').value = blueprint.meta.version;
+                    renderDepartments();
+                    renderProcesses();
+                    renderTools();
+                    renderChanges();
+                    renderRoadmap();
+                    alert('Example blueprint loaded!');
+                })
+                .catch(err => alert('Error loading example: ' + err.message));
+        }
+
+        function resetBlueprint() {
+            if (confirm('Are you sure? This will clear all data.')) {
+                blueprint = {
+                    meta: { name: '', version: '1.0', owner: '', description: '', created: new Date().toISOString(), lastModified: new Date().toISOString() },
+                    departments: [],
+                    processes: [],
+                    tools: [],
+                    changes: [],
+                    roadmap: []
+                };
+                document.getElementById('metaName').value = '';
+                document.getElementById('metaOwner').value = '';
+                document.getElementById('metaDesc').value = '';
+                document.getElementById('metaVersion').value = '1.0';
+                renderDepartments();
+                renderProcesses();
+                renderTools();
+                renderChanges();
+                renderRoadmap();
+            }
+        }
+
+        // Initialize
+        renderDepartments();
+        renderProcesses();
+        renderTools();
+        renderChanges();
+        renderRoadmap();
+    </script>
+</body>
+</html>
