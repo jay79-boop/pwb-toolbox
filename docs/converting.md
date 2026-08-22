@@ -93,6 +93,8 @@ duplicate is pure waste.
 | `close[3]` | `self.data.close[-3]` |
 | `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
 | `cond ? a : b` | `a if cond else b`, or a `PineExpr` line where one is needed |
+| `switch mode` over `ta.sma` / `ta.rma` / ... | one indicator, chosen in `__init__` — see below |
+| a length written as `mode == 'Fast' ? 5 : 20` | resolved the same way, since a period is read once |
 | `switch` with or without a subject | the chain of conditionals it means |
 | `if` / `else if` / `else` | the same, inside `next()` |
 | an `if` read for its value | the conditional expression it means |
@@ -1067,6 +1069,65 @@ some bars, in the mode nearly everyone runs. `PinePivot` over `ta.sma(close,
 So both `PineExpr` and `PinePivot` write `once` explicitly, and the test suite
 runs a strategy using both under `runonce=True` and `runonce=False` and asserts
 every bar agrees.
+
+## Choosing between indicators before the first bar
+
+The commonest shape in the corpus after the date window is a `switch` that
+picks a moving average, usually reached through a function:
+
+```pinescript
+f_smooth(src, length, mode) =>
+    switch mode
+        'SMA' => ta.sma(src, length)
+        'RMA' => ta.rma(src, length)
+        'HMA' => ta.hma(src, length)
+        =>       ta.ema(src, length)
+wt1 = f_smooth(close, avgLen, mode)
+```
+
+`mode` is an input, or the chart's timeframe. Neither moves during a run, so
+the choice is made once, in `__init__`:
+
+```python
+self._choice_1 = (bt.indicators.SMA(self.data.close, period=self.p.avgLen)
+                  if (self.p.mode == 'SMA')
+                  else (...))
+wt1 = self._choice_1[0]
+```
+
+That it is a conditional **expression** is the substance, not the style. A
+Python conditional expression evaluates only the branch it takes, so only the
+chosen average is built — and that matters more than it looks:
+
+> Backtrader's minimum period is the maximum over every indicator the strategy
+> *holds*, read or not. A 5-period average built beside an unused 80-period one
+> produces nothing until bar 80.
+
+So building all four branches and selecting between them would move the bar a
+converted strategy starts trading on, by an amount that depends on which
+averages the script happens to offer. Nothing in the generated source would
+look wrong. The test for this runs the same strategy twice, on the fast mode
+and the slow one, and asserts the first bar is 5 and 80 respectively.
+
+Two things deliberately do not take this path:
+
+- **A conditional between numbers.** `mode == 'A' ? 5 : 20` is a number, not a
+  line, and a number cannot be read at `[0]`. It stays a scalar — as does the
+  mixed case, where which branch is a line depends on the condition.
+- **A per-bar guard.** `d != 0 ? x / d : 0` has a condition that moves with the
+  bars, so it cannot be settled in `__init__` at all. It stays a `PineExpr`,
+  lazy, for the reason given under "A conditional needs a function, not a line
+  operation".
+
+A length chosen the same way resolves the same way: `ta.highest(high, mode ==
+'Fast' ? 5 : 20)` reads its period once, when the indicator is built, which is
+exactly when the condition can be answered.
+
+The limit is a branch that cannot be a line at all — a stateful user function
+such as a JMA, which is an iterative per-bar recursion rather than an
+expression. One such branch refuses the whole choice today, even when the
+branch actually selected would lower cleanly, because which branch is taken is
+not known until the feed is attached.
 
 ## A known simplification
 

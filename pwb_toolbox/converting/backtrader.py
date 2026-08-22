@@ -1521,6 +1521,9 @@ class _Generator:
         #: Lines that must run in front of the statement being emitted -- the
         #: per-bar state updates of an inlined function that keeps `var`.
         self._prelude: list[str] = []
+        #: Depth of `_const_choice` branch lowering. Non-zero means `_hoist`
+        #: hands back constructions instead of registering them in `__init__`.
+        self._inline_depth: int = 0
         #: State slot -> the Pine name it came from, for slots whose `[1]` may
         #: be read. Only function-body vars qualify; see `_state_history`.
         self._var_history: dict[str, str] = {}
@@ -1550,6 +1553,13 @@ class _Generator:
         ``ta.crossover``/``ta.crossunder`` on one pair otherwise does -- would
         double that work for no benefit.
         """
+        if self._inline_depth:
+            # Inside a branch of a construction-time choice. The caller is
+            # assembling one expression that must build only the branch it
+            # takes, so this construction goes into that expression rather
+            # than into `__init__` on a line of its own -- where it would be
+            # built whether or not its branch is chosen. See `_const_choice`.
+            return construction
         attr: Optional[str] = self._hoisted.get(construction)
         if attr is None:
             attr = self._fresh(stem)
@@ -2024,6 +2034,9 @@ class _Generator:
                 return None
             return f"({left} {node.op} {right})"
         if isinstance(node, Ternary):
+            chosen = self._const_choice(node)
+            if chosen is not None:
+                return chosen
             # Not `bt.If`: it computes both branches on every bar, which
             # defeats the guard a conditional usually exists to be.
             return self._expr_line(node)
@@ -2050,6 +2063,113 @@ class _Generator:
                 return f"{_LINE_MATH[node.func]}({', '.join(parts)})"
             return self._hoist_indicator(node)
         return None
+
+    def _const_expr(self, node):
+        """Lower an expression ``__init__`` can evaluate, or ``None``.
+
+        The sibling of :meth:`_period_expr`, and for the same reason. A period
+        has to be a number by the time the indicator is constructed; a *choice
+        between* indicators has to be settled by then too. What qualifies is
+        the same on both sides -- literals, params, the clock -- with
+        comparisons and booleans allowed here, since this lowers a condition
+        rather than a length.
+
+        Anything reading price is refused. A series holds no value when
+        ``__init__`` runs, and a condition that moves per bar is not a choice
+        between indicators at all; that one belongs in a ``PineExpr``.
+        """
+        if isinstance(node, (Num, Str, Bool)):
+            return repr(_literal(node))
+        if isinstance(node, Na):
+            return "float('nan')"
+        if isinstance(node, Name):
+            if node.id in self.param_names:
+                return f"self.p.{_safe(node.id)}"
+            if node.id == "timeframe.period":
+                self._uses_time = True
+                return "self._pine_timeframe()"
+            if node.id == "syminfo.mintick":
+                return self._mintick_param()
+            inner = self._computed.get(node.id)
+            if inner is None or node.id in self._promoting:
+                return None
+            self._promoting.add(node.id)
+            try:
+                return self._const_expr(inner)
+            finally:
+                self._promoting.discard(node.id)
+        if isinstance(node, Unary):
+            operand = self._const_expr(node.operand)
+            if operand is None:
+                return None
+            return f"(not {operand})" if node.op == "not" else f"({node.op}{operand})"
+        if isinstance(node, Binary):
+            operator = _BINARY_OPS.get(node.op)
+            if operator is None:
+                return None
+            left = self._const_expr(node.left)
+            right = self._const_expr(node.right)
+            if left is None or right is None:
+                return None
+            return f"({left} {operator} {right})"
+        if isinstance(node, Ternary):
+            parts = [
+                self._const_expr(part) for part in (node.cond, node.then, node.other)
+            ]
+            if any(part is None for part in parts):
+                return None
+            cond, then, other = parts
+            return f"({then} if {cond} else {other})"
+        if isinstance(node, Call) and node.func == "timeframe.in_seconds":
+            return self._tf_seconds(node)
+        return None
+
+    def _const_choice(self, node):
+        """A ternary picking between lines on a condition ``__init__`` settles.
+
+        ``switch mode`` over ``ta.sma`` / ``ta.rma`` / ``ta.hma`` is the
+        commonest shape in the corpus, usually reached through a function and
+        keyed off an input or the chart's timeframe. None of those move during
+        a run, so the choice is made once, by a Python conditional expression
+        in ``__init__``.
+
+        That it is a conditional *expression* is the substance, not the style.
+        Backtrader's minimum period is the maximum over every indicator the
+        strategy holds -- read or not -- so a 5-period average built beside an
+        unused 80-period one produces nothing until bar 80. Building the
+        branch not taken would move the bar a converted strategy starts
+        trading on, and nothing about the generated source would look wrong.
+        Only the taken branch is built, which is what a conditional expression
+        gives and what a selector over pre-built branches would not.
+        """
+        condition = self._const_expr(node.cond)
+        if condition is None:
+            return None
+        if (
+            self._const_expr(node.then) is not None
+            or self._const_expr(node.other) is not None
+        ):
+            # A branch that is itself a construction-time value is a number,
+            # not a line, and a number cannot be read at `[0]`. `mode == 'A' ?
+            # 5 : 20` is a constant and belongs in the scalar path; so does
+            # the mixed case, where which branch is a line depends on the
+            # condition and only one of the two answers could be read.
+            return None
+        # Speculative: a branch that will not lower files its own rejection on
+        # the way out, and the caller's fallback is the path that decides what
+        # to report. Unwound the way `_shifted_read` unwinds its attempt.
+        mark = len(self.unsupported)
+        self._inline_depth += 1
+        try:
+            then = self._line_expr(node.then)
+            other = self._line_expr(node.other)
+        finally:
+            self._inline_depth -= 1
+        if then is None or other is None:
+            del self.unsupported[mark:]
+            return None
+        del self.unsupported[mark:]
+        return self._hoist("choice", f"({then} if {condition} else {other})")
 
     def _period_expr(self, node):
         """Lower a length, or a pivot's bar count, or return ``None``.
@@ -2081,6 +2201,17 @@ class _Generator:
             if left is None or right is None:
                 return None
             return f"({left} {_BINARY_OPS[node.op]} {right})"
+        if isinstance(node, Ternary):
+            # `len = mode == 'Fast' ? 5 : 20` is a length chosen once, not per
+            # bar, so it resolves the same way the indicator it feeds does.
+            # Both branches stay periods; only the condition may be a string
+            # comparison, which is what `_const_expr` is for.
+            cond = self._const_expr(node.cond)
+            then = self._period_expr(node.then)
+            other = self._period_expr(node.other)
+            if cond is None or then is None or other is None:
+                return None
+            return f"({then} if {cond} else {other})"
         if isinstance(node, Call) and node.func in ("int", "math.round"):
             inner = self._period_expr(node.args[0]) if node.args else None
             return None if inner is None else f"int({inner})"
@@ -2449,6 +2580,15 @@ class _Generator:
             )
 
         if isinstance(node, Ternary):
+            # A choice between indicators settled at construction time is read
+            # from the one line that choice built, rather than lowered again
+            # here. Lowering it again would build every branch a second time,
+            # through a path `_const_choice` does not govern -- and an
+            # indicator that is merely built still counts toward the bar the
+            # strategy starts on.
+            chosen = self._const_choice(node)
+            if chosen is not None:
+                return self._line_read(chosen)
             return (
                 f"({self._value_expr(node.then)} if {self._value_expr(node.cond)} "
                 f"else {self._value_expr(node.other)})"

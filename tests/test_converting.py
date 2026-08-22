@@ -5567,3 +5567,146 @@ def test_timeframe_in_seconds_answers_before_the_first_bar():
     cerebro.broker.setcash(10_000.0)
     cerebro.run()
     assert asked["in_init"] == 14400
+
+
+# --- choosing between indicators before the first bar ------------------------
+
+
+#: The commonest shape in the corpus: a `switch` picking a moving average,
+#: reached through a function and keyed off an input.
+MA_SELECTOR = (
+    '//@version=6\nstrategy("S")\n'
+    'mode = input.string("HMA", "Mode")\n'
+    'avgLen = input.int(21, "Length")\n'
+    "f_smooth(src, length, m) =>\n"
+    "    switch m\n"
+    "        'SMA' => ta.sma(src, length)\n"
+    "        'RMA' => ta.rma(src, length)\n"
+    "        'HMA' => ta.hma(src, length)\n"
+    "        =>       ta.ema(src, length)\n"
+    "wt1 = f_smooth(close, avgLen, mode)\n"
+    "wt2 = ta.sma(wt1, 4)\n"
+    "if ta.crossover(wt1, wt2)\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+
+def test_a_switch_between_indicators_becomes_one_construction():
+    result = convert(MA_SELECTOR)
+    assert result.ok, result.unsupported
+    # One conditional expression, not one hoisted average per branch.
+    assert result.code.count("bt.indicators.SMA(") == 2  # the choice, and wt2
+    assert "if (self.p.mode == 'SMA')" in result.code
+    # The per-bar read comes off the line the choice built rather than
+    # lowering the whole switch a second time.
+    assert "wt1 = self._choice_1[0]" in result.code
+
+
+def test_only_the_chosen_branch_is_built():
+    """The reason this is a conditional *expression* rather than a selector
+    over pre-built branches.
+
+    Backtrader's minimum period is the maximum over every indicator the
+    strategy holds, read or not -- an unused 80-period average delays the
+    first `next()` to bar 80 exactly as a used one would. So building the
+    branch not taken would move the bar a converted strategy starts trading
+    on, and nothing in the generated source would look wrong.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("FAST", "Mode")\n'
+        "f_pick(source) =>\n"
+        "    switch mode\n"
+        "        'FAST' => ta.sma(source, 5)\n"
+        "        =>       ta.sma(source, 80)\n"
+        "ma = f_pick(close)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    def first_bar(mode):
+        seen = {}
+
+        class Watched(base):
+            def next(self):
+                super().next()
+                seen.setdefault("first", len(self.data))
+
+        cerebro = bt.Cerebro()
+        cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=150)))
+        cerebro.addstrategy(Watched, mode=mode)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        return seen["first"]
+
+    assert first_bar("FAST") == 5
+    assert first_bar("SLOW") == 80
+
+
+def test_a_conditional_between_numbers_stays_a_number():
+    """Only a choice between *lines* is a line. `mode == 'A' ? 5 : 20` is a
+    number, and a number cannot be read at `[0]`."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("A", "Mode")\n'
+        "len = mode == 'A' ? 5 : 20\n"
+        "ma = ta.sma(close, len)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "_choice" not in result.code
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    cerebro.run()  # the regression: this used to raise on `(5 if c else 20)[0]`
+
+
+def test_a_per_bar_condition_is_still_lazy():
+    """`d != 0 ? x / d : 0` is a guard, not a choice between indicators.
+
+    Its condition moves per bar, so it cannot be settled in `__init__` and
+    must not become a `_choice`. Fed to an indicator it needs a line, and the
+    line it gets is a `PineExpr` -- a Python lambda, evaluated per bar and
+    lazily, which is the whole reason `bt.If` is not used here.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "d = ta.stdev(close, 20)\n"
+        "z = d != 0 ? (close - ta.sma(close, 20)) / d : 0.0\n"
+        "smoothed = ta.sma(z, 5)\n"
+        "if smoothed > 1\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "PineExpr" in result.code
+    assert "_choice" not in result.code
+
+
+def test_a_branch_that_will_not_lower_declines_without_inventing_a_reason():
+    """The attempt is speculative, so a branch that cannot be a line must not
+    leave its own rejection behind -- the fallback path is what decides what
+    to report, and two messages for one gap reads as two gaps."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("SMA", "Mode")\n'
+        "f_state(src) =>\n"
+        "    var float carried = 0.0\n"
+        "    carried := carried + src\n"
+        "    carried\n"
+        "pick = mode == 'SMA' ? ta.sma(close, 10) : f_state(close)\n"
+        "if close > pick\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    # Whatever it reports, it must not report the same gap twice.
+    assert len(result.unsupported) == len(set(result.unsupported))
