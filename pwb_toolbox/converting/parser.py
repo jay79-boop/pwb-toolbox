@@ -459,7 +459,9 @@ class Parser:
             index += 1
         return False
 
-    def parse_statement(self, value_position: bool = False) -> Optional[Assign | ExprStmt | FuncDef | If | TupleAssign | Unsupported]:
+    def parse_statement(
+        self, value_position: bool = False
+    ) -> Optional[Assign | ExprStmt | FuncDef | If | TupleAssign | Unsupported]:
         token = self.current
 
         if token.kind == "NAME" and token.value in _BLOCK_KEYWORDS:
@@ -613,7 +615,9 @@ class Parser:
         already a condition.
         """
         self.advance()  # `switch`
-        subject: Optional[object] = None if self.at("NEWLINE") else self.parse_expression()
+        subject: Optional[object] = (
+            None if self.at("NEWLINE") else self.parse_expression()
+        )
         self.expect("NEWLINE")
         self.expect("INDENT")
 
@@ -623,7 +627,9 @@ class Parser:
             if self.at("DEDENT") or self.at("EOF"):
                 break
             # A case with no pattern before the arrow is the default.
-            pattern: Optional[object] = None if self.at("OP", "=>") else self.parse_expression()
+            pattern: Optional[object] = (
+                None if self.at("OP", "=>") else self.parse_expression()
+            )
             self.expect("OP", "=>")
             cases.append((pattern, self.parse_expression()))
             self.skip_newlines()

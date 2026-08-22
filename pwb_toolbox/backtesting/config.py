@@ -1,4 +1,5 @@
 """Configuration dataclasses for backtesting and optimization."""
+
 from dataclasses import dataclass, field
 from typing import Optional
 

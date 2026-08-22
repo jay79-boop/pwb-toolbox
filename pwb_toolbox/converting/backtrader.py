@@ -220,7 +220,11 @@ COMPOSED_AVERAGES: tuple[str, ...] = ("ta.hma", "ta.vwma", "ta.alma")
 _LINE_OPS: tuple[str, ...] = ("+", "-", "*", "/", "%")
 
 #: Math that composes on lines rather than on numbers.
-_LINE_MATH: dict[str, str] = {"math.abs": "abs", "math.max": "bt.Max", "math.min": "bt.Min"}
+_LINE_MATH: dict[str, str] = {
+    "math.abs": "abs",
+    "math.max": "bt.Max",
+    "math.min": "bt.Min",
+}
 
 CROSSES: dict[str, str] = {
     "ta.crossover": "> 0",
@@ -1313,8 +1317,12 @@ class _Generator:
         self._counter: int = 0
         self._hoisted: dict[str, str] = {}  # construction source -> attribute name
         self._inputs: dict[str, str] = {}  # input call signature -> param name
-        self.state: dict[str, str] = {}  # pine `var` name -> attribute name on the strategy
-        self.feeds: list[tuple[str, int]] = []  # (bt.TimeFrame expression, compression) per extra feed
+        self.state: dict[str, str] = (
+            {}
+        )  # pine `var` name -> attribute name on the strategy
+        self.feeds: list[tuple[str, int]] = (
+            []
+        )  # (bt.TimeFrame expression, compression) per extra feed
         self._feed_index: dict[str, int] = {}  # timeframe text -> index into self.datas
         #: The feed expressions currently lower against. Swapped while the
         #: inner expression of a request.security is translated.

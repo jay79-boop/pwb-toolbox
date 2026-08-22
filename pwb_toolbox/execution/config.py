@@ -1,4 +1,5 @@
 """Configuration dataclasses for execution and order placement."""
+
 from dataclasses import dataclass
 from typing import Optional
 

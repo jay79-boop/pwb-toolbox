@@ -17,6 +17,7 @@ from typing import Any, Dict
 try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
     XLSX_AVAILABLE = True
 except ImportError:
     XLSX_AVAILABLE = False
@@ -24,13 +25,13 @@ except ImportError:
 
 def load_json_blueprint(file_path: str) -> Dict[str, Any]:
     """Load a blueprint from JSON file."""
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         return json.load(f)
 
 
 def save_json_blueprint(blueprint: Dict[str, Any], file_path: str) -> None:
     """Save a blueprint to JSON file."""
-    with open(file_path, 'w') as f:
+    with open(file_path, "w") as f:
         json.dump(blueprint, f, indent=2)
     print(f"✅ Saved to {file_path}")
 
@@ -47,18 +48,22 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
 
     # Metadata sheet
     ws = wb.create_sheet("Metadata")
-    ws['A1'] = "Key"
-    ws['B1'] = "Value"
-    ws['A1'].font = Font(bold=True, color="FFFFFF")
-    ws['B1'].font = Font(bold=True, color="FFFFFF")
-    ws['A1'].fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    ws['B1'].fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    ws["A1"] = "Key"
+    ws["B1"] = "Value"
+    ws["A1"].font = Font(bold=True, color="FFFFFF")
+    ws["B1"].font = Font(bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill(
+        start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+    )
+    ws["B1"].fill = PatternFill(
+        start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+    )
 
     meta = blueprint.get("meta", {})
     row = 2
     for key, value in meta.items():
-        ws[f'A{row}'] = key
-        ws[f'B{row}'] = str(value)
+        ws[f"A{row}"] = key
+        ws[f"B{row}"] = str(value)
         row += 1
 
     # Departments sheet
@@ -67,7 +72,9 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
     for col, header in enumerate(headers, 1):
         ws.cell(1, col).value = header
         ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
-        ws.cell(1, col).fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
 
     for row, dept in enumerate(blueprint.get("departments", []), 2):
         ws.cell(row, 1).value = dept.get("id", "")
@@ -80,11 +87,23 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
 
     # Processes sheet
     ws = wb.create_sheet("Processes")
-    headers = ["ID", "Name", "Category", "Owner", "Description", "Frequency", "Metric", "Target", "Current"]
+    headers = [
+        "ID",
+        "Name",
+        "Category",
+        "Owner",
+        "Description",
+        "Frequency",
+        "Metric",
+        "Target",
+        "Current",
+    ]
     for col, header in enumerate(headers, 1):
         ws.cell(1, col).value = header
         ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
-        ws.cell(1, col).fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
 
     for row, proc in enumerate(blueprint.get("processes", []), 2):
         ws.cell(row, 1).value = proc.get("id", "")
@@ -100,11 +119,24 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
 
     # Tools sheet
     ws = wb.create_sheet("Tools")
-    headers = ["ID", "Name", "Category", "Purpose", "Cost", "Frequency", "Owner", "Criticality", "Users", "Dependencies"]
+    headers = [
+        "ID",
+        "Name",
+        "Category",
+        "Purpose",
+        "Cost",
+        "Frequency",
+        "Owner",
+        "Criticality",
+        "Users",
+        "Dependencies",
+    ]
     for col, header in enumerate(headers, 1):
         ws.cell(1, col).value = header
         ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
-        ws.cell(1, col).fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
 
     for row, tool in enumerate(blueprint.get("tools", []), 2):
         cost = tool.get("cost", {})
@@ -125,7 +157,9 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
     for col, header in enumerate(headers, 1):
         ws.cell(1, col).value = header
         ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
-        ws.cell(1, col).fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
 
     for row, change in enumerate(blueprint.get("changes", []), 2):
         ws.cell(row, 1).value = change.get("id", "")
@@ -138,11 +172,22 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
 
     # Roadmap sheet
     ws = wb.create_sheet("Roadmap")
-    headers = ["ID", "Title", "Category", "Priority", "Target Date", "Owner", "Status", "Description"]
+    headers = [
+        "ID",
+        "Title",
+        "Category",
+        "Priority",
+        "Target Date",
+        "Owner",
+        "Status",
+        "Description",
+    ]
     for col, header in enumerate(headers, 1):
         ws.cell(1, col).value = header
         ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
-        ws.cell(1, col).fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
 
     for row, item in enumerate(blueprint.get("roadmap", []), 2):
         ws.cell(row, 1).value = item.get("id", "")
@@ -187,7 +232,7 @@ def xlsx_to_json(input_file: str, output_file: str) -> None:
         "processes": [],
         "tools": [],
         "changes": [],
-        "roadmap": []
+        "roadmap": [],
     }
 
     # Read metadata
@@ -208,87 +253,105 @@ def xlsx_to_json(input_file: str, output_file: str) -> None:
         ws = wb["Departments"]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
-                blueprint["departments"].append({
-                    "id": row[0] or "",
-                    "name": row[1] or "",
-                    "owner": row[2] or "",
-                    "members": row[3] or 1,
-                    "description": row[4] or "",
-                    "processes": [p.strip() for p in (row[5] or "").split(",") if p.strip()],
-                    "tools": [t.strip() for t in (row[6] or "").split(",") if t.strip()]
-                })
+                blueprint["departments"].append(
+                    {
+                        "id": row[0] or "",
+                        "name": row[1] or "",
+                        "owner": row[2] or "",
+                        "members": row[3] or 1,
+                        "description": row[4] or "",
+                        "processes": [
+                            p.strip() for p in (row[5] or "").split(",") if p.strip()
+                        ],
+                        "tools": [
+                            t.strip() for t in (row[6] or "").split(",") if t.strip()
+                        ],
+                    }
+                )
 
     # Read processes
     if "Processes" in wb.sheetnames:
         ws = wb["Processes"]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
-                blueprint["processes"].append({
-                    "id": row[0] or "",
-                    "name": row[1] or "",
-                    "category": row[2] or "",
-                    "owner": row[3] or "",
-                    "description": row[4] or "",
-                    "frequency": row[5] or "",
-                    "steps": [],
-                    "kpi": {
-                        "metric": row[6] or "",
-                        "target": row[7] or "",
-                        "current": row[8] or ""
+                blueprint["processes"].append(
+                    {
+                        "id": row[0] or "",
+                        "name": row[1] or "",
+                        "category": row[2] or "",
+                        "owner": row[3] or "",
+                        "description": row[4] or "",
+                        "frequency": row[5] or "",
+                        "steps": [],
+                        "kpi": {
+                            "metric": row[6] or "",
+                            "target": row[7] or "",
+                            "current": row[8] or "",
+                        },
                     }
-                })
+                )
 
     # Read tools
     if "Tools" in wb.sheetnames:
         ws = wb["Tools"]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
-                blueprint["tools"].append({
-                    "id": row[0] or "",
-                    "name": row[1] or "",
-                    "category": row[2] or "",
-                    "purpose": row[3] or "",
-                    "cost": {
-                        "amount": row[4] or 0,
-                        "currency": "USD",
-                        "frequency": row[5] or "one-time"
-                    },
-                    "owner": row[6] or "",
-                    "criticality": row[7] or "important",
-                    "users": [u.strip() for u in (row[8] or "").split(",") if u.strip()],
-                    "dependencies": [d.strip() for d in (row[9] or "").split(",") if d.strip()]
-                })
+                blueprint["tools"].append(
+                    {
+                        "id": row[0] or "",
+                        "name": row[1] or "",
+                        "category": row[2] or "",
+                        "purpose": row[3] or "",
+                        "cost": {
+                            "amount": row[4] or 0,
+                            "currency": "USD",
+                            "frequency": row[5] or "one-time",
+                        },
+                        "owner": row[6] or "",
+                        "criticality": row[7] or "important",
+                        "users": [
+                            u.strip() for u in (row[8] or "").split(",") if u.strip()
+                        ],
+                        "dependencies": [
+                            d.strip() for d in (row[9] or "").split(",") if d.strip()
+                        ],
+                    }
+                )
 
     # Read changes
     if "Changes" in wb.sheetnames:
         ws = wb["Changes"]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
-                blueprint["changes"].append({
-                    "id": row[0] or "",
-                    "date": str(row[1] or ""),
-                    "title": row[2] or "",
-                    "category": row[3] or "",
-                    "status": row[4] or "completed",
-                    "description": row[5] or "",
-                    "author": row[6] or ""
-                })
+                blueprint["changes"].append(
+                    {
+                        "id": row[0] or "",
+                        "date": str(row[1] or ""),
+                        "title": row[2] or "",
+                        "category": row[3] or "",
+                        "status": row[4] or "completed",
+                        "description": row[5] or "",
+                        "author": row[6] or "",
+                    }
+                )
 
     # Read roadmap
     if "Roadmap" in wb.sheetnames:
         ws = wb["Roadmap"]
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
-                blueprint["roadmap"].append({
-                    "id": row[0] or "",
-                    "title": row[1] or "",
-                    "category": row[2] or "",
-                    "priority": row[3] or "medium",
-                    "targetDate": str(row[4] or ""),
-                    "owner": row[5] or "",
-                    "status": row[6] or "backlog",
-                    "description": row[7] or ""
-                })
+                blueprint["roadmap"].append(
+                    {
+                        "id": row[0] or "",
+                        "title": row[1] or "",
+                        "category": row[2] or "",
+                        "priority": row[3] or "medium",
+                        "targetDate": str(row[4] or ""),
+                        "owner": row[5] or "",
+                        "status": row[6] or "backlog",
+                        "description": row[7] or "",
+                    }
+                )
 
     save_json_blueprint(blueprint, output_file)
     print(f"✅ Converted to JSON: {output_file}")
@@ -366,13 +429,17 @@ def main():
 
     if command == "json-to-xlsx":
         if not input_file or not output_file:
-            print("Usage: blueprint_converter.py json-to-xlsx input.json --out output.xlsx")
+            print(
+                "Usage: blueprint_converter.py json-to-xlsx input.json --out output.xlsx"
+            )
             sys.exit(1)
         json_to_xlsx(input_file, output_file)
 
     elif command == "xlsx-to-json":
         if not input_file or not output_file:
-            print("Usage: blueprint_converter.py xlsx-to-json input.xlsx --out output.json")
+            print(
+                "Usage: blueprint_converter.py xlsx-to-json input.xlsx --out output.json"
+            )
             sys.exit(1)
         xlsx_to_json(input_file, output_file)
 

@@ -18,7 +18,9 @@ def optimal_limit_order_formula(config: OptimalLimitOrderFormulaConfig):
     """
     alpha = config.k / 2 * config.gamma * np.power(config.sigma, 2)
     beta = config.k * config.mu
-    eta = config.A * np.power(1 + config.gamma / config.k, -(1 + config.k / config.gamma))
+    eta = config.A * np.power(
+        1 + config.gamma / config.k, -(1 + config.k / config.gamma)
+    )
     w_0 = 1
 
     def w_T(q):
@@ -40,13 +42,13 @@ def optimal_limit_order_formula(config: OptimalLimitOrderFormulaConfig):
     delta = {}
     for q in range(1, config.q_max + 1):
         if q == 1:
-            delta[q] = 1 / config.k * np.log(w[:, q - 1] / w_0) + 1 / config.gamma * np.log(
-                1 + config.gamma / config.k
-            )
+            delta[q] = 1 / config.k * np.log(
+                w[:, q - 1] / w_0
+            ) + 1 / config.gamma * np.log(1 + config.gamma / config.k)
         else:
-            delta[q] = 1 / config.k * np.log(w[:, q - 1] / w[:, q - 2]) + 1 / config.gamma * np.log(
-                1 + config.gamma / config.k
-            )
+            delta[q] = 1 / config.k * np.log(
+                w[:, q - 1] / w[:, q - 2]
+            ) + 1 / config.gamma * np.log(1 + config.gamma / config.k)
 
     if config.is_plot:
         for q in range(1, config.q_max + 1):
