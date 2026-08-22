@@ -69,6 +69,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\register_desk_agent.
 The cloud review is a Routine on the Claude account, not a file here. It is
 listed under Routines and can be paused or deleted there.
 
+A Routine's sessions may start without GitHub tooling, in which case the review
+can push a branch but not open the PR itself. That case is handled rather than
+fatal: it pushes, logs a `cannot-open-pr-from-this-session` blocker naming the
+branch, and never falls back to pushing straight to `main`. Should it keep
+happening, the recurring-blocker machinery raises it after the third week --
+which is the loop noticing its own gap.
+
 ## Reading the log yourself
 
 ```bash

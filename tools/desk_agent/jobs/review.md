@@ -31,6 +31,14 @@ revertible.
 4. Commit to a branch and open a **draft PR** titled
    `desk-agent: playbook revision <YYYY-MM-DD>`.
 
+   If this session has no GitHub tooling and cannot open one, **push the branch
+   anyway** and log a blocker with key `cannot-open-pr-from-this-session`,
+   naming the branch in the summary so it can be opened by hand. Do not push
+   playbook changes straight to `main` to work around it: the human glance is
+   the point of the PR, and skipping it to keep the job tidy defeats the whole
+   arrangement. If this recurs, the review will surface it to be fixed
+   properly, which is the loop working as intended.
+
 ## What may and may not be changed
 
 **May:** this file, the other job files, and everything in `playbook.md` below
