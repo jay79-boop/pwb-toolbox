@@ -137,6 +137,12 @@ A worked example, for this repo's 21st MCP key:
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
+- `tools/kronos_lab.py` — measures the Kronos K-line foundation model
+  (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
+  hit rate with exact p-value, information coefficient, error vs persistence)
+  plus a forecast-chart mode. Model runs happen on the user's machine — the
+  cloud proxy blocks Hugging Face — but the scoring core is pure math and
+  tested with fake predictors (`tests/test_kronos_lab.py`)
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
@@ -543,6 +549,22 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-22] Kronos foundation model: measured, no zero-shot edge (PR #93)
+**Decision:** Before integrating the Kronos K-line foundation model
+(shiyu-coder/Kronos) anywhere, measure it with `tools/kronos_lab.py`. Result on
+Kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all
+post-training-cutoff 2026 data: BTC-USD 46.7% direction hit rate (p=0.70),
+ES=F 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse
+than persistence on both.
+**Why:** Three candidate uses were on the table — a fourth signal for the
+backtest lab, a confirmation filter on ICT entries, a discretionary forecast
+chart. All three require measurable directional skill; none was found.
+**Outcome:** Kronos stays out of the backtest lab, the desk agent, and live
+decisions. The forecast-chart mode exists but must not inform trades. The lab
+tool stays merged as the standing instrument for any future revisit (a
+fine-tuned variant, a newer model release) — re-run the eval before believing
+any of them.
 
 ### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
 **Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
