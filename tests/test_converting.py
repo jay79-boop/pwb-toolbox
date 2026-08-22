@@ -5782,3 +5782,102 @@ def test_a_branch_that_will_not_lower_declines_without_inventing_a_reason():
     result = convert(source)
     # Whatever it reports, it must not report the same gap twice.
     assert len(result.unsupported) == len(set(result.unsupported))
+
+
+#: A switch offering three modes, one of them a stateful function that has no
+#: Backtrader line. The shape three corpus strategies are written in.
+MIXED_SELECTOR = (
+    '//@version=6\nstrategy("S")\n'
+    'mode = input.string("SMA", "Mode")\n'
+    "f_jma(src, length) =>\n"
+    "    var float jma = 0.0\n"
+    "    jma := nz(jma[1], src) + (src - nz(jma[1], src)) / length\n"
+    "    jma\n"
+    "f_smooth(src, length) =>\n"
+    "    switch mode\n"
+    "        'SMA' => ta.sma(src, length)\n"
+    "        'EMA' => ta.ema(src, length)\n"
+    "        =>       f_jma(src, length)\n"
+    "ma = f_smooth(close, 10)\n"
+    "if close > ma\n"
+    '    strategy.entry("L", strategy.long)\n'
+)
+
+
+def test_one_unbuildable_mode_does_not_refuse_the_whole_strategy():
+    """Which branch a construction-time choice takes is not known until the
+    feed is attached, so a script offering one mode this converter cannot
+    build is not a script that cannot be converted. Pine would never evaluate
+    the branch not chosen either.
+    """
+    result = convert(MIXED_SELECTOR)
+    assert result.ok, result.unsupported
+    assert any("no Backtrader line" in note for note in result.notes)
+    # Named so it can be found in the original source, without the generated
+    # counter that means nothing to a reader.
+    assert any("f_jma" in note for note in result.notes)
+
+
+def test_the_modes_that_do_convert_run_and_the_one_that_does_not_says_so():
+    result = convert(MIXED_SELECTOR)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    def run(mode):
+        cerebro = bt.Cerebro()
+        cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+        cerebro.addstrategy(base, mode=mode)
+        cerebro.broker.setcash(10_000.0)
+        cerebro.run()
+        return cerebro.broker.getvalue()
+
+    assert run("SMA") > 0
+    assert run("EMA") > 0
+
+    with pytest.raises(NotImplementedError) as raised:
+        run("JMA")
+    assert "f_jma" in str(raised.value)
+    assert "another mode" in str(raised.value)
+
+
+def test_the_unbuildable_mode_fails_before_a_single_bar_is_priced():
+    """A backtest that stops part way through is worse than one that never
+    starts: it produces numbers. The raise comes from `__init__`, so a run
+    either has every indicator it needs or does not begin.
+    """
+    result = convert(MIXED_SELECTOR)
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    bars = []
+
+    class Watched(namespace[result.class_name]):
+        def next(self):
+            bars.append(len(self))
+            super().next()
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=60)))
+    cerebro.addstrategy(Watched, mode="JMA")
+    cerebro.broker.setcash(10_000.0)
+    with pytest.raises(NotImplementedError):
+        cerebro.run()
+    assert bars == []
+
+
+def test_a_choice_with_no_line_on_either_side_is_left_alone():
+    """The escape hatch is for a *choice between indicators* that has one bad
+    branch, not for a conditional that was never one."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'mode = input.string("A", "Mode")\n'
+        "n = mode == 'A' ? 5 : 20\n"
+        "ma = ta.sma(close, n)\n"
+        "if close > ma\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "_pine_no_mode" not in result.code
+    assert result.notes == []

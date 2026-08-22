@@ -131,6 +131,7 @@ duplicate is pure waste.
 | `barstate.isrealtime` | `False` |
 | `barstate.isfirst`, `barstate.islast` | a position in the feed, so still live |
 | `var x = <literal>` | an attribute set once in `__init__` |
+| `varip x = <literal>` | the same — the two are identical on historical bars |
 | `x := value` | assignment, writing through to the attribute for a `var` |
 | `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
 | `na(x)` | the NaN test `x != x` |
@@ -170,7 +171,6 @@ every later reference — that is what the Pine source means by the name.
 Reported in `result.unsupported`, never approximated:
 
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
-- `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps and `type` blocks — all reported, so the rest of the script is still diagnosed
 - a user-defined function that recurses, returns a tuple, expands past the inlining limit, or keeps state and is called from inside an `if` — see below
@@ -193,8 +193,14 @@ about how the strategy trades: `plot`, `plotshape`, `bgcolor`, `hline`, `fill`,
 constants they consume, such as `color.green` and `shape.triangleup`. A colour
 cannot change a trade, so refusing one would fail a conversion over nothing.
 
-Both lists are also written into the generated class's docstring, so a
-converted file explains its own gaps without needing the original result object.
+A third list, `result.notes`, records a reading the conversion made
+deliberately that differs from the source as written. Not a gap — the
+translation is faithful on the bars a backtest runs — but the reader should
+know one was made. `varip` read as `var` is one; a switch mode that raises
+rather than building is the other.
+
+All three lists are also written into the generated class's docstring, so a
+converted file explains itself without needing the original result object.
 
 ## Stops and targets
 
@@ -1070,6 +1076,34 @@ So both `PineExpr` and `PinePivot` write `once` explicitly, and the test suite
 runs a strategy using both under `runonce=True` and `runonce=False` and asserts
 every bar agrees.
 
+## `varip`, and why it is `var` here
+
+`varip` differs from `var` only on a realtime bar, where it is not rolled back
+between ticks. A backtest has no realtime bars, and Pine's own documentation
+is explicit on both halves of what follows: *"varip will behave similar to var
+on historical bars"*, and *"because varip only affects the behavior of your
+code in the realtime bar, varip behavior cannot be simulated on historical
+bars"*.
+
+So on the bars a backtest actually runs, reading `varip` as `var` is what Pine
+itself does, rather than an approximation of it — and the behaviour being
+protected cannot be reproduced by anything, in Pine or here.
+
+This was refused for a long time, and the refusal bought nothing while costing
+a cascade: the name never entered scope, so every later read and every
+reassignment reported separately. Three corpus strategies spent roughly
+seventy per cent of their gap lists on it.
+
+| script | gaps before | after |
+| --- | --- | --- |
+| `vein_reversal_labeler` | 58 | 16 |
+| `wavetrend_v4` | 80 | 18 |
+| `wavetrend_base` | 73 | 15 |
+
+It is recorded in `result.notes`, not passed over in silence: the script was
+written by someone who wanted intrabar behaviour somewhere, and a live run is
+where they would not get it.
+
 ## Choosing between indicators before the first bar
 
 The commonest shape in the corpus after the date window is a `switch` that
@@ -1123,11 +1157,30 @@ A length chosen the same way resolves the same way: `ta.highest(high, mode ==
 'Fast' ? 5 : 20)` reads its period once, when the indicator is built, which is
 exactly when the condition can be answered.
 
-The limit is a branch that cannot be a line at all — a stateful user function
-such as a JMA, which is an iterative per-bar recursion rather than an
-expression. One such branch refuses the whole choice today, even when the
-branch actually selected would lower cleanly, because which branch is taken is
-not known until the feed is attached.
+### A mode that cannot be built
+
+Some branch will not be a line at all — a stateful user function such as a
+JMA, which is an iterative per-bar recursion rather than an expression. That
+does not make the strategy unconvertible. Which branch is taken is settled
+when the feed is attached, and Pine would never evaluate the branch not
+chosen, so the modes that *do* build are worth having.
+
+The branch becomes a raise instead of a line:
+
+```python
+self._choice_1 = (bt.indicators.SMA(...) if (self.p.mode == 'SMA')
+                  else (bt.indicators.EMA(...) if (self.p.mode == 'EMA')
+                        else self._pine_no_mode('f_jma_value')))
+```
+
+Selecting that mode fails by name, from `__init__`, before a single bar is
+priced — a backtest that stops part way through is worse than one that never
+starts, because it produces numbers. Every other selection runs untouched.
+
+This is the one place `result.ok` does not mean "every path works". It means
+every path the inputs can reach *as converted* either works or stops the run
+loudly, which is why the reading is recorded in `result.notes` rather than
+passed over.
 
 ## A known simplification
 

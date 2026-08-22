@@ -1062,6 +1062,31 @@ _RISK_HELPER = (
     "",
 )
 
+#: Emitted into a strategy whose `switch` between indicators offers a mode this
+#: converter cannot build as a line.
+#:
+#: Which mode is taken is settled when the feed is attached, not when the
+#: script is converted, so one unbuildable branch does not make the strategy
+#: unconvertible -- every other mode works, and Pine would never evaluate the
+#: branch not chosen. The branch becomes this instead of a line: selecting that
+#: mode fails by name, at construction, before a bar is priced.
+_CHOICE_HELPER = (
+    "",
+    "    def _pine_no_mode(self, described):",
+    '        """Raise for a mode the conversion could not build.',
+    "",
+    "        Reached only when the inputs select this branch. It fires from",
+    "        __init__, so a run either has every indicator it needs or stops",
+    "        before its first bar -- never part way through a backtest.",
+    '        """',
+    "        raise NotImplementedError(",
+    '            "this strategy was converted from PineScript, and the mode "',
+    '            "selected needs %s, which has no Backtrader line. Choose "',
+    '            "another mode, or write this one by hand." % described',
+    "        )",
+    "",
+)
+
 #: Emitted into a strategy that reads any of Pine's trade counters.
 #:
 #: Backtrader keeps no ledger of closed trades -- ``notify_trade`` reports each
@@ -1432,6 +1457,26 @@ class ConversionResult:
         return not self.unsupported
 
 
+def _describe(node: Any) -> str:
+    """A short label for an expression, for naming it in a message.
+
+    Only ever read by a human: the mode of a switch this converter cannot
+    build, so `f_jma(src, length, jmaPhase, jmaPower)` should come back as
+    something recognisable in the original source rather than a node type.
+    """
+    if isinstance(node, Call):
+        return f"{node.func}()"
+    if isinstance(node, Name):
+        # A branch reached through an inlined function arrives as the
+        # generated name of its state slot -- `f_jma_value_2`. The trailing
+        # counter is noise to a reader looking for this in their own source;
+        # what is left still carries the function's name.
+        return re.sub(r"_\d+$", "", node.id)
+    if isinstance(node, (Num, Str, Bool)):
+        return repr(_literal(node))
+    return type(node).__name__.lower()
+
+
 def _class_name(title: str, fallback: str = "ConvertedStrategy") -> str:
     parts: list[str] = re.findall(r"[A-Za-z0-9]+", title or "")
     name: str = "".join(part[:1].upper() + part[1:] for part in parts)
@@ -1514,6 +1559,7 @@ class _Generator:
         self._max_lookback: int = 0
         self._uses_back: bool = False
         self._uses_risk: bool = False
+        self._uses_choice: bool = False
         #: Pine name -> the expression it was assigned, for top-level plain
         #: assignments only. Read by `_promote` when one is wanted as a line.
         self._computed: dict[str, object] = {}
@@ -2194,11 +2240,35 @@ class _Generator:
             other = self._line_expr(node.other)
         finally:
             self._inline_depth -= 1
-        if then is None or other is None:
-            del self.unsupported[mark:]
-            return None
         del self.unsupported[mark:]
+        if then is None and other is None:
+            # Neither side is a line; there is no choice here to settle.
+            return None
+        then = then if then is not None else self._unbuildable(node.then)
+        other = other if other is not None else self._unbuildable(node.other)
         return self._hoist("choice", f"({then} if {condition} else {other})")
+
+    def _unbuildable(self, node):
+        """A branch that cannot be a line, as something that says so if taken.
+
+        Which branch a construction-time choice takes is not known until the
+        feed is attached, so a script offering one mode this converter cannot
+        build is not thereby a script that cannot be converted -- every other
+        mode works, and Pine would never evaluate the branch not chosen.
+
+        The branch becomes a raise instead of a line. Selecting that mode
+        fails at construction, by name, before a single bar is priced; every
+        other selection is unaffected. The alternative -- refusing the whole
+        strategy -- throws away the modes that do work over one that might
+        never be asked for.
+        """
+        self._uses_choice = True
+        self._note(
+            f"one mode of a switch between indicators needs {_describe(node)}, "
+            "which has no Backtrader line. Selecting that mode raises at "
+            "construction; every other mode the script offers converts and runs"
+        )
+        return f"self._pine_no_mode({_describe(node)!r})"
 
     def _period_expr(self, node):
         """Lower a length, or a pivot's bar count, or return ``None``.
@@ -3846,6 +3916,8 @@ class _Generator:
             out.extend(_PENDING_HELPER)
         if self._uses_risk:
             out.extend(_RISK_HELPER)
+        if self._uses_choice:
+            out.extend(_CHOICE_HELPER)
         if self._uses_trades:
             out.extend(_TRADES_HELPER)
         if self._uses_back:
