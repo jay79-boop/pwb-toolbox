@@ -13,6 +13,19 @@ def _to_list(data: Sequence[float]) -> list:
     return list(data)
 
 
+def _index_of(data: Sequence[float], length: int) -> list:
+    """The pandas index of ``data``, or positions when it has none.
+
+    ``getattr(data, "index", range(n))`` cannot do this: on a plain list
+    ``index`` is a *method*, so the default never applies and the caller ends
+    up trying to iterate a bound method.
+    """
+    index = getattr(data, "index", None)
+    if index is None or callable(index):
+        return list(range(length))
+    return list(index)
+
+
 def total_return(prices: Sequence[float]) -> float:
     """Return total return of a price series."""
     p = _to_list(prices)
@@ -38,7 +51,7 @@ def returns_table(prices: "pd.Series") -> "pd.DataFrame":  # type: ignore
         raise ImportError("pandas is required for returns_table")
 
     price_list = _to_list(prices)
-    index = list(getattr(prices, "index", range(len(price_list))))
+    index = _index_of(prices, len(price_list))
 
     years = sorted({dt.year for dt in index})
     months = list(range(1, 13))
@@ -75,7 +88,7 @@ def rolling_cumulative_return(prices: "pd.Series", window: int) -> "pd.Series": 
         raise ImportError("pandas is required for rolling_cumulative_return")
 
     p = _to_list(prices)
-    index = list(getattr(prices, "index", range(len(p))))
+    index = _index_of(prices, len(p))
     out = []
     for i in range(len(p)):
         if i < window:
@@ -381,7 +394,7 @@ def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]
     p = _to_list(prices)
     b = _to_list(benchmark)
     n = min(len(p), len(b))
-    index = list(getattr(prices, "index", range(len(p))))[:n]
+    index = _index_of(prices, len(p))[:n]
     cum = []
     total = 1.0
     for i in range(n):

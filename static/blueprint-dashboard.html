@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blueprint Dashboard - Visual Operations Map</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-900: #111827;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --gray-50: #0f172a;
+                --gray-100: #1e293b;
+                --gray-200: #334155;
+                --gray-300: #475569;
+                --gray-600: #cbd5e1;
+                --gray-900: #f8fafc;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: var(--gray-50);
+            color: var(--gray-900);
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--gray-100);
+            border-bottom: 2px solid var(--gray-200);
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.5em;
+            margin: 0;
+        }
+
+        .subtitle {
+            color: var(--gray-600);
+            font-size: 0.9em;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            padding: 10px 20px;
+            background: var(--gray-100);
+            border-bottom: 1px solid var(--gray-200);
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .view-tabs {
+            display: flex;
+            gap: 5px;
+        }
+
+        button {
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button.secondary {
+            background: var(--gray-300);
+            color: var(--gray-900);
+        }
+
+        button.tab {
+            background: var(--gray-300);
+            color: var(--gray-900);
+        }
+
+        button.tab.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .view {
+            display: none;
+            flex: 1;
+            overflow: auto;
+        }
+
+        .view.active {
+            display: flex;
+        }
+
+        /* Diagram View */
+        #diagramView {
+            flex-direction: column;
+        }
+
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: var(--gray-50);
+            cursor: grab;
+        }
+
+        .canvas-container:active {
+            cursor: grabbing;
+        }
+
+        canvas {
+            display: block;
+            background: white;
+        }
+
+        #diagramCanvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            canvas {
+                background: var(--gray-100);
+            }
+        }
+
+        .canvas-controls {
+            padding: 10px 20px;
+            background: var(--gray-100);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .control-group label {
+            font-size: 0.85em;
+            color: var(--gray-600);
+        }
+
+        input[type="range"] {
+            width: 100px;
+        }
+
+        /* Canvas Editor View */
+        #canvasEditorView {
+            flex-direction: column;
+        }
+
+        .editor-container {
+            flex: 1;
+            position: relative;
+            background: white;
+            overflow: hidden;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .editor-container {
+                background: var(--gray-100);
+            }
+        }
+
+        .nodes-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: default;
+        }
+
+        .node {
+            position: absolute;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid;
+            cursor: move;
+            font-size: 0.85em;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            user-select: none;
+            max-width: 140px;
+            text-align: center;
+            word-break: break-word;
+            transition: box-shadow 0.2s;
+        }
+
+        .node:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .node.dept {
+            background: #dbeafe;
+            border-color: #0c4a6e;
+            color: #0c4a6e;
+        }
+
+        .node.proc {
+            background: #dcfce7;
+            border-color: #15803d;
+            color: #15803d;
+        }
+
+        .node.tool {
+            background: #fef3c7;
+            border-color: #78350f;
+            color: #78350f;
+        }
+
+        .node-label {
+            font-size: 0.8em;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
+        /* Status Dashboard */
+        #statusView {
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .card {
+                background: var(--gray-100);
+            }
+        }
+
+        .card-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--primary);
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .metric-label {
+            color: var(--gray-600);
+            font-size: 0.9em;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: var(--gray-900);
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            font-weight: 700;
+            margin: 30px 0 15px 0;
+            color: var(--gray-900);
+        }
+
+        .kpi-row {
+            background: var(--gray-100);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .kpi-name {
+            font-weight: 500;
+        }
+
+        .kpi-value {
+            font-size: 0.9em;
+            color: var(--gray-600);
+        }
+
+        .tool-criticality {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+
+        .crit-essential {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .crit-important {
+            background: #fef3c7;
+            color: #78350f;
+        }
+
+        .crit-nice {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--gray-600);
+        }
+
+        .info-panel {
+            padding: 10px 20px;
+            background: var(--gray-100);
+            border-top: 1px solid var(--gray-200);
+            font-size: 0.9em;
+            color: var(--gray-600);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>📊 Blueprint Dashboard</h1>
+                <p class="subtitle">Visual operations map: see how your departments, processes, and tools connect</p>
+            </div>
+        </header>
+
+        <div class="toolbar">
+            <div class="view-tabs">
+                <button class="tab active" onclick="switchView('diagram')">🔗 Connection Diagram</button>
+                <button class="tab" onclick="switchView('canvas')">📐 Canvas Editor</button>
+                <button class="tab" onclick="switchView('status')">📈 Status Dashboard</button>
+            </div>
+            <div style="flex: 1;"></div>
+            <button class="secondary" onclick="document.getElementById('importFile').click()">📂 Import</button>
+            <button class="secondary" onclick="loadExample()">📄 Load Example</button>
+            <button class="secondary" onclick="exportData()">📥 Export</button>
+            <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+        </div>
+
+        <div class="content">
+            <!-- Diagram View -->
+            <div id="diagramView" class="view active">
+                <div class="canvas-container">
+                    <canvas id="diagramCanvas"></canvas>
+                </div>
+                <div class="canvas-controls">
+                    <div class="control-group">
+                        <label>Zoom:</label>
+                        <input type="range" id="zoomSlider" min="0.5" max="3" step="0.1" value="1" onchange="updateZoom()">
+                        <span id="zoomValue">100%</span>
+                    </div>
+                    <button class="secondary" onclick="resetView()">Reset View</button>
+                    <button class="secondary" onclick="autoLayout()">Auto-Layout</button>
+                </div>
+                <div class="info-panel">
+                    💡 Drag to pan. Scroll to zoom. Circles = Departments, Squares = Processes, Hexagons = Tools. Lines show connections.
+                </div>
+            </div>
+
+            <!-- Canvas Editor View -->
+            <div id="canvasEditorView" class="view">
+                <div class="editor-container">
+                    <div class="nodes-canvas" id="nodesCanvas"></div>
+                </div>
+                <div class="canvas-controls">
+                    <button class="secondary" onclick="autoArrangeNodes()">Auto-Arrange Nodes</button>
+                    <button class="secondary" onclick="saveLayout()">Save Layout</button>
+                    <button class="secondary" onclick="resetLayout()">Reset Layout</button>
+                </div>
+                <div class="info-panel">
+                    💡 Drag nodes to arrange. Click a node to see details. Changes are saved to browser.
+                </div>
+            </div>
+
+            <!-- Status Dashboard View -->
+            <div id="statusView" class="view">
+                <div id="dashboardContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let blueprint = {
+            meta: {},
+            departments: [],
+            processes: [],
+            tools: [],
+            changes: [],
+            roadmap: []
+        };
+
+        let nodePositions = {};
+        let canvasZoom = 1;
+        let panX = 0, panY = 0;
+        let selectedNode = null;
+
+        // View switching
+        function switchView(view) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+
+            if (view === 'diagram') {
+                document.getElementById('diagramView').classList.add('active');
+                document.querySelector('button[onclick*="diagram"]').classList.add('active');
+                setTimeout(renderDiagram, 0);
+            } else if (view === 'canvas') {
+                document.getElementById('canvasEditorView').classList.add('active');
+                document.querySelector('button[onclick*="canvas"]').classList.add('active');
+                renderCanvasEditor();
+            } else if (view === 'status') {
+                document.getElementById('statusView').classList.add('active');
+                document.querySelector('button[onclick*="status"]').classList.add('active');
+                renderStatusDashboard();
+            }
+        }
+
+        // Load example blueprint
+        function adoptBlueprint(data, label) {
+            if (!data || !data.meta || !Array.isArray(data.departments)
+                || !Array.isArray(data.processes) || !Array.isArray(data.tools)) {
+                alert('Not a blueprint document: expected meta, departments, processes and tools.');
+                return;
+            }
+            blueprint = data;
+            initializeNodePositions();
+            renderDiagram();
+            alert(label + ' loaded!');
+        }
+
+        function loadExample() {
+            // The example lives in docs/ since the static/ move; fetch also
+            // cannot read sibling files from file://, so fall back to Import.
+            fetch('../docs/blueprint-example.json')
+                .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+                .then(data => adoptBlueprint(data, 'Example blueprint'))
+                .catch(() => alert('Could not fetch the example (opening from file:// blocks it). '
+                    + 'Use Import and pick docs/blueprint-example.json instead.'));
+        }
+
+        document.getElementById('importFile').addEventListener('change', function () {
+            const file = this.files[0];
+            this.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                let data;
+                try { data = JSON.parse(reader.result); }
+                catch (e) { alert('Not valid JSON: ' + e.message); return; }
+                adoptBlueprint(data, file.name);
+            };
+            reader.readAsText(file);
+        });
+
+        // Initialize node positions
+        function initializeNodePositions() {
+            nodePositions = {};
+            const baseX = 100;
+            const baseY = 100;
+            const deptSpacing = 300;
+            const procSpacing = 200;
+            const toolSpacing = 150;
+
+            blueprint.departments.forEach((d, i) => {
+                nodePositions[`dept-${d.id}`] = { x: baseX + i * deptSpacing, y: baseY };
+            });
+
+            blueprint.processes.forEach((p, i) => {
+                nodePositions[`proc-${p.id}`] = { x: baseX + (i % 3) * procSpacing, y: baseY + 150 };
+            });
+
+            blueprint.tools.forEach((t, i) => {
+                nodePositions[`tool-${t.id}`] = { x: baseX + (i % 5) * toolSpacing, y: baseY + 300 };
+            });
+
+            localStorage.setItem('nodePositions', JSON.stringify(nodePositions));
+        }
+
+        // Render diagram
+        function renderDiagram() {
+            const canvas = document.getElementById('diagramCanvas');
+            const ctx = canvas.getContext('2d');
+
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+
+            ctx.save();
+            ctx.translate(panX, panY);
+            ctx.scale(canvasZoom, canvasZoom);
+
+            // Draw connections
+            ctx.strokeStyle = 'rgba(37, 99, 235, 0.3)';
+            ctx.lineWidth = 1.5;
+
+            blueprint.departments.forEach(d => {
+                (d.processes || []).forEach(pid => {
+                    const proc = blueprint.processes.find(p => p.id === pid);
+                    if (proc) {
+                        const from = nodePositions[`dept-${d.id}`];
+                        const to = nodePositions[`proc-${proc.id}`];
+                        if (from && to) {
+                            ctx.beginPath();
+                            ctx.moveTo(from.x + 30, from.y + 30);
+                            ctx.lineTo(to.x + 30, to.y + 30);
+                            ctx.stroke();
+                        }
+                    }
+                });
+
+                (d.tools || []).forEach(tid => {
+                    const tool = blueprint.tools.find(t => t.id === tid);
+                    if (tool) {
+                        const from = nodePositions[`dept-${d.id}`];
+                        const to = nodePositions[`tool-${tool.id}`];
+                        if (from && to) {
+                            ctx.beginPath();
+                            ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
+                            ctx.setLineDash([5, 5]);
+                            ctx.moveTo(from.x + 30, from.y + 30);
+                            ctx.lineTo(to.x + 30, to.y + 30);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
+                    }
+                });
+            });
+
+            blueprint.processes.forEach(p => {
+                (p.tools || []).forEach(tid => {
+                    const tool = blueprint.tools.find(t => t.id === tid);
+                    if (tool) {
+                        const from = nodePositions[`proc-${p.id}`];
+                        const to = nodePositions[`tool-${tool.id}`];
+                        if (from && to) {
+                            ctx.beginPath();
+                            ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
+                            ctx.moveTo(from.x + 30, from.y + 30);
+                            ctx.lineTo(to.x + 30, to.y + 30);
+                            ctx.stroke();
+                        }
+                    }
+                });
+            });
+
+            // Draw nodes
+            blueprint.departments.forEach(d => {
+                const pos = nodePositions[`dept-${d.id}`];
+                if (pos) drawNode(ctx, pos.x, pos.y, 'dept', d.name);
+            });
+
+            blueprint.processes.forEach(p => {
+                const pos = nodePositions[`proc-${p.id}`];
+                if (pos) drawNode(ctx, pos.x, pos.y, 'proc', p.name);
+            });
+
+            blueprint.tools.forEach(t => {
+                const pos = nodePositions[`tool-${t.id}`];
+                if (pos) drawNode(ctx, pos.x, pos.y, 'tool', t.name);
+            });
+
+            ctx.restore();
+        }
+
+        function drawNode(ctx, x, y, type, label) {
+            const colors = {
+                dept: { bg: '#dbeafe', border: '#0c4a6e' },
+                proc: { bg: '#dcfce7', border: '#15803d' },
+                tool: { bg: '#fef3c7', border: '#78350f' }
+            };
+            const color = colors[type];
+            const size = 30;
+
+            ctx.fillStyle = color.bg;
+            ctx.strokeStyle = color.border;
+            ctx.lineWidth = 2;
+
+            if (type === 'dept') {
+                ctx.beginPath();
+                ctx.arc(x + size, y + size, size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            } else if (type === 'proc') {
+                ctx.fillRect(x, y, size * 2, size * 2);
+                ctx.strokeRect(x, y, size * 2, size * 2);
+            } else {
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i * Math.PI / 3) - Math.PI / 2;
+                    const px = x + size + size * Math.cos(angle);
+                    const py = y + size + size * Math.sin(angle);
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = color.border;
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label.substring(0, 12), x + size, y + size);
+        }
+
+        function updateZoom() {
+            canvasZoom = parseFloat(document.getElementById('zoomSlider').value);
+            document.getElementById('zoomValue').innerText = Math.round(canvasZoom * 100) + '%';
+            renderDiagram();
+        }
+
+        function resetView() {
+            canvasZoom = 1;
+            panX = 0;
+            panY = 0;
+            document.getElementById('zoomSlider').value = 1;
+            document.getElementById('zoomValue').innerText = '100%';
+            renderDiagram();
+        }
+
+        function autoLayout() {
+            initializeNodePositions();
+            renderDiagram();
+        }
+
+        // Canvas Editor
+        function renderCanvasEditor() {
+            const container = document.getElementById('nodesCanvas');
+            container.innerHTML = '';
+
+            const loaded = localStorage.getItem('nodePositions');
+            if (loaded) nodePositions = JSON.parse(loaded);
+
+            blueprint.departments.forEach(d => {
+                const pos = nodePositions[`dept-${d.id}`] || { x: Math.random() * 500, y: Math.random() * 300 };
+                createNode(container, `dept-${d.id}`, d.name, 'dept', pos);
+            });
+
+            blueprint.processes.forEach(p => {
+                const pos = nodePositions[`proc-${p.id}`] || { x: Math.random() * 500, y: Math.random() * 300 };
+                createNode(container, `proc-${p.id}`, p.name, 'proc', pos);
+            });
+
+            blueprint.tools.forEach(t => {
+                const pos = nodePositions[`tool-${t.id}`] || { x: Math.random() * 500, y: Math.random() * 300 };
+                createNode(container, `tool-${t.id}`, t.name, 'tool', pos);
+            });
+        }
+
+        function createNode(container, id, label, type, pos) {
+            const node = document.createElement('div');
+            node.className = `node ${type}`;
+            node.innerText = label;
+            node.style.left = pos.x + 'px';
+            node.style.top = pos.y + 'px';
+            node.draggable = true;
+
+            node.addEventListener('dragstart', (e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                selectedNode = id;
+            });
+
+            container.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+
+            container.addEventListener('drop', (e) => {
+                if (selectedNode) {
+                    const rect = container.getBoundingClientRect();
+                    nodePositions[selectedNode] = {
+                        x: e.clientX - rect.left,
+                        y: e.clientY - rect.top
+                    };
+                    localStorage.setItem('nodePositions', JSON.stringify(nodePositions));
+                    renderCanvasEditor();
+                    selectedNode = null;
+                }
+            });
+
+            container.appendChild(node);
+        }
+
+        function autoArrangeNodes() {
+            initializeNodePositions();
+            renderCanvasEditor();
+        }
+
+        function saveLayout() {
+            localStorage.setItem('nodePositions', JSON.stringify(nodePositions));
+            alert('Layout saved!');
+        }
+
+        function resetLayout() {
+            localStorage.removeItem('nodePositions');
+            initializeNodePositions();
+            renderCanvasEditor();
+        }
+
+        // Status Dashboard
+        function renderStatusDashboard() {
+            const content = document.getElementById('dashboardContent');
+            const toolCost = blueprint.tools.reduce((sum, t) => {
+                const freq = t.cost?.frequency === 'yearly' ? 1 : t.cost?.frequency === 'monthly' ? 12 : 0;
+                return sum + (t.cost?.amount || 0) * freq;
+            }, 0);
+
+            let html = `
+                <h2 class="section-title">📊 Operations Summary</h2>
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <div class="card-title">Organization</div>
+                        <div class="metric">
+                            <span class="metric-label">Name</span>
+                            <span class="metric-value">${blueprint.meta?.name || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Owner</span>
+                            <span class="metric-value">${blueprint.meta?.owner || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Structure</div>
+                        <div class="metric">
+                            <span class="metric-label">Departments</span>
+                            <span class="metric-value">${blueprint.departments?.length || 0}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Processes</span>
+                            <span class="metric-value">${blueprint.processes?.length || 0}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Tools</span>
+                            <span class="metric-value">${blueprint.tools?.length || 0}</span>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Technology</div>
+                        <div class="metric">
+                            <span class="metric-label">Annual Tool Cost</span>
+                            <span class="metric-value">$${toolCost.toFixed(0)}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Critical Tools</span>
+                            <span class="metric-value">${blueprint.tools?.filter(t => t.criticality === 'essential').length || 0}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="section-title">🏢 Departments</h2>
+                <div class="dashboard-grid">
+            `;
+
+            blueprint.departments?.forEach(d => {
+                html += `
+                    <div class="card">
+                        <div class="card-title">${d.name}</div>
+                        <div class="metric">
+                            <span class="metric-label">Lead</span>
+                            <span class="metric-value">${d.owner}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Members</span>
+                            <span class="metric-value">${d.members}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div><h2 class="section-title">⚙️ Processes & KPIs</h2><div class="dashboard-grid">`;
+
+            blueprint.processes?.forEach(p => {
+                html += `
+                    <div class="card">
+                        <div class="card-title">${p.name}</div>
+                        <div class="metric">
+                            <span class="metric-label">Category</span>
+                            <span class="metric-value">${p.category}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Owner</span>
+                            <span class="metric-value">${p.owner}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Frequency</span>
+                            <span class="metric-value">${p.frequency || 'N/A'}</span>
+                        </div>
+                `;
+                if (p.kpi?.metric) {
+                    html += `
+                        <div style="border-top: 1px solid var(--gray-200); padding-top: 10px; margin-top: 10px;">
+                            <div class="kpi-row">
+                                <span class="kpi-name">${p.kpi.metric}</span>
+                            </div>
+                            <div class="kpi-row">
+                                <span class="kpi-name">Target:</span>
+                                <span class="kpi-value">${p.kpi.target || 'TBD'}</span>
+                            </div>
+                            <div class="kpi-row">
+                                <span class="kpi-name">Current:</span>
+                                <span class="kpi-value">${p.kpi.current || 'TBD'}</span>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            });
+
+            html += `</div><h2 class="section-title">🔧 Technology Stack</h2><div class="dashboard-grid">`;
+
+            blueprint.tools?.forEach(t => {
+                html += `
+                    <div class="card">
+                        <div class="card-title">${t.name}</div>
+                        <div class="metric">
+                            <span class="metric-label">Category</span>
+                            <span class="metric-value">${t.category}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Owner</span>
+                            <span class="metric-value">${t.owner}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Criticality</span>
+                            <span class="metric-value"><span class="tool-criticality crit-${t.criticality}">${t.criticality}</span></span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Cost</span>
+                            <span class="metric-value">$${t.cost?.amount || 0}/${t.cost?.frequency || 'N/A'}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+            content.innerHTML = html;
+        }
+
+        function exportData() {
+            const json = JSON.stringify(blueprint, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'blueprint-dashboard.json';
+            a.click();
+        }
+
+        // Canvas mouse handling for diagram
+        const canvas = document.getElementById('diagramCanvas');
+        if (canvas) {
+            let lastX, lastY;
+            canvas.addEventListener('mousedown', (e) => {
+                lastX = e.clientX;
+                lastY = e.clientY;
+            });
+            canvas.addEventListener('mousemove', (e) => {
+                if (e.buttons === 1) {
+                    panX += e.clientX - lastX;
+                    panY += e.clientY - lastY;
+                    lastX = e.clientX;
+                    lastY = e.clientY;
+                    renderDiagram();
+                }
+            });
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                canvasZoom *= delta;
+                canvasZoom = Math.max(0.5, Math.min(3, canvasZoom));
+                document.getElementById('zoomSlider').value = canvasZoom;
+                updateZoom();
+            });
+        }
+
+        // Initialize
+        initializeNodePositions();
+    </script>
+</body>
+</html>
