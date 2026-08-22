@@ -124,6 +124,11 @@ A worked example, for this repo's 21st MCP key:
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
+  redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
+  status/owner coloring, layered auto-layout, undo, and Paper/Slate themes.
+  Opens from `file://`, saves to localStorage, exports JSON. Design spec in
+  `docs/specs/2026-08-22-flow-canvas-design.md`
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
