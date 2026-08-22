@@ -1,0 +1,345 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Business Operations Blueprint",
+  "description": "A unified schema for mapping organizational structure, processes, and technology.",
+  "type": "object",
+  "properties": {
+    "meta": {
+      "type": "object",
+      "description": "Blueprint metadata",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the organization or business"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of this blueprint (e.g., 1.0, 2.1)",
+          "default": "1.0"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this blueprint was created"
+        },
+        "lastModified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this blueprint was last updated"
+        },
+        "owner": {
+          "type": "string",
+          "description": "Primary owner or maintainer"
+        },
+        "description": {
+          "type": "string",
+          "description": "High-level overview of the organization"
+        }
+      },
+      "required": ["name", "owner"]
+    },
+    "departments": {
+      "type": "array",
+      "description": "Organizational departments and teams",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier (e.g., dept-sales, dept-eng)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Department or team name"
+          },
+          "owner": {
+            "type": "string",
+            "description": "Department lead or owner"
+          },
+          "members": {
+            "type": "integer",
+            "description": "Number of team members",
+            "minimum": 1
+          },
+          "description": {
+            "type": "string",
+            "description": "What this department does"
+          },
+          "processes": {
+            "type": "array",
+            "description": "Process IDs owned by this department",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "description": "Tool IDs used by this department",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["id", "name", "owner"]
+      }
+    },
+    "processes": {
+      "type": "array",
+      "description": "Business processes and workflows",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique process identifier (e.g., proc-onboarding, proc-billing)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Process name"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["inbound", "internal", "outbound"],
+            "description": "Process type: inbound (customer-facing input), internal (internal operations), outbound (customer-facing output)"
+          },
+          "owner": {
+            "type": "string",
+            "description": "Process owner or coordinator"
+          },
+          "description": {
+            "type": "string",
+            "description": "What this process does and why it matters"
+          },
+          "steps": {
+            "type": "array",
+            "description": "Ordered steps in the process",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "description": "Step sequence number"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Step description"
+                },
+                "owner": {
+                  "type": "string",
+                  "description": "Who executes this step"
+                },
+                "tools": {
+                  "type": "array",
+                  "description": "Tool IDs used in this step",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "duration": {
+                  "type": "string",
+                  "description": "Typical duration (e.g., '5 minutes', '1 day')"
+                }
+              },
+              "required": ["number", "title"]
+            }
+          },
+          "frequency": {
+            "type": "string",
+            "description": "How often this process runs (e.g., 'daily', 'per transaction', 'weekly')"
+          },
+          "kpi": {
+            "type": "object",
+            "description": "Key performance indicators for this process",
+            "properties": {
+              "metric": {
+                "type": "string",
+                "description": "What is being measured"
+              },
+              "target": {
+                "type": "string",
+                "description": "Target value (e.g., '< 24 hours', '99.9%')"
+              },
+              "current": {
+                "type": "string",
+                "description": "Current performance"
+              }
+            }
+          }
+        },
+        "required": ["id", "name", "category", "owner"]
+      }
+    },
+    "tools": {
+      "type": "array",
+      "description": "Technology stack and software tools",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique tool identifier (e.g., tool-slack, tool-stripe)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Tool or service name"
+          },
+          "category": {
+            "type": "string",
+            "description": "Tool category (e.g., 'Communication', 'Payment', 'Analytics', 'CRM')"
+          },
+          "purpose": {
+            "type": "string",
+            "description": "What this tool is used for"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Link to tool or dashboard"
+          },
+          "cost": {
+            "type": "object",
+            "description": "Pricing information",
+            "properties": {
+              "amount": {
+                "type": "number",
+                "description": "Cost amount"
+              },
+              "currency": {
+                "type": "string",
+                "default": "USD",
+                "description": "Currency (USD, EUR, etc.)"
+              },
+              "frequency": {
+                "type": "string",
+                "enum": ["monthly", "yearly", "one-time", "per-transaction"],
+                "description": "Billing frequency"
+              },
+              "renewalDate": {
+                "type": "string",
+                "format": "date",
+                "description": "When subscription renews"
+              }
+            }
+          },
+          "owner": {
+            "type": "string",
+            "description": "Person responsible for managing this tool"
+          },
+          "users": {
+            "type": "array",
+            "description": "Departments or roles that use this tool",
+            "items": {
+              "type": "string"
+            }
+          },
+          "criticality": {
+            "type": "string",
+            "enum": ["essential", "important", "nice-to-have"],
+            "description": "How critical is this tool to operations"
+          },
+          "dependencies": {
+            "type": "array",
+            "description": "Other tool IDs this tool depends on",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["id", "name", "purpose", "owner"]
+      }
+    },
+    "changes": {
+      "type": "array",
+      "description": "Log of changes made to processes and operations",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique change ID"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "When this change was made"
+          },
+          "title": {
+            "type": "string",
+            "description": "Change title or summary"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description of what changed and why"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["process", "tool", "department", "workflow"],
+            "description": "What type of thing changed"
+          },
+          "impact": {
+            "type": "string",
+            "description": "Who or what was affected by this change"
+          },
+          "author": {
+            "type": "string",
+            "description": "Who made or initiated this change"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["planned", "in-progress", "completed", "rolled-back"],
+            "default": "completed",
+            "description": "Current status of the change"
+          }
+        },
+        "required": ["id", "date", "title", "category"]
+      }
+    },
+    "roadmap": {
+      "type": "array",
+      "description": "Planned improvements and changes",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique roadmap item ID"
+          },
+          "title": {
+            "type": "string",
+            "description": "What is being improved"
+          },
+          "description": {
+            "type": "string",
+            "description": "Why and how we plan to improve it"
+          },
+          "category": {
+            "type": "string",
+            "description": "Area of improvement (process, tool, automation, etc.)"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"],
+            "description": "Priority level"
+          },
+          "targetDate": {
+            "type": "string",
+            "format": "date",
+            "description": "When we aim to implement this"
+          },
+          "owner": {
+            "type": "string",
+            "description": "Who is responsible for this improvement"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["backlog", "planned", "in-progress", "completed"],
+            "default": "backlog",
+            "description": "Current status"
+          }
+        },
+        "required": ["id", "title", "category", "owner"]
+      }
+    }
+  },
+  "required": ["meta", "departments", "processes", "tools"]
+}
