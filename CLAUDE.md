@@ -501,3 +501,96 @@ that `.env` alone does not reach `.mcp.json`, which reads the process environmen
 Locally that means exporting the key; on the web it means setting it in the cloud
 environment's variables. Both routes, and the network and visibility caveats that
 come with the web one, are under "Design tooling (UI/UX)" above.
+
+---
+
+# Operating System (Live State + Decisions + Roadmap)
+
+This section is **machine-read by Claude and the live dashboard**. Changes here drive both the dashboard display and Claude's understanding of project state.
+
+## Current State
+
+**Active Branch:** `claude/master-blueprint-review-n78rak` (1 commit ahead of main, clean working tree)
+
+**Live Strategies:**
+- **ICT AM OB Strategy** (PR #77, #76) — Session timezones, history tracking, order cancellation. Live for testing.
+- **ICT OB+FVG Strategy** (PR #75) — Priced entries, session management, mintick conversion. Backtest only.
+- **15-Minute Reversal** (PR #71, draft) — New strategy in development. Needs comparison harness.
+- **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
+
+**Open Drafts:** 2
+- #78: Tray companion security (CDP port audit)
+- #71: 15-Minute Reversal (comparison + strategy)
+
+**Velocity:** 1 merged PR/day (7 in last 8 days)
+
+## Tech Stack & Dependencies
+
+| Component | Version | Status | Renewal/Update | Cost |
+|-----------|---------|--------|-----------------|------|
+| **Python** | 3.12 (local), 3.11 (CI) | Current | — | Free |
+| **Backtrader** | 1.9.78.123 | Legacy (2019, stable) | No active updates | Free |
+| **Interactive Brokers** | ib_insync | Current | Live subscription | ~$10/mo |
+| **Hugging Face** | `datasets` | Current | API-based | Free tier / Paid |
+| **pandas** | 3.0.5 | Current | Monthly updates | Free |
+| **black** | Pinned (requirements) | Current | Jan yearly updates | Free |
+| **pytest** | Current | Current | Regular updates | Free |
+| **21st.dev MCP** | HTTP server | Current | Per-request quota | ~$0.01/req |
+
+**Critical Path Dependencies:**
+- Backtrader: strategy compilation + execution (single point of failure, no replacement)
+- pandas: data munging + analysis
+- Interactive Brokers: live execution + account data
+
+## Decision Log
+
+### [2026-08-22] Blueprint as Operating System
+**Decision:** Turn CLAUDE.md into a machine-readable operating system that drives both the dashboard and Claude's decision context.
+**Why:** Scattered info (Git, GitHub, spreadsheets, chat) → single source of truth. Allows Claude to make better decisions without asking for status updates.
+**Outcome:** Building now. Syncs to live dashboard via GitHub MCP.
+
+### [2026-08-20] Live Work Dashboard
+**Decision:** Build GitHub-connected dashboard instead of static blueprint.
+**Why:** Previous blueprint went stale; live data self-updates.
+**Status:** Live. Auto-refreshes every 3 minutes.
+
+### [2026-08-15] Converter Test Coverage
+**Decision:** Test `pwb_toolbox.converting` by compiling generated Backtrader code + running on synthetic bars, not just parsing.
+**Why:** A converter that parses but doesn't execute is a failure waiting to happen.
+**Outcome:** Tests in `tests/test_converting.py` end-to-end section now validate execution.
+
+### [2026-08-10] ICT AM/OB Strategy Refactor
+**Decision:** Hoist computed security reads instead of subscripting floats in `next()`.
+**Why:** Cleaner data flow, reduces session state bugs.
+**Outcome:** Merged PR #76. Reduced float handling surface area.
+
+### [2026-08-01] T-Bill Ladder Offline-First Design
+**Decision:** Accept `--rate` overrides instead of calling Treasury when live data blocked.
+**Why:** Cloud containers can't reach home.treasury.gov; need to work offline.
+**Outcome:** Merged PR #68. Math still validates without live data.
+
+## Roadmap
+
+**Now (This week):**
+- [ ] Finish 15-Minute Reversal strategy + comparison harness (PR #71)
+- [ ] Resolve Tray companion CDP port audit (PR #78)
+- [ ] Merge both into main
+
+**Next (This sprint):**
+- [ ] Backtest 15-Minute Reversal across 90 days
+- [ ] Compare all three active strategies side-by-side (win rate, Sharpe, drawdown)
+- [ ] Document strategy decision criteria (when to trade which one)
+
+**Later (Backlog):**
+- [ ] Live execution harness for chosen strategy
+- [ ] Performance analytics dashboard (cumulative return, monthly breakdown)
+- [ ] Trade journal automation (hook journal to live execution)
+- [ ] Upgrade Backtrader (1.9.78 → investigate modern fork or alternative)
+
+## Why This Format
+
+Claude reads this section on every turn. It means:
+- **No status meetings:** "What's the current state?" is answered by reading this file.
+- **Better decisions:** Claude sees the roadmap, knows active strategies, understands past choices.
+- **Change tracking:** Every decision lives here with context and outcome.
+- **Dashboard sync:** The live dashboard pulls from this section to stay current.
