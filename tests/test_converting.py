@@ -343,7 +343,7 @@ def _unsupported(source):
 @pytest.mark.parametrize(
     "snippet, marker",
     [
-        ("varip count = 0\n", "varip count"),
+        ("while true\n    x = close\n", "while"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
         ("a = array.new_float(0)\n", "array.new_float"),
@@ -391,8 +391,10 @@ def test_convert_notes_indicator_scripts_place_no_orders():
 
 
 def test_unsupported_items_appear_in_generated_docstring():
-    code = convert('//@version=5\nstrategy("S")\nvarip c = 0\n').code
-    assert "Not translated" in code and "varip c" in code
+    code = convert(
+        '//@version=5\nstrategy("S")\n[m, s, h] = ta.macd(close, 12, 26, 9)\n'
+    ).code
+    assert "Not translated" in code and "tuple destructuring" in code
 
 
 def test_reserved_names_are_renamed_to_avoid_clobbering_strategy_attrs():
@@ -1147,11 +1149,60 @@ def test_var_with_a_non_literal_initialiser_is_reported():
     assert any("literal initial value" in item for item in result.unsupported)
 
 
-def test_varip_is_still_refused():
-    """varip updates intrabar; a bar-close run has no ticks to update on."""
-    result = convert('//@version=6\nstrategy("S")\nvarip int n = 0\n')
-    assert not result.ok
-    assert any("intrabar" in item for item in result.unsupported)
+def test_varip_is_read_as_var():
+    """`varip` and `var` differ only on a realtime bar, where varip is not
+    rolled back between ticks. A backtest has no realtime bars, and Pine's own
+    documentation says the distinction cannot be reproduced on historical ones
+    -- so on the bars a backtest runs, reading varip as var is what Pine
+    itself does rather than an approximation of it.
+
+    Refusing it used to cascade: the name never entered scope, so every later
+    read and every reassignment reported separately. Three corpus strategies
+    spent about seventy per cent of their gap lists on that one refusal.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "varip int n = 0\n"
+        "if close > open\n"
+        "    n := n + 1\n"
+        "if n > 3\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    assert result.ok, result.unsupported
+    assert "self.n = 0" in result.code
+    assert "self.n = (self.n + 1)" in result.code
+    # Noted rather than silent: the author wanted intrabar behaviour
+    # somewhere, and a live run is where they would not get it.
+    assert any("varip read as var" in item for item in result.notes)
+
+
+def test_varip_and_var_generate_the_same_code():
+    """The claim in one assertion: on the bars a backtest has there is no
+    difference between the two to generate.
+
+    Compared past the docstring, which is the one place they *should* differ
+    -- the varip reading is recorded there, and recording it is the point.
+    """
+
+    def body_for(qualifier):
+        code = convert(
+            '//@version=6\nstrategy("S")\n'
+            f"{qualifier} int n = 0\n"
+            "if close > open\n"
+            "    n := n + 1\n"
+            "if n > 3\n"
+            '    strategy.entry("L", strategy.long)\n'
+        ).code
+        # Everything after the class docstring's closing quotes.
+        return code.split('"""', 2)[2]
+
+    assert body_for("varip") == body_for("var")
+    assert (
+        "varip"
+        in convert(
+            '//@version=6\nstrategy("S")\nvarip int n = 0\nif n > 3\n    strategy.close()\n'
+        ).code
+    )  # the note itself survives into the generated docstring
 
 
 def test_var_history_access_is_reported():
@@ -2154,8 +2205,9 @@ def test_a_stateful_call_from_inside_an_if_is_reported():
     assert any("top-level statement" in i for i in result.unsupported)
 
 
-def test_varip_in_a_body_is_refused_for_being_intrabar():
-    """The objection to varip is ticks, not inlining -- say the right one."""
+def test_varip_in_a_body_carries_state_the_way_var_does():
+    """A function body gets the same reading, and keeps the per-call-site
+    state that makes an inlined Pine function behave like Pine's."""
     source = (
         '//@version=6\nstrategy("S")\n'
         "f(x) =>\n"
@@ -2163,10 +2215,30 @@ def test_varip_in_a_body_is_refused_for_being_intrabar():
         "    a := a + x\n"
         "    a\n"
         "y = f(close)\n"
+        "if y > 0\n"
+        '    strategy.entry("L", strategy.long)\n'
     )
     result = convert(source)
-    assert not result.ok
-    assert any("updates intrabar" in i for i in result.unsupported)
+    assert result.ok, result.unsupported
+    assert any("varip read as var" in i for i in result.notes)
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    seen = []
+
+    class Watched(namespace[result.class_name]):
+        def next(self):
+            super().next()
+            seen.append(self.position.size)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(bars=40)))
+    cerebro.addstrategy(Watched)
+    cerebro.broker.setcash(100_000.0)
+    cerebro.run()
+    # The running total climbs from the first bar, so the entry fires and the
+    # state is genuinely carried rather than reset each bar.
+    assert seen[-1] > 0
 
 
 def test_a_non_literal_var_initial_value_is_reported():

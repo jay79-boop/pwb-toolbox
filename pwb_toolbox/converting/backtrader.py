@@ -1416,13 +1416,18 @@ class ConversionResult:
     params: list = field(default_factory=list)
     unsupported: list = field(default_factory=list)
     ignored: list = field(default_factory=list)
+    #: Readings the conversion made deliberately that differ from the Pine
+    #: source as written. Not gaps -- the translation is faithful on the bars
+    #: a backtest runs -- but the reader should know one was made.
+    notes: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         """True when nothing needing attention was left behind.
 
-        Ignored presentational calls do not count -- dropping a ``plot`` does
-        not change how the strategy trades.
+        Neither ignored presentational calls nor notes count. Dropping a
+        ``plot`` does not change how the strategy trades, and a note records a
+        reading that is faithful for a backtest rather than a gap in one.
         """
         return not self.unsupported
 
@@ -1475,6 +1480,7 @@ class _Generator:
         self.next_lines: list[str] = []
         self.unsupported: list[tuple[str, str]] = []
         self.ignored: list[str] = []
+        self.notes: list[str] = []
         self._counter: int = 0
         self._hoisted: dict[str, str] = {}  # construction source -> attribute name
         self._inputs: dict[str, str] = {}  # input call signature -> param name
@@ -1610,6 +1616,32 @@ class _Generator:
         if message not in self.ignored:
             self.ignored.append(message)
 
+    def _note(self, message: str) -> None:
+        if message not in self.notes:
+            self.notes.append(message)
+
+    def _note_varip(self) -> None:
+        """Record, once, that ``varip`` was read as ``var``.
+
+        The two differ only on a realtime bar, where ``varip`` is not rolled
+        back between ticks. A backtest has no realtime bars, and Pine's own
+        documentation is explicit that the distinction cannot be reproduced on
+        historical ones -- so on the bars a backtest actually runs, reading
+        ``varip`` as ``var`` is what Pine itself does, not an approximation of
+        it.
+
+        Noted rather than silent, because the script was written by someone
+        who wanted the intrabar behaviour somewhere, and a live run is where
+        they would not get it.
+        """
+        self._note(
+            "varip read as var: the two are identical on historical bars, "
+            "which is all a backtest has. Pine cannot reproduce varip's "
+            "intrabar behaviour on historical bars either, so nothing is "
+            "lost here that Pine would have kept -- but a live run would "
+            "differ, and this conversion does not carry that difference"
+        )
+
     # --- user-defined functions ----------------------------------------------
 
     def _inline_call(self, call):
@@ -1697,11 +1729,8 @@ class _Generator:
             last = position == len(func.body) - 1
 
             if isinstance(statement, Assign) and statement.qualifier == "varip":
-                self._reject(
-                    f"{func.name}(): `varip {statement.target}` updates intrabar, "
-                    "which a bar-close Backtrader run has no equivalent for"
-                )
-                return None
+                self._note_varip()
+                statement = Assign(statement.target, statement.value, "var")
 
             if isinstance(statement, Assign) and statement.qualifier == "var":
                 initial = self._state_initial(statement.value)
@@ -3414,13 +3443,8 @@ class _Generator:
 
     def _emit_assign(self, statement, indent, pad):
         if statement.qualifier == "varip":
-            # `var` survives the bar; `varip` also survives *within* a bar, and
-            # updates on every tick. A bar-close backtest has no ticks, so the
-            # two are only equivalent by accident. Say so rather than guess.
-            self._reject(
-                f"varip {statement.target}: varip updates intrabar, which a "
-                "bar-close Backtrader run has no equivalent for"
-            )
+            self._note_varip()
+            self._declare_state(statement)
             return
 
         if statement.qualifier == "var":
@@ -3732,6 +3756,11 @@ class _Generator:
             out.append("    Dropped as presentational:")
             for item in self.ignored:
                 out.append(f"      - {item}")
+        if self.notes:
+            out.append("")
+            out.append("    Read differently from the Pine source, on purpose:")
+            for item in self.notes:
+                out.append(f"      - {item}")
         out.append('    """')
         out.append("")
 
@@ -3907,4 +3936,5 @@ def convert(source: str, class_name: str | None = None) -> ConversionResult:
         params=generator.params,
         unsupported=generator.unsupported,
         ignored=generator.ignored,
+        notes=generator.notes,
     )
