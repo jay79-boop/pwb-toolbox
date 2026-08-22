@@ -116,7 +116,8 @@ limit‑order placement framework described in [Optimal Portfolio Liquidation wi
 
 Given a target quantity and time horizon, `get_optimal_quote` solves the associated system of
 differential equations to return the price offset from the mid‑price that
-maximises the expected utility of execution. Market parameters such as
+maximises the expected utility of execution. It takes a single
+`OptimalQuoteConfig` dataclass. Market parameters such as
 volatility (`sigma`), arrival rate of market orders (`A`), liquidity impact
 (`k`), trader risk aversion (`gamma`) and liquidation penalty (`b`) can be
 supplied to model different scenarios. Setting `is_plot=True` visualises the
