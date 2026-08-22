@@ -29,6 +29,8 @@ Commands:
     deck       Render the stakeholder deck (deck.html) from the deliverables.
     retro      Aggregate lessons across engagements, per phase — the raw
                material for improving how the next engagement runs.
+    export-flow  Write the engagement as a Flow Canvas JSON (flow.json) so
+               static/flow-canvas.html can show it as a visual map.
 """
 
 from __future__ import annotations
@@ -502,6 +504,66 @@ def build_deck(root: Path, slug: str, today: dt.date | None = None) -> Path:
     return out
 
 
+# --- Flow Canvas export -----------------------------------------------------
+#
+# static/flow-canvas.html imports {theme?, nodes, edges}; this writes the
+# twelve phases as a left-to-right chain in that shape, so an engagement can
+# be looked at instead of read. Statuses map done->live, the current
+# phase->working, everything still ahead->draft; a skipped phase stays draft
+# with the skip recorded in its notes.
+
+FLOW_FILENAME = "flow.json"
+
+_FLOW_OWNERS = {
+    "present": "person",
+    "approval": "person",
+    "quick_wins": "auto",
+    "live": "auto",
+}
+
+
+def export_flow(root: Path, slug: str) -> Path:
+    data = load(root, slug)
+    active = current_phase(data)
+    nodes = []
+    edges = []
+    for i, p in enumerate(PHASES):
+        state = data["phases"][p.key]
+        if state["status"] == "done":
+            status = "live"
+        elif active is not None and p.key == active.key:
+            status = "working"
+        else:
+            status = "draft"
+        notes = "skipped" if state["status"] == "skipped" else ""
+        nodes.append(
+            {
+                "id": p.key,
+                "title": p.title,
+                "status": status,
+                "owner": _FLOW_OWNERS.get(p.key, "ai"),
+                "dur": "",
+                "decision": p.key == "approval",
+                "notes": notes,
+                "x": 60 + i * 240,
+                "y": 300,
+            }
+        )
+        if i:
+            edges.append(
+                {
+                    "id": f"e-{PHASES[i - 1].key}-{p.key}",
+                    "from": PHASES[i - 1].key,
+                    "to": p.key,
+                    "label": "",
+                }
+            )
+    flow = {"theme": "slate", "nodes": nodes, "edges": edges}
+    out = root / slug / FLOW_FILENAME
+    out.write_text(json.dumps(flow, indent=2) + "\n", encoding="utf-8")
+    return out
+
+
 # --- CLI --------------------------------------------------------------------
 
 
@@ -543,6 +605,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("retro", help="lessons across engagements, per phase")
     p.add_argument("--phase", help="only this phase key")
 
+    p = sub.add_parser(
+        "export-flow",
+        help="write flow.json for static/flow-canvas.html (Import button)",
+    )
+    p.add_argument("slug")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "new":
@@ -572,6 +640,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "deck":
             out = build_deck(args.root, args.slug)
             print(f"Deck written to {out}")
+        elif args.command == "export-flow":
+            out = export_flow(args.root, args.slug)
+            print(f"Flow written to {out} — open static/flow-canvas.html and Import it")
         elif args.command == "retro":
             grouped = retro(args.root, args.phase)
             if not grouped:

@@ -206,3 +206,50 @@ def test_cli_round_trip(tmp_path, capsys):
     assert main(["--root", root, "list"]) == 0
     assert "phase: map" in capsys.readouterr().out
     assert len(list_engagements(tmp_path)) == 1
+
+
+def test_export_flow_maps_statuses_and_chains_the_phases(tmp_path):
+    data = new_engagement(tmp_path, "Acme Logistics", today=TODAY)
+    slug = data["slug"]
+    _advance_through(tmp_path, slug, "bottlenecks")
+
+    import json
+
+    from tools.engagement import export_flow
+
+    out = export_flow(tmp_path, slug)
+    assert out == tmp_path / slug / "flow.json"
+    flow = json.loads(out.read_text(encoding="utf-8"))
+
+    by_id = {n["id"]: n for n in flow["nodes"]}
+    assert [n["id"] for n in flow["nodes"]] == [p.key for p in PHASES]
+    # done phases read live, the current one working, the future draft
+    assert by_id["audit"]["status"] == "live"
+    assert by_id["map"]["status"] == "live"
+    assert by_id["bottlenecks"]["status"] == "working"
+    assert by_id["live"]["status"] == "draft"
+    # the hard gate is the decision point, and stakeholders own it
+    assert by_id["approval"]["decision"] is True
+    assert by_id["approval"]["owner"] == "person"
+    # a strict left-to-right chain: each phase feeds exactly the next
+    assert [(e["from"], e["to"]) for e in flow["edges"]] == [
+        (PHASES[i].key, PHASES[i + 1].key) for i in range(len(PHASES) - 1)
+    ]
+    # every edge endpoint resolves to a node the canvas can find
+    assert all(e["from"] in by_id and e["to"] in by_id for e in flow["edges"])
+
+
+def test_export_flow_records_a_skipped_phase_without_calling_it_done(tmp_path):
+    import json
+
+    from tools.engagement import export_flow
+
+    data = new_engagement(tmp_path, "Acme Logistics", today=TODAY)
+    slug = data["slug"]
+    _advance_through(tmp_path, slug, "revise")
+    advance(tmp_path, slug, skip=True, today=TODAY)
+
+    flow = json.loads(export_flow(tmp_path, slug).read_text(encoding="utf-8"))
+    revise = next(n for n in flow["nodes"] if n["id"] == "revise")
+    assert revise["status"] == "draft"
+    assert revise["notes"] == "skipped"
