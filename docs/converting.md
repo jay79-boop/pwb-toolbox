@@ -125,6 +125,8 @@ duplicate is pure waste.
 | `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
 | `na(x)` | the NaN test `x != x` |
 | `request.security(syminfo.tickerid, tf, expr)` | a read from a resampled `self.datas[n]` |
+| `request.security("SPY", tf, expr)`, `input.symbol` | a second instrument, recorded in `feed_spec` |
+| `close[n]` where `n` is a param or computed | a guarded read back — see below |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 | `math.pow`, `math.sign`, `math.avg` | the arithmetic spelled out |
 | `math.sqrt/log/log10/exp/floor/ceil`, the trig set, `math.pi` | the `math` module, imported only when used |
@@ -157,7 +159,6 @@ every later reference — that is what the Pine source means by the name.
 
 Reported in `result.unsupported`, never approximated:
 
-- `request.security` on a symbol other than `syminfo.tickerid` — a second instrument is a data-loading decision
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
@@ -300,22 +301,29 @@ htfMa = request.security(syminfo.tickerid, htfTF, ta.ema(close, 4))
 ```
 
 ```python
-resample_spec = (
-    (bt.TimeFrame.Weeks, 1),
+feed_spec = (
+    (None, bt.TimeFrame.Weeks, 1),
 )
 
 def __init__(self):
     if len(self.datas) < 2:
-        raise ValueError("HTFTrend needs 2 data feeds; see resample_spec")
+        raise ValueError("HTFTrend needs 2 data feeds; see feed_spec")
     self._ema_1 = bt.indicators.EMA(self.datas[1].close, period=4)
 ```
 
-Wiring it up is then mechanical:
+Each entry is `(symbol, timeframe, compression)`, in the order the feeds become
+`self.datas[1:]`. A symbol of `None` means the chart's own instrument, so the
+entry is a resample; a named symbol means that instrument's own data. Wiring it
+up is then mechanical:
 
 ```python
 cerebro.adddata(data)
-for timeframe, compression in HTFTrend.resample_spec:
-    cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+for symbol, timeframe, compression in HTFTrend.feed_spec:
+    feed = data if symbol is None else load(symbol)
+    if timeframe is None:
+        cerebro.adddata(feed)
+    else:
+        cerebro.resampledata(feed, timeframe=timeframe, compression=compression)
 cerebro.addstrategy(HTFTrend)
 ```
 
@@ -330,7 +338,67 @@ timeframe, so it adds no feed at all.
 the strategy. A timeframe read from an input is therefore resolved to that
 input's default and baked in — and reported in `result.ignored`, because a knob
 that looks live and is not would be a silently wrong backtest. Change
-`resample_spec`, not the param.
+`feed_spec`, not the param.
+
+### A second instrument
+
+The same machinery carries a different symbol. A relative-strength script names
+one and compares against it:
+
+```pinescript
+peerSymbol = input.symbol("SPY", "Comparative Symbol")
+peer = request.security(peerSymbol, timeframe.period, close)
+```
+
+```python
+feed_spec = (
+    ('SPY', None, None),
+)
+...
+peer = self.datas[1].close[0]
+```
+
+A timeframe of `None` means that instrument at the chart's own timeframe — data
+to add, with nothing to resample. `('SPY', bt.TimeFrame.Days, 1)` is SPY *and*
+a resample, and counts as one feed. Reads sharing a symbol and a timeframe
+share a feed; a symbol and a timeframe that differ are separate ones.
+
+**The symbol stops being tunable for exactly the reason the timeframe does.**
+The feed is loaded before the strategy is instantiated, so a param changed at
+`addstrategy` time cannot swap the instrument underneath it. An `input.symbol`
+is resolved to its default and baked in, the param stays because the script may
+read it elsewhere, and the conversion says so in `result.ignored`.
+
+Naming a symbol is not a way around the lookahead refusal below; that check
+runs on every `request.security` regardless of which instrument it names.
+
+### Reading back a variable number of bars
+
+`baseClose[rsPeriod]`, where `rsPeriod` is an input, cannot be counted at
+conversion time — so the bars it reaches over cannot be sat out in advance the
+way a constant offset's are.
+
+That matters more than it sounds, because of how Backtrader answers a read past
+the start of a series. It does not raise, and it does not answer `na`: the
+series is preloaded, so Python's negative indexing counts back from the **end**
+and hands over a bar from the future. On the first bar of a thirty-bar feed,
+`close[5]` reads bar 26.
+
+```python
+def _pine_back(self, line, back):
+    """`x[n]` with n known only per bar, `na` before the series starts."""
+    try:
+        step = int(back)
+    except (TypeError, ValueError):
+        return float('nan')
+    if step < 0 or step >= len(line):
+        return float('nan')
+    return line[-step]
+```
+
+The test for this walks a ramp where every bar's price is distinct, and asserts
+both halves: the early bars answer `na`, and no bar ever reads a price from
+later in the feed.
 
 ### On lookahead
 
