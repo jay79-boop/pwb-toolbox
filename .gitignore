@@ -28,3 +28,8 @@ graphify-out/.vocab.txt
 # machine — so it produced a large diff on every rebuild while meaning nothing.
 graphify-out/graph.html
 graphify-out/manifest.json
+
+# desk agent: raw per-run stdout. Noise, and it can contain chart detail.
+# runs.jsonl (the structured record) and out/ (gameplans, Pine reports) stay
+# tracked -- they are the agent's memory and its deliverables.
+tools/desk_agent/logs/

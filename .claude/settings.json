@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py:*)"
+      "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py:*)",
+      "Bash(python -m tools.desk_agent.runlog:*)",
+      "Bash(python3 -m tools.desk_agent.runlog:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout -b:*)",
+      "Bash(git fetch:*)",
+      "Bash(pytest:*)",
+      "Bash(black:*)"
     ]
   },
   "hooks": {

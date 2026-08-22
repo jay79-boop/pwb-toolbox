@@ -128,6 +128,11 @@ A worked example, for this repo's 21st MCP key:
   running it and reports signature, every host baked into the bundle, credential-reading
   code and auto-update. PowerShell, for the user's machine; see
   `docs/tradingview-agent-security.md`
+- `tools/desk_agent/` — the unattended agent: a playbook, five job files, a run log
+  it writes after every run, and a weekly review that revises the playbook from that
+  log and opens a draft PR. Guardrails live in a section of the playbook the review
+  is forbidden to edit. `tools/register_desk_agent.ps1` registers the Windows
+  scheduled tasks; see `tools/desk_agent/README.md`
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -208,6 +213,8 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
+python -m tools.desk_agent.runlog summary --last 20   # is the agent actually working
+python -m tools.desk_agent.runlog review  --last 40   # what the weekly review reads
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
@@ -275,6 +282,28 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## The desk agent runs itself, and reports on itself
+
+`tools/desk_agent/` is a Claude Code agent that runs on a schedule and revises its
+own playbook. Two things about it are worth knowing before touching it, because both
+are deliberate and both look like oversights.
+
+**The run log is committed.** `runs.jsonl` is one JSON line per unattended run. It is
+tracked rather than ignored because it is the only part of the agent a cloud session
+can see, and because `git log` over it is the audit trail. Raw stdout under `logs/`
+is ignored — that is noise, and it can carry chart detail.
+
+**The agent may not edit its own guardrails, its own log, or `runlog.py`.** The
+weekly review rewrites the rest of the playbook freely and opens a draft PR for it,
+which is the self-improvement loop. But an agent that can loosen its own limits does
+not have limits, and one that can edit its own record of what happened cannot be
+reviewed — so those three are walled off, and a review that wants to change them has
+to stop and say so instead.
+
+The autonomy ceiling is "everything except order entry", on a TradingView login with
+no broker connected. The reasoning behind that specific line, and why it beats
+auditing the tooling, is in `docs/tradingview-agent-security.md`.
 
 ## The trade journal is not in this repository
 
