@@ -4,53 +4,52 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.integrate import odeint
 
+from .config import OptimalLimitOrderFormulaConfig, OptimalQuoteConfig
 
-def optimal_limit_order_formula(q_max, t_max, mu, sigma, A, k, gamma, b, is_plot=False):
-    """
-    q_max : Quantity in ATS to execute
-    t_max : Time in seconds remaining to execute
-    mu : Trend in tick per second
-    sigma : Volatility in tick per second squared
-    A : arrival rate at best quote
-    k : exponential decreasing parameter of arrival rate
-    gamma : absolute risk aversion
-    b : cost per share to liquidate the remaining position in ticks
-    """
 
-    alpha = k / 2 * gamma * np.power(sigma, 2)
-    beta = k * mu
-    eta = A * np.power(1 + gamma / k, -(1 + k / gamma))
+def optimal_limit_order_formula(config: OptimalLimitOrderFormulaConfig):
+    """Calculate optimal limit order offset from mid-price.
+
+    Args:
+        config: OptimalLimitOrderFormulaConfig with market and risk parameters.
+
+    Returns:
+        Optimal price offset in ticks.
+    """
+    alpha = config.k / 2 * config.gamma * np.power(config.sigma, 2)
+    beta = config.k * config.mu
+    eta = config.A * np.power(1 + config.gamma / config.k, -(1 + config.k / config.gamma))
     w_0 = 1
 
     def w_T(q):
-        return np.exp(-k * q * b)
+        return np.exp(-config.k * q * config.b)
 
     def linear_ode(w_q, w_q_1, q):
         return (alpha * np.power(q, 2) - beta * q) * w_q - eta * w_q_1
 
     def linear_ode_system(y, t):
         w = [w_0, *y]
-        dydt = [linear_ode(w[q], w[q - 1], q) for q in range(1, q_max + 1)]
+        dydt = [linear_ode(w[q], w[q - 1], q) for q in range(1, config.q_max + 1)]
         return dydt
 
-    w_T = [w_T(q) for q in range(1, q_max + 1)]
-    t = np.linspace(0, -t_max, 100)
+    w_T = [w_T(q) for q in range(1, config.q_max + 1)]
+    t = np.linspace(0, -config.t_max, 100)
 
     w = odeint(linear_ode_system, w_T, t, args=())
 
     delta = {}
-    for q in range(1, q_max + 1):
+    for q in range(1, config.q_max + 1):
         if q == 1:
-            delta[q] = 1 / k * np.log(w[:, q - 1] / w_0) + 1 / gamma * np.log(
-                1 + gamma / k
+            delta[q] = 1 / config.k * np.log(w[:, q - 1] / w_0) + 1 / config.gamma * np.log(
+                1 + config.gamma / config.k
             )
         else:
-            delta[q] = 1 / k * np.log(w[:, q - 1] / w[:, q - 2]) + 1 / gamma * np.log(
-                1 + gamma / k
+            delta[q] = 1 / config.k * np.log(w[:, q - 1] / w[:, q - 2]) + 1 / config.gamma * np.log(
+                1 + config.gamma / config.k
             )
 
-    if is_plot:
-        for q in range(1, q_max + 1):
+    if config.is_plot:
+        for q in range(1, config.q_max + 1):
             plt.plot(t, delta[q], "b", label=f"delta_{q}(t)")
         plt.legend(loc="best")
         plt.xlabel("t")
@@ -58,59 +57,53 @@ def optimal_limit_order_formula(q_max, t_max, mu, sigma, A, k, gamma, b, is_plot
         plt.grid()
         plt.show()
 
-    return delta[q_max][-1]
+    return delta[config.q_max][-1]
 
 
-def get_optimal_quote(
-    symbol,
-    quantity,
-    time_in_seconds,
-    mu=0.0,
-    sigma=0.3,
-    A=0.1,
-    k=0.3,
-    gamma=None,
-    b=3,
-    tick_size=0.01,
-    average_trading_size=100,
-    is_plot=False,
-):
+def get_optimal_quote(config: OptimalQuoteConfig):
     """Solve for the optimal limit-order price offset from the mid-price.
 
-    `symbol` is accepted for caller bookkeeping/logging but does not affect the
-    calculation; callers that want per-instrument calibration should pass their
-    own `mu`/`sigma`/`A`/`k`/`gamma`/`b`/`tick_size`/`average_trading_size` (e.g.
-    derived from that symbol's recent volatility, as done for commission
-    estimation in `pwb_toolbox.backtesting.commission`). Unspecified parameters
-    fall back to the same generic defaults previously hardcoded here.
-    """
-    if gamma is None:
-        gamma = 5e-4 / tick_size
+    Args:
+        config: OptimalQuoteConfig with order and market parameters.
 
-    quote = optimal_limit_order_formula(
-        q_max=math.ceil(quantity / average_trading_size),
-        t_max=time_in_seconds,
-        mu=mu,
-        sigma=sigma,
-        A=A,
-        k=k,
+    Returns:
+        Optimal price offset in currency (scaled by tick size).
+
+    Note:
+        Symbol is accepted for caller bookkeeping/logging but does not affect
+        the calculation. Per-instrument calibration should customize the market
+        parameters (mu, sigma, A, k, gamma, b) from that symbol's recent data.
+    """
+    gamma = config.gamma
+    if gamma is None:
+        gamma = 5e-4 / config.tick_size
+
+    formula_config = OptimalLimitOrderFormulaConfig(
+        q_max=math.ceil(config.quantity / config.average_trading_size),
+        t_max=config.time_in_seconds,
+        mu=config.mu,
+        sigma=config.sigma,
+        A=config.A,
+        k=config.k,
         gamma=gamma,
-        b=b,
-        is_plot=is_plot,
+        b=config.b,
+        is_plot=config.is_plot,
     )
-    quote = quote * tick_size
+
+    quote = optimal_limit_order_formula(formula_config)
+    quote = quote * config.tick_size
     if not math.isfinite(quote):
         return 0.0
     return quote
 
 
 if __name__ == "__main__":
-    symbol = "demo"
-    quantity = 500
-    time_in_seconds = 600
-    quote = get_optimal_quote(
-        symbol=symbol, quantity=quantity, time_in_seconds=time_in_seconds
+    config = OptimalQuoteConfig(
+        symbol="demo",
+        quantity=500,
+        time_in_seconds=600,
     )
+    quote = get_optimal_quote(config)
     buy_sign = "-" if np.sign(-1 * quote) < 0 else "+"
     sell_sign = "-" if np.sign(quote) < 0 else "+"
     print(f"buy@mid {buy_sign} {np.abs(quote)} USD")
