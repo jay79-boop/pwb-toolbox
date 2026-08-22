@@ -13,8 +13,8 @@ def hit_rate(trades: Sequence[Mapping[str, Any]]) -> float:
 
 def average_win_loss(trades: Sequence[Mapping[str, Any]]) -> Tuple[float, float]:
     """Average winning and losing trade returns."""
-    wins = [t.get("return", 0) for t in trades if t.get("return", 0) > 0]
-    losses = [t.get("return", 0) for t in trades if t.get("return", 0) < 0]
+    wins = [ret for t in trades if (ret := t.get("return", 0)) > 0]
+    losses = [ret for t in trades if (ret := t.get("return", 0)) < 0]
     avg_win = sum(wins) / len(wins) if wins else 0.0
     avg_loss = sum(losses) / len(losses) if losses else 0.0
     return avg_win, avg_loss
@@ -29,8 +29,8 @@ def expectancy(trades: Sequence[Mapping[str, Any]]) -> float:
 
 def profit_factor(trades: Sequence[Mapping[str, Any]]) -> float:
     """Ratio of gross profits to gross losses."""
-    gains = sum(t.get("return", 0) for t in trades if t.get("return", 0) > 0)
-    losses = -sum(t.get("return", 0) for t in trades if t.get("return", 0) < 0)
+    gains = sum(ret for t in trades if (ret := t.get("return", 0)) > 0)
+    losses = -sum(ret for t in trades if (ret := t.get("return", 0)) < 0)
     if losses == 0:
         return float("inf") if gains > 0 else 0.0
     return gains / losses
@@ -54,8 +54,8 @@ def turnover(trades: Sequence[Mapping[str, Any]]) -> float:
     """Average number of trades per day."""
     if not trades:
         return 0.0
-    entries = [t.get("entry") for t in trades if t.get("entry") is not None]
-    exits = [t.get("exit") for t in trades if t.get("exit") is not None]
+    entries = [entry for t in trades if (entry := t.get("entry")) is not None]
+    exits = [exit_ for t in trades if (exit_ := t.get("exit")) is not None]
     if not entries or not exits:
         return 0.0
     start = min(entries)
