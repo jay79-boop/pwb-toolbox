@@ -137,6 +137,12 @@ A worked example, for this repo's 21st MCP key:
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
+- `tools/kronos_lab.py` — measures the Kronos K-line foundation model
+  (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
+  hit rate with exact p-value, information coefficient, error vs persistence)
+  plus a forecast-chart mode. Model runs happen on the user's machine — the
+  cloud proxy blocks Hugging Face — but the scoring core is pure math and
+  tested with fake predictors (`tests/test_kronos_lab.py`)
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
