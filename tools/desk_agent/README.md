@@ -120,6 +120,19 @@ is `ok` with an empty action list. The review notices a job that has *never*
 acted across many attempts, and that signal only works if quiet runs stay
 quiet. Nothing in the playbook rewards looking busy.
 
+**`runs.jsonl` is deleted by accident more easily than you would think.** It was
+destroyed once, in commit `dd6d1d6`, by a test cleanup that removed the file and a
+`git add -A` that committed the removal. Nothing complained: the next run simply
+recreated it empty, and the weekly review would have read "no runs logged yet" and
+been correct about the file while being wrong about the world.
+
+The playbook forbids the *agent* from editing this file. That rule turned out to
+protect against the wrong actor first. Two practical consequences: run the
+launcher against a scratch `-RepoRoot` when testing it, never the real checkout;
+and because the file is tracked, `git log --diff-filter=D -- tools/desk_agent/runs.jsonl`
+finds the deletion and `git checkout <sha>^ -- tools/desk_agent/runs.jsonl` undoes
+it. Being in git is what made this recoverable rather than merely regrettable.
+
 **Blockers are counted by slug, not by message.** "connection refused at 07:01"
 and the same at 07:02 are one problem; as free text they are two singletons and
 neither crosses the threshold to be acted on. `blocker_key` strips timestamps,
