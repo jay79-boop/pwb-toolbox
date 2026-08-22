@@ -150,6 +150,14 @@ A worked example, for this repo's 21st MCP key:
   not a trader. Scoring is pure math tested on synthetic bars
   (`tests/test_crypto_scan.py`); signal choices are sourced in
   `docs/trading-wisdom.md`
+- `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
+  the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
+  sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
+  spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
+  pot is spent until `review` runs, scores every close in R-multiples, and
+  `check` alerts when an open trade's stop or target level trades. Protocol
+  in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
+  fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
@@ -562,6 +570,24 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
+**Decision:** Add a second, deliberately speculative track beside the core
+program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent
+protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped
+at 2.5%), momentum stocks, defined-risk credit spreads. Fixed pot as a slice
+of the paper account; per-trade max loss 10% of pot; 4 positions max; spent
+pot locks the desk until `review` runs; refill only after review. Owner
+executes every order (options in thinkorswim paperMoney — TradingView has no
+options; stocks/crypto in TradingView paper); agent plans, logs, watches
+(`check` alerts on stop/target), and reviews. Two triggers: "trade spicy" on
+demand, plus a Windows-scheduled morning scan.
+**Why:** The owner wants high-risk/high-reward speculation *and* steady safe
+core growth. The wall is the design: the spec pot can die without touching
+core statistics, and its scored record (R-multiples per lane) is the desk's
+real product — after 30 trades a lane either proves expectancy or gets a
+pause proposal. Self-learning follows the wisdom-doc contract: the agent
+drafts changes from the record; the owner approves.
 
 ### [2026-08-22] Paper-first trading program: wisdom base + crypto scanner + condor mock run
 **Decision:** Start a paper-first trading program with hard gates to live
