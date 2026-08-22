@@ -1,0 +1,553 @@
+{
+  "meta": {
+    "name": "TradeCo Operations Blueprint",
+    "version": "2.1",
+    "created": "2025-01-15T10:00:00Z",
+    "lastModified": "2026-08-22T14:30:00Z",
+    "owner": "Alice Chen",
+    "description": "Complete operations blueprint for TradeCo, a quantitative trading firm with research, execution, and support functions."
+  },
+  "departments": [
+    {
+      "id": "dept-research",
+      "name": "Research & Strategy",
+      "owner": "Bob Martinez",
+      "members": 5,
+      "description": "Develops and backtests trading strategies, analyzes market data, optimizes entry/exit logic.",
+      "processes": ["proc-backtest", "proc-signal-generation"],
+      "tools": ["tool-backtrader", "tool-jupyter", "tool-github", "tool-bloomberg"]
+    },
+    {
+      "id": "dept-execution",
+      "name": "Execution & Operations",
+      "owner": "Carol Zhang",
+      "members": 3,
+      "description": "Manages live trading, monitor positions, executes trades, manages risk.",
+      "processes": ["proc-live-execution", "proc-risk-monitoring"],
+      "tools": ["tool-ib", "tool-slack", "tool-datadog", "tool-trade-journal"]
+    },
+    {
+      "id": "dept-support",
+      "name": "Business Operations",
+      "owner": "David Lee",
+      "members": 2,
+      "description": "Handles admin, compliance, infrastructure, financial reporting.",
+      "processes": ["proc-pnl-reporting", "proc-tool-management"],
+      "tools": ["tool-stripe", "tool-quickbooks", "tool-google-workspace", "tool-aws"]
+    }
+  ],
+  "processes": [
+    {
+      "id": "proc-backtest",
+      "name": "Strategy Backtesting",
+      "category": "internal",
+      "owner": "Bob Martinez",
+      "description": "Test new trading strategies against historical data to validate edge before live trading.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Define strategy rules and parameters",
+          "owner": "Quant Researcher",
+          "tools": ["tool-jupyter"],
+          "duration": "2-8 hours"
+        },
+        {
+          "number": 2,
+          "title": "Load historical price data",
+          "owner": "Quant Researcher",
+          "tools": ["tool-backtrader", "tool-bloomberg"],
+          "duration": "30 minutes"
+        },
+        {
+          "number": 3,
+          "title": "Run backtest and analyze results",
+          "owner": "Quant Researcher",
+          "tools": ["tool-backtrader"],
+          "duration": "1-4 hours"
+        },
+        {
+          "number": 4,
+          "title": "Document findings and decision",
+          "owner": "Quant Researcher",
+          "tools": ["tool-github"],
+          "duration": "1 hour"
+        }
+      ],
+      "frequency": "multiple times per week",
+      "kpi": {
+        "metric": "Backtest win rate",
+        "target": "> 55%",
+        "current": "58.3%"
+      }
+    },
+    {
+      "id": "proc-signal-generation",
+      "name": "Daily Signal Generation",
+      "category": "internal",
+      "owner": "Bob Martinez",
+      "description": "Generate trading signals each day based on deployed strategies and current market conditions.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Collect and validate overnight market data",
+          "owner": "Signal Processor",
+          "tools": ["tool-backtrader"],
+          "duration": "15 minutes"
+        },
+        {
+          "number": 2,
+          "title": "Run strategy models",
+          "owner": "Signal Processor",
+          "tools": ["tool-backtrader"],
+          "duration": "30 minutes"
+        },
+        {
+          "number": 3,
+          "title": "Generate signal summary for execution team",
+          "owner": "Signal Processor",
+          "tools": ["tool-slack"],
+          "duration": "15 minutes"
+        }
+      ],
+      "frequency": "daily before market open",
+      "kpi": {
+        "metric": "Signal generation SLA",
+        "target": "< 1 hour before market open",
+        "current": "45 minutes"
+      }
+    },
+    {
+      "id": "proc-live-execution",
+      "name": "Live Trade Execution",
+      "category": "internal",
+      "owner": "Carol Zhang",
+      "description": "Execute approved trades with risk controls, optimal order sizing, and real-time monitoring.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Review and approve trade signals",
+          "owner": "Execution Lead",
+          "tools": ["tool-slack", "tool-trade-journal"],
+          "duration": "10 minutes"
+        },
+        {
+          "number": 2,
+          "title": "Calculate position size and risk allocation",
+          "owner": "Risk Manager",
+          "tools": ["tool-trade-journal"],
+          "duration": "5 minutes"
+        },
+        {
+          "number": 3,
+          "title": "Submit order to Interactive Brokers",
+          "owner": "Execution Operator",
+          "tools": ["tool-ib"],
+          "duration": "2 minutes"
+        },
+        {
+          "number": 4,
+          "title": "Monitor position and adjust if needed",
+          "owner": "Execution Operator",
+          "tools": ["tool-ib", "tool-datadog"],
+          "duration": "ongoing"
+        }
+      ],
+      "frequency": "per trade signal",
+      "kpi": {
+        "metric": "Execution slippage (avg)",
+        "target": "< 1 bp",
+        "current": "0.8 bp"
+      }
+    },
+    {
+      "id": "proc-risk-monitoring",
+      "name": "Real-Time Risk Monitoring",
+      "category": "internal",
+      "owner": "Carol Zhang",
+      "description": "Continuously monitor portfolio risk, drawdowns, and position limits with automated alerts.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Stream live P&L and position data",
+          "owner": "Monitoring System",
+          "tools": ["tool-datadog"],
+          "duration": "continuous"
+        },
+        {
+          "number": 2,
+          "title": "Check against risk limits",
+          "owner": "Monitoring System",
+          "tools": ["tool-datadog"],
+          "duration": "continuous"
+        },
+        {
+          "number": 3,
+          "title": "Alert execution team on threshold breach",
+          "owner": "Monitoring System",
+          "tools": ["tool-slack"],
+          "duration": "instant"
+        }
+      ],
+      "frequency": "real-time",
+      "kpi": {
+        "metric": "Alert accuracy (true positives)",
+        "target": "> 95%",
+        "current": "97.2%"
+      }
+    },
+    {
+      "id": "proc-pnl-reporting",
+      "name": "P&L Reporting & Reconciliation",
+      "category": "outbound",
+      "owner": "David Lee",
+      "description": "Daily and monthly P&L reporting, reconciliation with broker statements, performance attribution.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Pull end-of-day positions from broker",
+          "owner": "Finance Analyst",
+          "tools": ["tool-ib", "tool-quickbooks"],
+          "duration": "30 minutes"
+        },
+        {
+          "number": 2,
+          "title": "Calculate P&L and reconcile to internal records",
+          "owner": "Finance Analyst",
+          "tools": ["tool-quickbooks"],
+          "duration": "1 hour"
+        },
+        {
+          "number": 3,
+          "title": "Generate daily report for stakeholders",
+          "owner": "Finance Analyst",
+          "tools": ["tool-google-workspace"],
+          "duration": "1 hour"
+        },
+        {
+          "number": 4,
+          "title": "Monthly performance review and attribution",
+          "owner": "Finance Manager",
+          "tools": ["tool-quickbooks"],
+          "duration": "4 hours"
+        }
+      ],
+      "frequency": "daily (summary), monthly (detailed)",
+      "kpi": {
+        "metric": "Reconciliation accuracy",
+        "target": "100%",
+        "current": "100%"
+      }
+    },
+    {
+      "id": "proc-tool-management",
+      "name": "Technology & Tool Management",
+      "category": "internal",
+      "owner": "David Lee",
+      "description": "Manage software subscriptions, licenses, upgrades, and cost tracking.",
+      "steps": [
+        {
+          "number": 1,
+          "title": "Track all tool subscriptions and renewal dates",
+          "owner": "Tech Manager",
+          "tools": ["tool-google-workspace"],
+          "duration": "1 hour per month"
+        },
+        {
+          "number": 2,
+          "title": "Review tool usage and cost optimization",
+          "owner": "CFO",
+          "tools": ["tool-datadog"],
+          "duration": "2 hours per month"
+        },
+        {
+          "number": 3,
+          "title": "Evaluate new tools or replacement candidates",
+          "owner": "Tech Manager",
+          "tools": ["tool-github"],
+          "duration": "varies"
+        }
+      ],
+      "frequency": "monthly review, ad-hoc evaluations",
+      "kpi": {
+        "metric": "Tool cost per trade",
+        "target": "< $0.50",
+        "current": "$0.35"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "tool-backtrader",
+      "name": "Backtrader",
+      "category": "Backtesting",
+      "purpose": "Backtesting and live trading framework for Python strategies",
+      "url": "https://www.backtrader.com",
+      "cost": {
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time"
+      },
+      "owner": "Bob Martinez",
+      "users": ["dept-research", "dept-execution"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-jupyter",
+      "name": "Jupyter Lab",
+      "category": "Development",
+      "purpose": "Interactive Python notebooks for research and analysis",
+      "url": "https://jupyter.org",
+      "cost": {
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time"
+      },
+      "owner": "Bob Martinez",
+      "users": ["dept-research"],
+      "criticality": "important",
+      "dependencies": []
+    },
+    {
+      "id": "tool-bloomberg",
+      "name": "Bloomberg Terminal",
+      "category": "Market Data",
+      "purpose": "Real-time market data, news, analysis",
+      "url": "https://www.bloomberg.com/professional",
+      "cost": {
+        "amount": 24000,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-12-15"
+      },
+      "owner": "Bob Martinez",
+      "users": ["dept-research"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-github",
+      "name": "GitHub",
+      "category": "Version Control",
+      "purpose": "Code repository, collaboration, and version control",
+      "url": "https://github.com/tradeco",
+      "cost": {
+        "amount": 500,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-09-01"
+      },
+      "owner": "David Lee",
+      "users": ["dept-research", "dept-execution", "dept-support"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-ib",
+      "name": "Interactive Brokers API",
+      "category": "Execution",
+      "purpose": "Live trading execution, order management, position monitoring",
+      "url": "https://www.interactivebrokers.com",
+      "cost": {
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "per-transaction"
+      },
+      "owner": "Carol Zhang",
+      "users": ["dept-execution"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-slack",
+      "name": "Slack",
+      "category": "Communication",
+      "purpose": "Team communication, alerts, notifications",
+      "url": "https://slack.com",
+      "cost": {
+        "amount": 1200,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-06-30"
+      },
+      "owner": "David Lee",
+      "users": ["dept-research", "dept-execution", "dept-support"],
+      "criticality": "important",
+      "dependencies": []
+    },
+    {
+      "id": "tool-datadog",
+      "name": "Datadog",
+      "category": "Monitoring",
+      "purpose": "Real-time monitoring, alerting, and performance metrics",
+      "url": "https://www.datadoghq.com",
+      "cost": {
+        "amount": 3600,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-11-15"
+      },
+      "owner": "David Lee",
+      "users": ["dept-execution", "dept-support"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-trade-journal",
+      "name": "Trade Journal",
+      "category": "Execution",
+      "purpose": "Record and analyze individual trades, P&L tracking, trade commitment cards",
+      "url": "file:///C:/Users/Gexio/OneDrive/trade-journal/trade-journal.html",
+      "cost": {
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time"
+      },
+      "owner": "Carol Zhang",
+      "users": ["dept-execution"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-quickbooks",
+      "name": "QuickBooks Online",
+      "category": "Finance",
+      "purpose": "Accounting, financial reporting, reconciliation",
+      "url": "https://quickbooks.intuit.com",
+      "cost": {
+        "amount": 2880,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-07-20"
+      },
+      "owner": "David Lee",
+      "users": ["dept-support"],
+      "criticality": "important",
+      "dependencies": []
+    },
+    {
+      "id": "tool-google-workspace",
+      "name": "Google Workspace",
+      "category": "Productivity",
+      "purpose": "Email, calendar, docs, sheets, storage",
+      "url": "https://workspace.google.com",
+      "cost": {
+        "amount": 900,
+        "currency": "USD",
+        "frequency": "yearly",
+        "renewalDate": "2026-08-15"
+      },
+      "owner": "David Lee",
+      "users": ["dept-research", "dept-execution", "dept-support"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-aws",
+      "name": "Amazon Web Services",
+      "category": "Infrastructure",
+      "purpose": "Cloud computing, data storage, API hosting",
+      "url": "https://aws.amazon.com",
+      "cost": {
+        "amount": 2000,
+        "currency": "USD",
+        "frequency": "monthly",
+        "renewalDate": null
+      },
+      "owner": "David Lee",
+      "users": ["dept-research", "dept-execution", "dept-support"],
+      "criticality": "essential",
+      "dependencies": []
+    },
+    {
+      "id": "tool-stripe",
+      "name": "Stripe",
+      "category": "Payment",
+      "purpose": "Payment processing for service fees",
+      "url": "https://stripe.com",
+      "cost": {
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "per-transaction"
+      },
+      "owner": "David Lee",
+      "users": ["dept-support"],
+      "criticality": "important",
+      "dependencies": []
+    }
+  ],
+  "changes": [
+    {
+      "id": "chg-001",
+      "date": "2026-07-15",
+      "title": "Implemented automated risk monitoring with Datadog",
+      "description": "Replaced manual daily risk checks with continuous Datadog alerts for position limits, drawdowns, and margin usage. Reduced alert detection time from 1+ hours to instant.",
+      "category": "tool",
+      "impact": "Execution team now gets real-time alerts instead of manual daily review",
+      "author": "Carol Zhang",
+      "status": "completed"
+    },
+    {
+      "id": "chg-002",
+      "date": "2026-06-01",
+      "title": "Migrated from in-house backtest framework to Backtrader",
+      "description": "Standardized on open-source Backtrader to reduce maintenance burden and improve reproducibility. All strategies ported, documentation created.",
+      "category": "tool",
+      "impact": "Research team can now share and version strategies more easily",
+      "author": "Bob Martinez",
+      "status": "completed"
+    },
+    {
+      "id": "chg-003",
+      "date": "2026-05-10",
+      "title": "Added structured Trade Journal for pre-trade commitment",
+      "description": "Implemented trade-journal.html as single-file tool for pre-trade planning and post-trade analysis. Links to Position Lab for Greeks and P&L ladders.",
+      "category": "tool",
+      "impact": "Execution team discipline and trade documentation",
+      "author": "Carol Zhang",
+      "status": "completed"
+    }
+  ],
+  "roadmap": [
+    {
+      "id": "roadmap-001",
+      "title": "Automate daily P&L reporting",
+      "description": "Build script to automatically pull end-of-day positions from IB, calculate P&L, and email report. Currently manual 2-3 hour process.",
+      "category": "process automation",
+      "priority": "high",
+      "targetDate": "2026-10-15",
+      "owner": "David Lee",
+      "status": "planned"
+    },
+    {
+      "id": "roadmap-002",
+      "title": "Implement multi-strategy orchestration engine",
+      "description": "Build system to run multiple strategies concurrently with position cross-correlation risk checks and portfolio-level optimization.",
+      "category": "product",
+      "priority": "critical",
+      "targetDate": "2026-12-31",
+      "owner": "Bob Martinez",
+      "status": "in-progress"
+    },
+    {
+      "id": "roadmap-003",
+      "title": "Consolidate market data sources",
+      "description": "Evaluate open alternatives to Bloomberg (e.g., Twelve Data, Polygon.io) and reduce costs while maintaining data quality.",
+      "category": "cost optimization",
+      "priority": "medium",
+      "targetDate": "2027-03-31",
+      "owner": "Bob Martinez",
+      "status": "backlog"
+    },
+    {
+      "id": "roadmap-004",
+      "title": "Build decision support dashboard",
+      "description": "Create live dashboard showing strategy performance, current positions, risk metrics, and tool health for leadership visibility.",
+      "category": "analytics",
+      "priority": "medium",
+      "targetDate": "2027-02-28",
+      "owner": "David Lee",
+      "status": "backlog"
+    }
+  ]
+}
