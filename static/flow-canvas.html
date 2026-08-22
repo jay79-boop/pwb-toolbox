@@ -540,6 +540,35 @@ document.getElementById("btnExport").addEventListener("click", function () {
 document.getElementById("btnImport").addEventListener("click", function () {
   document.getElementById("fileIn").click();
 });
+// A business-blueprint file (docs/blueprint-schema.json) also imports here:
+// each process becomes a left-to-right chain of its steps, one row per
+// process. Blueprint documents the process as it currently runs, so steps
+// come in as "live"; the process name and step role land in the notes.
+function fromBlueprint(bp) {
+  var nodes = [], edges = [];
+  (bp.processes || []).forEach(function (proc, pi) {
+    var prev = null;
+    (proc.steps || []).forEach(function (st, si) {
+      var id = (proc.id || "proc" + pi) + "-s" + (st.number || si + 1);
+      nodes.push({
+        id: id,
+        title: st.title || "Step " + (si + 1),
+        status: "live",
+        owner: "person",
+        dur: st.duration || "",
+        decision: false,
+        notes: (proc.name || "") + (st.owner ? " — " + st.owner : ""),
+        x: 60 + si * 240,
+        y: 80 + pi * 160
+      });
+      if (prev) edges.push({ id: "e-" + prev + "-" + id, from: prev, to: id, label: "" });
+      prev = id;
+    });
+  });
+  if (!nodes.length) throw new Error("blueprint has no process steps");
+  return { nodes: nodes, edges: edges };
+}
+
 document.getElementById("fileIn").addEventListener("change", function (ev) {
   var f = ev.target.files[0];
   if (!f) return;
@@ -547,14 +576,17 @@ document.getElementById("fileIn").addEventListener("change", function (ev) {
   reader.onload = function () {
     try {
       var s = JSON.parse(reader.result);
-      if (!Array.isArray(s.nodes) || !Array.isArray(s.edges)) throw new Error("bad shape");
+      if (!Array.isArray(s.nodes) || !Array.isArray(s.edges)) {
+        if (Array.isArray(s.processes)) s = fromBlueprint(s);
+        else throw new Error("bad shape");
+      }
       snapshot();
       state.nodes = s.nodes; state.edges = s.edges;
       if (s.theme === "paper" || s.theme === "slate") {
         state.theme = s.theme; document.body.dataset.theme = s.theme;
       }
       sel = null; save(); render();
-    } catch (e) { alert("That file doesn't look like a Flow Canvas export."); }
+    } catch (e) { alert("That file doesn't look like a Flow Canvas export or a business blueprint."); }
     ev.target.value = "";
   };
   reader.readAsText(f);
