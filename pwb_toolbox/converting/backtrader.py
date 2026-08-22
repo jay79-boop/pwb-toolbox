@@ -1083,7 +1083,7 @@ _INLINE_NODE_LIMIT = 400
 _MATERIALISE_NODE_LIMIT = 60
 
 
-def _substitute(node, bindings):
+def _substitute(node: object, bindings: dict[str, object]) -> object:
     """Replace every bound name in ``node`` with the expression bound to it.
 
     Names that are *not* bound are left alone, which is what Pine means: a
@@ -1122,9 +1122,9 @@ def _substitute(node, bindings):
     return node  # a literal, which has nothing to substitute into
 
 
-def _node_count(node):
+def _node_count(node: object) -> int:
     """Size of an expression tree, used to bound how far inlining may expand."""
-    total = 1
+    total: int = 1
     for child in (
         getattr(node, "base", None),
         getattr(node, "offset", None),
@@ -1146,7 +1146,7 @@ def _node_count(node):
     return total
 
 
-def _if_as_assignment(statement):
+def _if_as_assignment(statement: If) -> Optional[tuple[str, object]]:
     """Read an ``if`` whose every branch assigns one name as a conditional.
 
     This is the shape a Pine function uses to pick a value over several
@@ -1174,7 +1174,7 @@ def _if_as_assignment(statement):
     what they are writing or carry more than one statement.
     """
 
-    def branch(body):
+    def branch(body: list) -> Optional[tuple[str, object]]:
         if (
             len(body) == 1
             and isinstance(body[0], Assign)
@@ -1183,20 +1183,20 @@ def _if_as_assignment(statement):
             return body[0].target, body[0].value
         return None
 
-    head = branch(statement.body)
+    head: Optional[tuple[str, object]] = branch(statement.body)
     if head is None:
         return None
     target, value = head
 
     if not statement.orelse:
-        other = Name(target)
+        other: object = Name(target)
     elif len(statement.orelse) == 1 and isinstance(statement.orelse[0], If):
-        nested = _if_as_assignment(statement.orelse[0])
+        nested: Optional[tuple[str, object]] = _if_as_assignment(statement.orelse[0])
         if nested is None or nested[0] != target:
             return None
         other = nested[1]
     else:
-        tail = branch(statement.orelse)
+        tail: Optional[tuple[str, object]] = branch(statement.orelse)
         if tail is None or tail[0] != target:
             return None
         other = tail[1]
@@ -1204,7 +1204,7 @@ def _if_as_assignment(statement):
     return target, Ternary(cond=statement.cond, then=value, other=other)
 
 
-def _if_as_expression(statement):
+def _if_as_expression(statement: If) -> Optional[object]:
     """Read a trailing ``if`` block as the value its function returns.
 
     Pine hands back the last expression of whichever branch ran, so an ``if``
@@ -1214,14 +1214,14 @@ def _if_as_expression(statement):
     expression, which a conditional cannot hold.
     """
 
-    def branch(body):
+    def branch(body: list) -> Optional[object]:
         if len(body) == 1 and isinstance(body[0], ExprStmt):
             return body[0].value
         if len(body) == 1 and isinstance(body[0], Assign) and not body[0].qualifier:
             return body[0].value
         return None
 
-    then = branch(statement.body)
+    then: Optional[object] = branch(statement.body)
     if then is None:
         return None
     if not statement.orelse:
@@ -1399,11 +1399,11 @@ class _Generator:
             construction = self._hoist("line", construction)
         return f"{construction}[{index}]"
 
-    def _reject(self, message):
+    def _reject(self, message: str) -> None:
         if message not in self.unsupported:
             self.unsupported.append(message)
 
-    def _mintick_param(self):
+    def _mintick_param(self) -> str:
         """``syminfo.mintick`` as a param: the tick size is the instrument's.
 
         Pine reads it off the symbol. A Backtrader feed carries no tick size,
@@ -1411,7 +1411,8 @@ class _Generator:
         default, and the report says to set it per instrument.
         """
         if self._mintick is None:
-            name, suffix = "mintick", 2
+            name: str = "mintick"
+            suffix: int = 2
             while name in self.param_names:
                 name, suffix = f"mintick_{suffix}", suffix + 1
             self.params.append((name, 0.01))
@@ -1424,7 +1425,7 @@ class _Generator:
             )
         return f"self.p.{_safe(self._mintick)}"
 
-    def _ignore(self, message):
+    def _ignore(self, message: str) -> None:
         if message not in self.ignored:
             self.ignored.append(message)
 
