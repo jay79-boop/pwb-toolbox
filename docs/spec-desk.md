@@ -17,9 +17,13 @@ and reports.
 
 1. **swing-buy** — directional calls/puts on liquid names, 15–45 DTE, on
    momentum or a dated catalyst. Max loss = premium paid. The workhorse.
-2. **short-dte** — 0–7 DTE lottery tickets. Sub-capped at 2.5% of the pot
-   because the base rate is incineration; the lane exists to measure that
-   honestly, not to pretend otherwise.
+2. **short-dte** — 0–7 DTE trades: the owner's stated focus (they trade
+   the daily and weekly expirations). Discipline for this lane: 0–2 DTE
+   stays near the money (40–50 delta), 3–7 DTE can reach 30–40 delta, and
+   every plan states its shot clock (`pwb_toolbox.options.shot_clock`) and
+   hourly hurdle so entry timing is a number, not a feeling. Sub-capped at
+   2.5% of the pot per trade — focus means more shots, not bigger ones,
+   and the cap is what lets the record reach a verdict.
 3. **momentum-stock** — high-beta shares breaking out on volume. No decay
    working against the thesis; stop distance defines the risk.
 4. **premium-sell** — defined-risk credit spreads on names the agent thinks
@@ -69,10 +73,50 @@ THESIS      Broke 182 resistance on 2x volume with sector tailwind;
 LOG IT      python tools/spec_desk.py open --lane swing-buy --symbol NVDA
             --instrument "NVDA 02OCT26 190C" --qty 2 --entry 4.20
             --stop 176 --target 198 --thesis "breakout over 182 on 2x volume"
+LAB         static/spicy-lab.html with these inputs (or:
+            python tools/spicy_lab.py excel --spot 184 --strike 190 ... )
 ```
+
+Short-dated plans additionally state the shot clock and hourly hurdle, and
+point the owner at the lab preloaded with the contract — the ladder shows
+what each move pays now versus later, the attribution bars show which greek
+is paying or charging, and the velocity panel is the exit tell: when the
+15-minute slices stop growing, the easy premium is in.
 
 The owner's only jobs: say yes/no/resize, place it, and report fills. The
 agent logs, watches, and nags when a level hits.
+
+## Exits — the standing protocol
+
+Every plan states its exit flags, not just a target. The structure makes
+being wrong cheap in both directions, so no exit ever depends on calling a
+top or knowing whether a dip is real:
+
+- **Scale-out**: sell half at +100% on the premium (cost basis off the
+  table); once +50%, the stop on the remainder moves to breakeven premium.
+  A green short-dated trade is never allowed to turn red.
+- **Flag 1 — velocity flattening** (most trusted; it fires before the
+  chart): two consecutive equal steps of the move paying *less* premium
+  while the underlying still advances → the juice is spent; exit or scale.
+  The lab's velocity panel is this flag as a picture.
+- **Flag 2 — delta saturation**: position delta ≥ ~0.80 → stock exposure at
+  option rent. Exit, or roll up: sell the fat contract, re-buy a 30–40Δ
+  strike higher with part of the proceeds, bank the difference.
+- **Flag 3 — IV bleed**: premium fading while the underlying holds → the
+  options market is pricing the move as done. Believe it early.
+- **Flag 4 — the chart**: stall at the ±1×expected-move rung, fresh highs on
+  shrinking volume, or failure to hold the breakout level/VWAP on retest.
+- **Flag 5 — the clock re-arms**: a stalled position pays rent at the
+  *current* hour's rate; recompute the shot clock at every stall.
+
+**Shakeout vs. reversal** is never predicted, only handled: exit on the
+break (or the earlier velocity flag), and treat a fast **reclaim** of the
+swept level as a fresh, valid re-entry — a sweep-and-reclaim is the ICT
+liquidity-run pattern, not a stop-out to mourn. **Acceptance** below the
+level (closes below, failed retest from underneath, expanding volume,
+persistently rising IV) is a real turn: stay out. Stops on the underlying
+sit beyond the obvious liquidity pool, sized smaller for the wider
+distance, so the sweep runs through everyone else's stops first.
 
 ## The two triggers
 

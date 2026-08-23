@@ -158,6 +158,19 @@ A worked example, for this repo's 21st MCP key:
   `check` alerts when an open trade's stop or target level trades. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
+  `excel` writes the move ladder workbook for one contract (rungs × time
+  columns, greeks, shot clock, hurdle) through `pwb_toolbox.options`; `serve`
+  is the loopback-only stdlib quote helper (port 8877, CORS for file://) that
+  lights up the lab page's Refresh button. Ladder math and quote handling are
+  pure and tested (`tests/test_spicy_lab.py`)
+- `static/spicy-lab.html` — the speculative desk's visual instrument: enter
+  one contract, see the shot clock and hourly hurdle, a move ladder (rungs ×
+  expected-move or fixed %, columns marching through time), greek attribution
+  bars for any move/minutes/IV scenario, and premium-velocity slices with an
+  exit-tell verdict. Opens from `file://`, loads `option-lab.js` from the same
+  directory (never duplicates its math), saves inputs to localStorage.
+  Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
@@ -178,7 +191,10 @@ A worked example, for this repo's 21st MCP key:
   contracts through the Python module and requires node to agree to 1e-9, so the
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
-  tested against closed forms in `static/option-lab.test.js`
+  tested against closed forms in `static/option-lab.test.js`. Also home to
+  `attribution` — splits a repriced premium change into delta/gamma/theta/vega
+  dollars with the unexplained part reported as residual — which the spicy lab
+  leans on
 - `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
   machine-enforceable risk rules with their originating traders/papers, the
   retail base-rate studies that justify paper-first, the evidence review

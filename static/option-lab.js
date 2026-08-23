@@ -392,6 +392,61 @@
     });
   }
 
+  /*
+   * Where a premium change came from. Reprices the contract under a scenario
+   * (a spot move, minutes elapsed, an IV shift) and splits the exact total
+   * into the classic greek contributions — delta, gamma, theta, vega — with
+   * whatever the first-order story cannot explain reported honestly as
+   * `residual` rather than smeared into the others. For the small moves and
+   * minutes the spicy lab studies, residual is pennies; when it grows, the
+   * scenario is too big for a greek story and only the total is trustworthy.
+   *
+   * Dollar amounts are per position (contracts x multiplier). `minutes` is
+   * clock time converted to calendar days, matching blackScholes' day basis;
+   * `ivChange` is in vol points (-2 means IV fell two points).
+   */
+  function attribution(pos, scenario) {
+    const s = scenario || {};
+    const contracts = pos.contracts || 1;
+    const mult = pos.multiplier == null ? 100 : pos.multiplier;
+    const movePct = s.movePct || 0;
+    const minutes = s.minutes || 0;
+    const ivChange = s.ivChange || 0;
+
+    const g0 = blackScholes(pos.spot, pos.strike, pos.days, pos.vol, pos.rate, pos.kind);
+    if (!g0) return null;
+
+    const dS = pos.spot * movePct / 100;
+    const dDays = minutes / (24 * 60);
+    const newSpot = pos.spot + dS;
+    const newDays = pos.days - dDays;
+    const newVol = pos.vol + ivChange / 100;
+
+    const g1 = newDays > 0 && newVol > 0
+      ? blackScholes(newSpot, pos.strike, newDays, newVol, pos.rate, pos.kind)
+      : null;
+    const endPremium = g1 ? g1.price
+      : Math.max(0, pos.kind === "put" ? pos.strike - newSpot : newSpot - pos.strike);
+
+    const scale = contracts * mult;
+    const delta = g0.delta * dS * scale;
+    const gamma = 0.5 * g0.gamma * dS * dS * scale;
+    const theta = g0.theta * dDays * scale;
+    const vega = g0.vega * ivChange * scale;
+    const total = (endPremium - g0.price) * scale;
+
+    return {
+      startPremium: g0.price,
+      endPremium: endPremium,
+      total: total,
+      delta: delta,
+      gamma: gamma,
+      theta: theta,
+      vega: vega,
+      residual: total - (delta + gamma + theta + vega),
+    };
+  }
+
   return {
     DAYS_PER_YEAR: DAYS_PER_YEAR,
     TRADING_DAYS: TRADING_DAYS,
@@ -408,5 +463,6 @@
     moveLadder: moveLadder,
     profitLadder: profitLadder,
     decayStrip: decayStrip,
+    attribution: attribution,
   };
 });
