@@ -56,7 +56,16 @@ bullets with bold lead-ins instead.
 - **map → `02-process-map.md`** — Walk the core process end to end as it
   actually runs. Per step: actor, input, output, handoff, rough duration and
   frequency. Ask "and then what happens?" until the loop closes. Map reality,
-  not the official version.
+  not the official version. **Follow the `process-mapping` skill** — real
+  processes fork, and a map written as a numbered list quietly drops every
+  branch. Start at the trigger, mark each fork as a decision step named as a
+  question, resolve every branch (loop-back / full divergence / diverge-then-
+  converge), label each branch in one to three words, and give every human
+  step a duration and a monthly frequency so the bottleneck phase has real
+  numbers to rank. Model waits the business actually described; invent none.
+  Worth drawing as well as writing when the process forks more than twice:
+  build it in `static/flow-canvas.html` and export the JSON beside the
+  markdown.
 - **bottlenecks → `03-bottlenecks.md`** — From the map, rank constraints by
   cost (hours/week, delay, error rate, money). Every bottleneck needs a
   number and the evidence behind it.
@@ -74,7 +83,13 @@ bullets with bold lead-ins instead.
 - **design → `07-target-design.md`** — Specify the future process: what runs
   automatically, what an AI agent does and with which tools, what stays
   human, and the control around each automated step (review, threshold,
-  rollback).
+  rollback). Same grammar as the map phase — every branch still has to land
+  somewhere. Two things this phase owes the client: every step marked with
+  its real executor (Person / Automation / AI agent), and the monthly human
+  load recomputed against phase 2's figure, so the proposal carries a
+  before-and-after number rather than an adjective. Nothing here is Live
+  until go-live; a target map that claims Live is a pitch pretending to be a
+  record.
 - **present → `08-feedback.md`** — Render the deck
   (`python tools/engagement.py deck <slug>` → `deck.html`, opens from
   `file://`), have the user present it or walk through it with them, and
