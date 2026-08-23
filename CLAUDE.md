@@ -136,6 +136,11 @@ A worked example, for this repo's 21st MCP key:
   `static/flow-canvas.html` imports one (each process renders as a chain of
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
+- `tools/backtest_lab.py` — runs one strategy across instruments and vendors and
+  says whether the result clears its own noise floor. Reads a feed's timezone
+  correctly (see "Backtesting" below), normalises to basis points, and compares
+  two vendors of the same instrument — the check that decides whether a
+  single-instrument result meant anything
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
@@ -172,6 +177,10 @@ A worked example, for this repo's 21st MCP key:
   directory (never duplicates its math), saves inputs to localStorage.
   Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
+- `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
+  rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
+  gets checked against; it emulates TradingView's intrabar path assumption so a low
+  printed before the entry filled cannot retroactively stop the trade out
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
   redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
@@ -195,6 +204,8 @@ A worked example, for this repo's 21st MCP key:
   `attribution` — splits a repriced premium change into delta/gamma/theta/vega
   dollars with the unexplained part reported as residual — which the spicy lab
   leans on
+- `pine/` — TradingView strategies kept as reviewable source; `README.md` there covers
+  the chart setup they need. Nothing under `pwb_toolbox/` imports them
 - `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
   machine-enforceable risk rules with their originating traders/papers, the
   retail base-rate studies that justify paper-first, the evidence review
@@ -266,6 +277,7 @@ pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
+python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
@@ -335,6 +347,50 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## Backtesting: two things that produced confidently wrong answers
+
+`tools/backtest_lab.py` exists because a single-instrument backtest in this
+repo produced a result that survived every check applied to it and was still
+wrong twice over. Both failures are cheap to repeat and neither announces
+itself, so both are pinned by tests in `tests/test_backtest_lab.py`.
+
+**A feed's timestamps are in whatever zone the vendor chose, and the file does
+not say.** histdata's ASCII M1 exports are stamped **New York local time with
+DST**, not the fixed EST they are usually assumed to be. Read with one flat
+offset they are right in January and an hour out in July, and since a strategy
+converts back to an exchange timezone to test its session, that hour moves the
+whole trading window for eight months of every year. The symptom is a result
+that looks plausible: an ICT session strategy measured +39 points over eight
+years that way, and +7 once the stamps were read correctly.
+
+Do not take a vendor's word for the zone, and do not infer it from a volume
+profile — that was ambiguous here. Compare *returns* against a feed whose zone
+is known (`verify_timezone`), separately for a winter month and a summer one.
+Levels are useless for this: two vendors quoting one index differ by a basis
+that swamps the comparison, while their minute returns align at 0.99 and only
+at the right offset. **An offset that changes between the two months is DST**,
+and the feed is local time. oanda's exports, checked the same way, are UTC.
+
+**A backtest result means nothing until it clears the disagreement between two
+vendors of the same instrument.** Running one strategy on the S&P from two
+feeds gave +50bp and −234bp over the same eight years — while correlating 0.93
+year over year, so both agreed about the shape of every year and disagreed
+about the sign of the total. The gap averaged ~35bp/year against a measured
+edge of ~6bp/year.
+
+So `noise_floor()` is the check to run before believing any number here: it
+takes the same strategy's per-year results from two feeds and reports whether
+the edge exceeds the vendor gap. Clearing it is necessary and nowhere near
+sufficient. A high correlation with a large mean gap is the dangerous case and
+the one actually seen — the feeds look like they agree.
+
+Two habits follow. Compare instruments in **basis points of price**, never raw
+points: ten points on \$70 oil and ten on a 20,000 index are not the same
+trade, and summing points across instruments produces a number dominated by
+whichever quote is largest. And **charge costs always** — the strategy above is
+gross-positive and net-negative, so a frictionless run measures nothing
+tradeable.
 
 ## The trade journal is not in this repository
 
@@ -669,6 +725,21 @@ tool stays merged as the standing instrument for any future revisit (a
 fine-tuned variant, a newer model release) — re-run the eval before believing
 any of them.
 
+### [2026-08-22] StrategyComparator: the portfolio side (PR #90)
+**Decision:** A reusable harness, `pwb_toolbox.backtesting.comparator`, that runs
+several strategies over identical data and reports how they interact.
+**How:** `StrategyComparator` runs each registered strategy, extracts its NAV
+series, computes per-strategy metrics through `pwb_toolbox.performance`, builds a
+weighted portfolio NAV, and returns the correlation matrix alongside both sets of
+metrics. 18 unit tests drive it on synthetic data.
+**Why it is not the backtest lab (PR #87):** they answer different questions on
+different axes. The lab takes *one* strategy across many instruments and two
+vendor feeds and asks whether its edge survives the data. The comparator takes
+*many* strategies over one dataset and asks whether they hedge each other or
+amplify. The lab decides whether an edge is real; the comparator decides whether
+several real ones belong in the same account. This entry was originally filed
+under "(PR #87)", which is how the two came to look like duplicated work.
+
 ### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
 **Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
 **Why:** Can't compare strategies in a vacuum. Need to see: Do they hedge each other? Do they amplify losses? What's the portfolio win rate vs. individual strategy win rates?
@@ -710,10 +781,12 @@ any of them.
 
 **Now (This week — parallel tracks):**
 
+*StrategyComparator (PR #90):*
+- [x] Implement `StrategyComparator` — runs all three strategies on identical price data
+- [x] Add correlation matrix calculation (Pearson + rolling)
+- [x] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
+
 *Backtest Lab (PR #87):*
-- [ ] Implement `StrategyComparator` — runs all three strategies on identical price data
-- [ ] Add correlation matrix calculation (Pearson + rolling)
-- [ ] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
 - [ ] Test on 90-day ICT price history
 - [ ] Success: See if 15-Min Reversal adds value or just adds noise
 

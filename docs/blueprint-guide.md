@@ -350,14 +350,22 @@ Pick one or combine several:
 #### Option C: Interactive HTML Tool
 - Use `static/blueprint-builder.html`—web-based editor (double-click, no server)
 - Best for: Collaborative editing, visual dashboards, live updates
-- Stores data locally in your browser
-- Export as JSON when done
-- **It does not author process steps.** A process created in the builder starts
-  with an empty `steps` list and there is no step editor; steps in a blueprint
-  you import are carried through untouched but cannot be edited there, and
-  `static/blueprint-dashboard.html` does not display them at all. Write steps
-  and branches in JSON, in the Excel `Steps` sheet, or draw them in
-  `static/flow-canvas.html`, which imports a blueprint directly.
+- Autosaves to your browser as you work; Export as JSON when you want the file
+- Every list is editable — Edit beside Delete on departments, processes, tools,
+  changes and roadmap items. Renaming keeps the entry's `id`, so nothing that
+  points at it breaks
+- **Steps and branches are edited there too.** Each process row has a
+  **Steps (n)** button that opens an editor for that process: kind, executor,
+  owner, duration, times-per-month, tools, notes, and — on a decision — a
+  labelled branch per outcome with its destination picked from the sibling
+  steps. Steps renumber themselves when you reorder or delete, and every
+  branch and go-to target follows the step it pointed at. A checks panel
+  reports what is still unfinished without stopping you saving it, and each
+  process row carries the count.
+- **The dashboard still does not show steps.** `static/blueprint-dashboard.html`
+  renders departments, tools and roadmap only. To *see* a process, draw it in
+  `static/flow-canvas.html`, which imports a blueprint directly and lays the
+  branches out.
 
 #### Option D: Markdown + YAML
 - Human-readable, version-control friendly
