@@ -27,7 +27,9 @@ of the owner. This is the entire reason the lab is trustworthy at 8am.
 1. Check the desk has something to work on (`spec_desk/spec_desk.json`).
    No open positions and no closed record means nothing to queue — say so
    rather than inventing work.
-2. Run `plan`, and report what got queued in one line.
+2. Run `plan`, and report what got queued in one line. A bare `plan`
+   automatically includes `night_lab/sim_trades.json` when it exists, so
+   backtest trades the owner armed earlier stay in the record.
 3. Confirm the schedule is armed. The Windows scheduled task runs the grind;
    you do not stay awake. If the task does not exist yet, say so plainly and
    hand over the setup in a `## 🔴 NEEDS YOU` block.

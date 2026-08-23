@@ -74,6 +74,11 @@ DEFAULT_DIR = Path(__file__).resolve().parent.parent / "night_lab"
 QUEUE_NAME = "queue.jsonl"
 VERDICT_NAME = "verdict.json"
 PROPOSALS_NAME = "proposals.jsonl"
+# Picked up by `plan` automatically when it exists and no --sim was passed.
+# The "good night" agent runs a bare `plan`; without this convention that
+# bare plan would silently rebuild the record without the sim trades the
+# owner armed earlier -- dropping every shock and leak job on the floor.
+DEFAULT_SIM_NAME = "sim_trades.json"
 # The closed record `plan` snapshotted for tonight. `run` reads this rather
 # than re-deriving the record at 1am, so the night computes on exactly the
 # state that was armed -- including sim trades merged in via --sim, which the
@@ -1163,8 +1168,15 @@ def cmd_plan(args):
     out = lab_dir(args.dir)
     ledger = load_desk(Path(args.ledger) if args.ledger else _default_ledger())
 
+    sim_paths = list(args.sim or [])
+    if not sim_paths:
+        default_sim = out / DEFAULT_SIM_NAME
+        if default_sim.exists():
+            sim_paths = [str(default_sim)]
+            print(f"Including {default_sim} (pass --sim to override).")
+
     sim_trades: list[dict] = []
-    for sim_path in args.sim or []:
+    for sim_path in sim_paths:
         found = load_sim_trades(Path(sim_path).expanduser())
         if not found:
             print(f"No usable closed trades in {sim_path}; skipping it.")
