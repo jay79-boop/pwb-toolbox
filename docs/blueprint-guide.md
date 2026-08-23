@@ -88,15 +88,48 @@ A blueprint solves this:
 - `category`: Type—`inbound` (customer input), `internal` (internal ops), `outbound` (customer output)
 - `owner`: Process owner
 - `description`: What and why
-- `steps`: Ordered list with owner, tools, duration
+- `steps`: Ordered list with owner, tools, duration — and, where the process
+  forks, waits or loops, the branch fields below
 - `frequency`: How often it runs
 - `kpi`: Key metric, target, and current performance
+
+**Fields per step**:
+- `number`: Sequence number. Flow falls through to the next number unless a
+  step's `branches` say otherwise, so a linear process needs nothing else
+- `title`: Verb-first, roughly four to eight words
+- `owner`: Who performs it
+- `tools`: Tool IDs the step touches
+- `duration`: How long **one run** takes — `"10 minutes"`, `"2-8 hours"`,
+  `"1 day"`. Not how often it runs; that is `frequency`
+- `frequency`: Times per month. Duration times frequency is what turns a
+  process into a cost, which is the whole argument in a bottleneck review
+- `executor`: `person`, `automation` or `ai`. Person steps are the labour bill
+- `kind`: `task` (default), `decision`, `delay`, `end` or `goto`
+- `branches`: On a `decision`, where each outcome goes:
+  `[{"label": "Approved", "to": 4}, {"label": "Rejected", "to": "end"}]`.
+  Labels are one to three words; `to` is a step number, or `"end"` for a
+  branch that stops there
+- `goto`: On a `goto` step, the step number it jumps back to
+- `notes`: The mini-SOP — purpose, inputs, procedure, output
 
 **Why it matters**:
 - Shows the real flow of work
 - Identifies bottlenecks and inefficiencies
 - Shows which tools are used where
 - Tracks performance against targets
+
+**Branching**: a process written as a numbered list quietly drops every fork in
+it, and forks are where processes actually go wrong. Mark the fork as a
+`decision` step named as the question it answers, then give it `branches` —
+every outcome labelled, every destination a real step number or `"end"`. Three
+patterns cover it: a branch that loops back to earlier work, a branch that runs
+to its own ending, and two branches that rejoin on one shared step. A loop-back
+more than three steps upstream is a `goto` step instead of a long backward
+branch. `python tools/blueprint_converter.py validate` checks all of that — a
+branch pointing at a step that does not exist is an error, not a warning.
+
+The full craft standard, including how the same process is drawn on a canvas,
+is in `.claude/skills/process-mapping/SKILL.md`.
 
 **Example**:
 ```json
@@ -110,16 +143,33 @@ A blueprint solves this:
     {
       "number": 1,
       "title": "Review and approve trade signals",
+      "executor": "person",
       "owner": "Execution Lead",
       "tools": ["tool-slack", "tool-trade-journal"],
-      "duration": "10 minutes"
+      "duration": "10 minutes",
+      "frequency": 40
     },
     {
       "number": 2,
+      "title": "Did the signal pass review?",
+      "kind": "decision",
+      "executor": "person",
+      "owner": "Execution Lead",
+      "duration": "2 minutes",
+      "frequency": 40,
+      "branches": [
+        { "label": "Approved", "to": 3 },
+        { "label": "Rejected", "to": "end" }
+      ]
+    },
+    {
+      "number": 3,
       "title": "Calculate position size and risk allocation",
+      "executor": "person",
       "owner": "Risk Manager",
       "tools": ["tool-trade-journal"],
-      "duration": "5 minutes"
+      "duration": "5 minutes",
+      "frequency": 30
     }
   ],
   "frequency": "per trade signal",
@@ -302,6 +352,12 @@ Pick one or combine several:
 - Best for: Collaborative editing, visual dashboards, live updates
 - Stores data locally in your browser
 - Export as JSON when done
+- **It does not author process steps.** A process created in the builder starts
+  with an empty `steps` list and there is no step editor; steps in a blueprint
+  you import are carried through untouched but cannot be edited there, and
+  `static/blueprint-dashboard.html` does not display them at all. Write steps
+  and branches in JSON, in the Excel `Steps` sheet, or draw them in
+  `static/flow-canvas.html`, which imports a blueprint directly.
 
 #### Option D: Markdown + YAML
 - Human-readable, version-control friendly
