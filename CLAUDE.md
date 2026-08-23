@@ -553,19 +553,45 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** Merged operating system (d087261). Synced with remote.
+**Main Branch:** `6102b9d` — the merge of #97 (process-mapping standard, blueprint
+branch grammar, converter Steps sheet). Last updated 2026-08-23.
 
-**Active Development (3 drafts in flight):**
-- **#87: Cross-Instrument Backtest Lab** (started 2026-08-22) — Test all three strategies head-to-head on same data. Detects correlation risk, diversification gaps. *In progress.*
-- **#78: Desk Agent + Risk Model** (started 2026-08-20) — Position limit manager, exposure tracking across strategies, live alerts. *In progress.*
-- **#71: 15-Minute Reversal** (started 2026-08-19) — New strategy + comparison harness vs. ICT AM/OB. *Pending backtest lab.*
+**The bottleneck is review, not build.** Ten pull requests are open and every one
+of them is a draft. Nothing has merged since #97. Read that before starting
+anything new: an eleventh draft does not help, and two sessions have already
+built adjacent things without noticing each other.
+
+**Open drafts (10).** All are level with `main` and merge cleanly except #78,
+which was still being worked when this was written.
+
+| PR | What it is | Notes |
+| --- | --- | --- |
+| #71 | 15-Minute Reversal — pine source plus `tools/reversal_15m_sim.py`, an executable second reading of the same rules | oldest, opened 08-19 |
+| #78 | Desk agent and the risk model that sets its limits | **in flight** — another session was editing it; do not push here without checking |
+| #87 | Cross-instrument backtest lab (`tools/backtest_lab.py`) — one strategy over many instruments and two vendor feeds, with a noise floor | data-side |
+| #90 | `StrategyComparator` (`pwb_toolbox.backtesting.comparator`) — many strategies over one dataset, correlation and portfolio metrics | portfolio-side, **not** a duplicate of #87 |
+| #91 | Date windows, risk rules, and four gaps that were blocking each other | |
+| #92 | `docs/` examples checked against the real signatures | |
+| #96 | Planner: percent-driven exit ladder, presets, what-if price | |
+| #98 | Blueprint builder step editor, autosave, editable lists | |
+| #99 | One shared `static/process-grammar.js`, plus process flows on the dashboard | stacked on #98 — merge #98 first |
+| #100 | The night lab: unattended overnight stress testing on a local model | |
+
+**#87 and #90 are different jobs and both should land.** The lab asks whether one
+strategy's edge survives the data; the comparator asks whether several real edges
+belong in the same account. They came to look like one job because #90 filed its
+decision-log entry and its roadmap checkboxes under "(PR #87)". If you find
+yourself about to rebuild something, check the table above first.
 
 **Live/Backtesting Strategies:**
 - **ICT AM OB** (PR #77, #76, merged) — Session timezones, history tracking, order cancellation. Live for testing.
 - **ICT OB+FVG** (PR #75, merged) — Priced entries, session management, mintick conversion. Backtest baseline.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
-**Velocity:** 1 PR merged/day (7 in last 8 days). 3 PRs in parallel development (new mode).
+**Keeping this honest:** this block is machine-read, so a stale copy actively
+misleads. Update it when a PR opens, merges or closes — not on a schedule. The
+count in the heading is the first thing to check against `gh pr list` or the
+GitHub tools; when it disagrees with reality, believe GitHub and fix this.
 
 ## Tech Stack & Dependencies
 
