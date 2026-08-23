@@ -1008,3 +1008,41 @@ def test_an_empty_desk_and_no_sim_still_queues_nothing(tmp_path):
     )
     rc = cmd_plan(PlanArgs(dir=str(tmp_path / "lab"), ledger=str(empty_desk)))
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# The bare-`plan` convention: the "good night" agent must not silently drop
+# the sim record the owner armed earlier
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_plan_picks_up_the_sim_file_by_its_conventional_name(tmp_path):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "sim_trades.json").write_text(json.dumps(sim_record(6)))
+    empty_desk = tmp_path / "desk.json"
+    empty_desk.write_text(
+        json.dumps({"pot": 1000, "trades": [], "reviews": [], "refills": []})
+    )
+    rc = cmd_plan(PlanArgs(dir=str(lab), ledger=str(empty_desk)))  # no --sim
+    assert rc == 0
+    kinds = [j["kind"] for j in read_queue(lab / "queue.jsonl")]
+    assert kinds.count("shock") == 3
+    assert kinds.count("leaks") == 1
+
+
+def test_an_explicit_sim_overrides_the_conventional_file(tmp_path):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "sim_trades.json").write_text(json.dumps(sim_record(6, lane="sim-old")))
+    other = tmp_path / "fresh.json"
+    other.write_text(json.dumps(sim_record(4, lane="sim-fresh")))
+    empty_desk = tmp_path / "desk.json"
+    empty_desk.write_text(
+        json.dumps({"pot": 1000, "trades": [], "reviews": [], "refills": []})
+    )
+    cmd_plan(PlanArgs(dir=str(lab), ledger=str(empty_desk), sim=[str(other)]))
+    from tools.night_lab import RECORD_NAME as _RN
+
+    lanes = {t["lane"] for t in load_sim_trades(lab / _RN)}
+    assert lanes == {"sim-fresh"}

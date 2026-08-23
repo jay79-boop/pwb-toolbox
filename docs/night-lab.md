@@ -95,7 +95,10 @@ paper money is the whole point of the paper-first gate.
 
 `reversal_15m_sim.py --trades-out trades.json` exports its closed trades in
 the lab's shape, and `night_lab.py plan --sim trades.json` merges them into
-the night's record (repeat `--sim` for several files). Sim trades join the
+the night's record (repeat `--sim` for several files). Writing the export to
+`night_lab/sim_trades.json` makes it the standing record: a bare `plan` —
+which is what the "good night" agent runs — picks that file up by name, so
+the sim trades survive re-planning without anyone remembering a flag. Sim trades join the
 closed record only: they can be shocked, resampled and mined, but they carry
 no thesis, so they are never red-teamed. They arrive tagged `lane: sim-15m`,
 which keeps leak-mining honest about what is a sim result and what is a real
