@@ -414,3 +414,92 @@ def test_the_cli_writes_the_export_end_to_end(tmp_path):
     exported = json.loads(out.read_text())
     assert len(exported["trades"]) == 1
     assert exported["trades"][0]["symbol"] == "ES=F"
+
+
+# ---------------------------------------------------------------------------
+# The SMA starvation the first live fetch hit: a 59-day 15m window can never
+# warm up an SMA(60) of daily closes, so the filter silently skipped every
+# session. The fix feeds the SMA from a daily-closes file.
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta
+
+from tools.reversal_15m_sim import daily_path_for, sma_from_daily_csv
+
+
+def weekdays_back_from(day, n):
+    """The n weekdays before `day`, oldest first."""
+    out, d = [], day
+    while len(out) < n:
+        d = d - timedelta(days=1)
+        if d.weekday() < 5:
+            out.append(d)
+    return list(reversed(out))
+
+
+def write_daily_csv(path, day, n, close=90.0):
+    rows = ["timestamp,close"]
+    for d in weekdays_back_from(day, n):
+        rows.append(f"{d.isoformat()},{close}")
+    path.write_text("\n".join(rows) + "\n")
+
+
+def bars_csv_for(path, day_bars):
+    rows = ["timestamp,open,high,low,close"]
+    for bar in day_bars:
+        rows.append(
+            f"{bar.ts.strftime('%Y-%m-%dT%H:%M:%S')},"
+            f"{bar.open},{bar.high},{bar.low},{bar.close}"
+        )
+    path.write_text("\n".join(rows) + "\n")
+
+
+def test_a_short_window_starves_the_sma_and_the_cli_says_so(tmp_path, capsys):
+    # The live symptom: bars only, SMA on, zero trades — but now with a
+    # diagnostic instead of a silent zero.
+    csv_path = tmp_path / "bars.csv"
+    bars_csv_for(csv_path, winning_long_day())
+    rc = main([str(csv_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "sma warming up" in out
+    assert "--daily" in out and "--no-sma" in out
+
+
+def test_sixty_daily_closes_warm_the_filter_up(tmp_path):
+    closes = tmp_path / "daily.csv"
+    write_daily_csv(closes, MONDAY, 60, close=90.0)
+    sma = sma_from_daily_csv(str(closes), 60, [MONDAY])
+    assert sma[MONDAY] == pytest.approx(90.0)
+
+
+def test_fifty_nine_closes_do_not(tmp_path):
+    closes = tmp_path / "daily.csv"
+    write_daily_csv(closes, MONDAY, 59)
+    assert MONDAY not in sma_from_daily_csv(str(closes), 60, [MONDAY])
+
+
+def test_the_daily_file_is_picked_up_by_its_sibling_name(tmp_path, capsys):
+    # SMA at 90, day trades near 94-100: the long is above trend and commits.
+    csv_path = tmp_path / "es15.csv"
+    bars_csv_for(csv_path, winning_long_day())
+    write_daily_csv(tmp_path / "es15.daily.csv", MONDAY, 60, close=90.0)
+    out_json = tmp_path / "trades.json"
+    rc = main([str(csv_path), "--trades-out", str(out_json)])
+    assert rc == 0
+    assert "sma warming up" not in capsys.readouterr().out
+    assert len(json.loads(out_json.read_text())["trades"]) == 1
+
+
+def test_a_trend_above_the_day_still_filters_the_long_out(tmp_path):
+    # Same day, SMA parked at 150: the long failure swing is against trend.
+    csv_path = tmp_path / "es15.csv"
+    bars_csv_for(csv_path, winning_long_day())
+    write_daily_csv(tmp_path / "es15.daily.csv", MONDAY, 60, close=150.0)
+    out_json = tmp_path / "trades.json"
+    main([str(csv_path), "--trades-out", str(out_json)])
+    assert json.loads(out_json.read_text())["trades"] == []
+
+
+def test_daily_path_sits_beside_the_bars():
+    assert daily_path_for("night_lab/es15.csv").endswith("es15.daily.csv")
