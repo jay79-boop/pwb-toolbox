@@ -362,10 +362,12 @@ Pick one or combine several:
   branch and go-to target follows the step it pointed at. A checks panel
   reports what is still unfinished without stopping you saving it, and each
   process row carries the count.
-- **The dashboard still does not show steps.** `static/blueprint-dashboard.html`
-  renders departments, tools and roadmap only. To *see* a process, draw it in
-  `static/flow-canvas.html`, which imports a blueprint directly and lays the
-  branches out.
+- **The dashboard shows the flows too.** `static/blueprint-dashboard.html` has
+  a Process Flows section: every process with steps gets a laid-out diagram of
+  its branches, its steps spelled out underneath with destinations named, and
+  its monthly person-time figure. A branch pointing at a step that is not
+  there says so rather than reading as fine. `static/flow-canvas.html` remains
+  the place to *draw* one — it imports a blueprint directly.
 
 #### Option D: Markdown + YAML
 - Human-readable, version-control friendly

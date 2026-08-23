@@ -173,13 +173,25 @@ A worked example, for this repo's 21st MCP key:
   Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
-- `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
-  redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
-  status/owner coloring, layered auto-layout, undo, and Paper/Slate themes.
-  Opens from `file://`, saves to localStorage, exports JSON. Import accepts
-  its own exports, `engagement.py export-flow` files, and business blueprints
+- `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
+  puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
+  go-to steps, status/owner coloring, layered auto-layout, undo, and
+  Paper/Slate themes, plus a monthly person-time figure and a checks panel
+  holding the map to the standard. Opens from `file://` and loads
+  `process-grammar.js` from the same directory — no build step, but it is no
+  longer one file. Saves to localStorage, exports JSON. Import accepts its own
+  exports, `engagement.py export-flow` files, and business blueprints
   (`docs/blueprint-schema.json`). Design spec in
   `docs/specs/2026-08-22-flow-canvas-design.md`
+- `static/process-grammar.js` — the branch grammar in one place: the checks
+  (unlabelled branches, branches pointing nowhere, forks with one way out,
+  long loop-backs that should be go-to steps, unpriced person steps), the
+  duration parser, the layering, the load rollup, and the renumber-and-repoint
+  logic. `flow-canvas`, `blueprint-builder` and `blueprint-dashboard` all load
+  it rather than keeping a copy, and `tests/test_process_grammar.py` holds it
+  against `check_process` in `tools/blueprint_converter.py` case for case, so
+  a browser tool cannot call a map finished that the validator then rejects.
+  The rules themselves are in the `process-mapping` skill
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -270,6 +282,7 @@ python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning 
 python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
+node static/process-grammar.test.js  # branch grammar (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
