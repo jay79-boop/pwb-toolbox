@@ -86,6 +86,38 @@ is paying or charging, and the velocity panel is the exit tell: when the
 The owner's only jobs: say yes/no/resize, place it, and report fills. The
 agent logs, watches, and nags when a level hits.
 
+## Exits — the standing protocol
+
+Every plan states its exit flags, not just a target. The structure makes
+being wrong cheap in both directions, so no exit ever depends on calling a
+top or knowing whether a dip is real:
+
+- **Scale-out**: sell half at +100% on the premium (cost basis off the
+  table); once +50%, the stop on the remainder moves to breakeven premium.
+  A green short-dated trade is never allowed to turn red.
+- **Flag 1 — velocity flattening** (most trusted; it fires before the
+  chart): two consecutive equal steps of the move paying *less* premium
+  while the underlying still advances → the juice is spent; exit or scale.
+  The lab's velocity panel is this flag as a picture.
+- **Flag 2 — delta saturation**: position delta ≥ ~0.80 → stock exposure at
+  option rent. Exit, or roll up: sell the fat contract, re-buy a 30–40Δ
+  strike higher with part of the proceeds, bank the difference.
+- **Flag 3 — IV bleed**: premium fading while the underlying holds → the
+  options market is pricing the move as done. Believe it early.
+- **Flag 4 — the chart**: stall at the ±1×expected-move rung, fresh highs on
+  shrinking volume, or failure to hold the breakout level/VWAP on retest.
+- **Flag 5 — the clock re-arms**: a stalled position pays rent at the
+  *current* hour's rate; recompute the shot clock at every stall.
+
+**Shakeout vs. reversal** is never predicted, only handled: exit on the
+break (or the earlier velocity flag), and treat a fast **reclaim** of the
+swept level as a fresh, valid re-entry — a sweep-and-reclaim is the ICT
+liquidity-run pattern, not a stop-out to mourn. **Acceptance** below the
+level (closes below, failed retest from underneath, expanding volume,
+persistently rising IV) is a real turn: stay out. Stops on the underlying
+sit beyond the obvious liquidity pool, sized smaller for the wider
+distance, so the sweep runs through everyone else's stops first.
+
 ## The two triggers
 
 **On demand — "trade spicy".** The session runs the crypto scanner and a

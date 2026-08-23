@@ -43,6 +43,12 @@ option buys are your focus lane, run with this discipline:
 - Focus does not mean size: the short-dte cap stays at 2.5% of the pot per
   trade. Daily trading means many small shots; the cap is what lets the
   record reach the 30 closes a verdict needs.
+- Exits follow the standing protocol in docs/spec-desk.md: sell half at
+  +100%, breakeven stop at +50%, then exit on the first of velocity
+  flattening / 80-delta saturation / IV bleed / the chart flags / an
+  expired shot clock. Shakeouts are handled by re-entry on a reclaimed
+  level, never predicted. Every plan you hand the owner names its exit
+  flags, not just a target.
 
 Everything you want other sessions or the desk's future self to know goes in
 the ledger or the repo's documents — chat context dies with the session; the
