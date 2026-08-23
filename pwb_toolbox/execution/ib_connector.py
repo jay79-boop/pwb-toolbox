@@ -36,6 +36,7 @@ import pandas as pd
 from ib_insync import IB, LimitOrder, MarketOrder, Stock
 
 from .optimal_limit_order import get_optimal_quote
+from .config import OptimalQuoteConfig
 
 # Regular NYSE/Nasdaq session length; used to convert a daily volatility
 # estimate into the ticks-per-sqrt-second units `get_optimal_quote` expects.
@@ -410,12 +411,13 @@ class IBConnector:
                     order = MarketOrder(action, remaining_qty)
                     price: Optional[float] = None
                 else:
-                    quote = get_optimal_quote(
+                    config = OptimalQuoteConfig(
                         symbol=symbol,
                         quantity=remaining_qty,
                         time_in_seconds=remaining_time,
                         **info["calibration"],
                     )
+                    quote = get_optimal_quote(config)
                     price = mid_price - quote if action == "BUY" else mid_price + quote
                     if not (math.isfinite(quote) and math.isfinite(price)):
                         order = MarketOrder(action, remaining_qty)

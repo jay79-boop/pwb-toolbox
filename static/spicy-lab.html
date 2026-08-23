@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spicy Lab</title>
+<!--
+  The speculative desk's visual instrument: how premium moves when the
+  underlying moves, minute by minute, and which greek did it.
+
+  Opens from file:// with no server and no build step. Loads option-lab.js
+  from the same directory (the tested math module — never duplicate its
+  formulas here). The optional quote helper (`python tools/spicy_lab.py
+  serve`) lights up the Refresh button when it is running; without it the
+  current-price box is type-in, which works everywhere.
+
+  Colors: gain #0d9488 / loss #ef4444 — validated CVD-safe pair (deltaE 12
+  protan); every colored number also carries its sign, so color is never
+  the only encoding.
+-->
+<style>
+  :root {
+    --bg: #f7f6f3; --card: #ffffff; --ink: #1f2937; --muted: #6b7280;
+    --line: #e5e7eb; --gain: #0d9488; --loss: #ef4444; --accent: #0f766e;
+    --chip: #eef2f1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif; padding: 16px;
+  }
+  h1 { font-size: 19px; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); }
+  .grid { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end; }
+  label { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 2px; }
+  input[type=number], input[type=text], select {
+    width: 108px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; background: #fff; color: var(--ink);
+  }
+  .chips button, .toggle button {
+    border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+    border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; margin-right: 4px;
+  }
+  .toggle button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .strip { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tile {
+    flex: 1 1 150px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; min-width: 150px;
+  }
+  .tile .k { font-size: 11.5px; color: var(--muted); }
+  .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .tile .n { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 5px 8px; text-align: right; font-variant-numeric: tabular-nums;
+    border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  th:first-child, td:first-child { text-align: left; }
+  td.gain { color: var(--gain); font-weight: 600; }
+  td.loss { color: var(--loss); font-weight: 600; }
+  tr.zero td { background: #fafaf7; }
+  .sliders { display: flex; flex-wrap: wrap; gap: 8px 26px; margin-bottom: 12px; }
+  .sliders > div { min-width: 220px; }
+  input[type=range] { width: 220px; accent-color: var(--accent); }
+  .sval { font-weight: 600; }
+  .bars { max-width: 640px; }
+  .barrow { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .barrow .lbl { width: 70px; font-size: 12.5px; color: var(--muted); text-align: right; }
+  .barrow .num { width: 92px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+  .track { flex: 1; height: 16px; position: relative; }
+  .track .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line); }
+  .track .fill { position: absolute; top: 2px; bottom: 2px; border-radius: 4px; }
+  .fill.gain { background: var(--gain); } .fill.loss { background: var(--loss); }
+  .total-row { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
+  .verdict { margin-top: 10px; font-size: 13px; color: var(--ink);
+    background: var(--chip); border-radius: 8px; padding: 8px 12px; }
+  .scroll { overflow-x: auto; }
+  .dim { color: var(--muted); font-size: 12px; }
+  #refreshBtn[disabled] { opacity: .45; cursor: not-allowed; }
+  .num-ink { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body data-palette="#0d9488,#ef4444">
+
+<h1>Spicy Lab</h1>
+<div class="sub">Premium mechanics for short-dated option buys — what a move pays,
+what sitting costs, and which greek did it. Paper-desk instrument; the ledger is
+<span class="num-ink">tools/spec_desk.py</span>.</div>
+
+<div class="card">
+  <h2>The contract</h2>
+  <div class="grid">
+    <div><label>Symbol</label><input type="text" id="sym" value="SPY"></div>
+    <div><label>Type</label>
+      <select id="kind"><option value="call">Call</option><option value="put">Put</option></select></div>
+    <div><label>Spot at entry</label><input type="number" id="spot" value="640" step="0.01"></div>
+    <div><label>Strike</label><input type="number" id="strike" value="640" step="0.5"></div>
+    <div><label>Days to expiry</label><input type="number" id="days" value="1.27" step="0.01" min="0.01"></div>
+    <div><label>IV %</label><input type="number" id="iv" value="16" step="0.5" min="1"></div>
+    <div><label>Entry premium ($, blank = model)</label><input type="number" id="prem" step="0.01" placeholder="model"></div>
+    <div><label>Contracts</label><input type="number" id="qty" value="1" step="1" min="1"></div>
+    <div><label>Decay budget %</label><input type="number" id="budget" value="10" step="1" min="1" max="90"></div>
+  </div>
+  <div class="chips" style="margin-top:10px">
+    <span class="dim">Quick DTE:&nbsp;</span>
+    <button data-days="0.27">0DTE @open</button>
+    <button data-days="0.15">0DTE @noon</button>
+    <button data-days="1.27">1DTE</button>
+    <button data-days="2.27">2DTE</button>
+    <button data-days="5">5DTE (weekly)</button>
+    <button data-days="30">30DTE</button>
+  </div>
+  <div class="grid" style="margin-top:10px">
+    <div><label>Current price (type, paste, or Refresh)</label>
+      <input type="number" id="cur" step="0.01"></div>
+    <div><button id="refreshBtn" class="toggle-btn" disabled
+      title="Start the helper:  python tools/spicy_lab.py serve">Refresh quote</button>
+      <span class="dim" id="helperState">helper: checking…</span></div>
+    <div><button id="useCur">Use current price in scenario</button></div>
+  </div>
+</div>
+
+<div class="strip" id="strip"></div>
+
+<div class="card">
+  <h2>Move ladder — what each move pays, and what the same move pays later</h2>
+  <div style="margin-bottom:8px" class="toggle" id="rungToggle">
+    <button data-mode="em" class="on">Rungs × expected move</button>
+    <button data-mode="pct">Fixed %</button>
+  </div>
+  <div class="scroll"><table id="ladder"></table></div>
+  <div class="dim" style="margin-top:6px">Cells: position P&amp;L (and % of premium).
+  Rows below the entry row are moves against you. The columns marching right are
+  the same move arriving later — the price of waiting, in dollars.</div>
+</div>
+
+<div class="card">
+  <h2>Scenario — what just happened (or what if)</h2>
+  <div class="sliders">
+    <div><label>Underlying move: <span class="sval" id="mvV">+0.50%</span></label>
+      <input type="range" id="mv" min="-3" max="3" step="0.05" value="0.5"></div>
+    <div><label>Minutes elapsed: <span class="sval" id="mnV">30</span></label>
+      <input type="range" id="mn" min="0" max="390" step="5" value="30"></div>
+    <div><label>IV change (pts): <span class="sval" id="dvV">0.0</span></label>
+      <input type="range" id="dv" min="-10" max="10" step="0.5" value="0"></div>
+  </div>
+  <div class="bars" id="attr"></div>
+  <div class="verdict" id="attrVerdict"></div>
+</div>
+
+<div class="card">
+  <h2>Premium velocity — how fast the move injects premium, 15 minutes at a time</h2>
+  <div class="bars" id="velo"></div>
+  <div class="verdict" id="veloVerdict"></div>
+  <div class="dim" style="margin-top:6px">The scenario's move, walked in equal
+  15-minute steps. Early slices are delta; as the strike comes into reach gamma
+  compounds each slice; when slices stop growing, the easy premium is in — that
+  flattening is the exit tell, not the top.</div>
+</div>
+
+<script src="option-lab.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const RATE = 0.045;
+const fmt$ = v => (v < 0 ? "−$" : "+$") + Math.abs(v).toFixed(2);
+const fmtP = v => (v < 0 ? "−" : "+") + Math.abs(v).toFixed(1) + "%";
+
+function readPos() {
+  const spot = +$("spot").value, strike = +$("strike").value;
+  const days = Math.max(+$("days").value, 0.01);
+  const vol = Math.max(+$("iv").value, 0.5) / 100;
+  const kind = $("kind").value, contracts = Math.max(1, +$("qty").value | 0);
+  const g = OptionLab.blackScholes(spot, strike, days, vol, RATE, kind);
+  const premium = $("prem").value ? +$("prem").value : (g ? g.price : 0);
+  return { spot, strike, days, vol, rate: RATE, kind, contracts, multiplier: 100, premium, g };
+}
+
+/* Trading hours left: 6.5 per whole day plus the partial day's clock hours,
+   capped at a session. An approximation, and an honest one. */
+function tradingHoursLeft(days) {
+  const whole = Math.floor(days), part = days - whole;
+  return whole * 6.5 + Math.min(part * 24, 6.5);
+}
+function shotClock(hours, budget) { return hours * (1 - Math.pow(1 - budget, 2)); }
+
+/* ------------------------------------------------------------ strip */
+function renderStrip(p) {
+  const hours = tradingHoursLeft(p.days);
+  const budget = Math.min(Math.max(+$("budget").value / 100, 0.01), 0.9);
+  const clock = shotClock(hours, budget);
+  const hurdle = OptionLab.expectedMove(p.spot, p.vol, 1 / 6.5);
+  const emDay = OptionLab.expectedMove(p.spot, p.vol, Math.min(p.days, 1));
+  const cost = p.premium * p.contracts * 100;
+  $("strip").innerHTML = [
+    tile("Shot clock", clock < 1 ? Math.round(clock * 60) + " min" : clock.toFixed(1) + " h",
+      "flat time before decay eats " + Math.round(budget * 100) + "% of premium"),
+    tile("Hourly hurdle", "$" + hurdle.toFixed(2),
+      "the underlying owes you this much per hour"),
+    tile("Expected move", "±$" + emDay.toFixed(2),
+      "1σ over " + (p.days < 1 ? "remaining life" : "one day")),
+    tile("Position cost", "$" + cost.toFixed(0),
+      p.contracts + " × $" + p.premium.toFixed(2) + " × 100 = max loss"),
+  ].join("");
+}
+function tile(k, v, n) {
+  return '<div class="tile"><div class="k">' + k + '</div><div class="v">' + v +
+    '</div><div class="n">' + n + "</div></div>";
+}
+
+/* ----------------------------------------------------------- ladder */
+let rungMode = "em";
+function renderLadder(p) {
+  const emLife = OptionLab.expectedMove(p.spot, p.vol, Math.min(p.days, 1));
+  const emPct = emLife / p.spot * 100;
+  const rungs = rungMode === "em"
+    ? [2, 1.5, 1, 0.5, 0.25, 0, -0.25, -0.5, -1, -1.5, -2].map(k => ({
+        label: (k === 0 ? "entry" : (k > 0 ? "+" : "−") + Math.abs(k) + "×EM"),
+        pct: k * emPct }))
+    : [3, 2, 1, 0.5, 0.25, 0, -0.25, -0.5, -1, -2, -3].map(k => ({
+        label: k === 0 ? "entry" : fmtP(k), pct: k }));
+  const mins = [0, 15, 30, 60, 120];
+  const head = "<tr><th>rung</th><th>level</th>" +
+    mins.map(m => "<th>" + (m ? "+" + m + "m" : "now") + "</th>").join("") +
+    "<th>Δ now</th></tr>";
+  const cost = p.premium * p.contracts * 100;
+  const rows = rungs.map(r => {
+    const level = p.spot * (1 + r.pct / 100);
+    const cells = mins.map(m => {
+      const d = p.days - m / 1440;
+      const g = d > 0 ? OptionLab.blackScholes(level, p.strike, d, p.vol, RATE, p.kind) : null;
+      const prem = g ? g.price
+        : Math.max(0, p.kind === "put" ? p.strike - level : level - p.strike);
+      const pnl = (prem - p.premium) * p.contracts * 100;
+      const cls = pnl > 0.005 ? "gain" : pnl < -0.005 ? "loss" : "";
+      const pct = cost > 0 ? pnl / cost * 100 : 0;
+      return '<td class="' + cls + '" title="premium $' + prem.toFixed(2) + '">' +
+        fmt$(pnl) + '<div class="dim">' + fmtP(pct) + "</div></td>";
+    }).join("");
+    const gNow = OptionLab.blackScholes(level, p.strike, p.days, p.vol, RATE, p.kind);
+    return '<tr class="' + (r.pct === 0 ? "zero" : "") + '"><td>' + r.label +
+      "</td><td>" + level.toFixed(2) + "</td>" + cells +
+      "<td>" + (gNow ? gNow.delta.toFixed(2) : "—") + "</td></tr>";
+  }).join("");
+  $("ladder").innerHTML = head + rows;
+}
+
+/* ------------------------------------------------------ attribution */
+function renderAttr(p) {
+  const sc = { movePct: +$("mv").value, minutes: +$("mn").value, ivChange: +$("dv").value };
+  $("mvV").textContent = fmtP(sc.movePct);
+  $("mnV").textContent = sc.minutes;
+  $("dvV").textContent = (sc.ivChange >= 0 ? "+" : "−") + Math.abs(sc.ivChange).toFixed(1);
+  const a = OptionLab.attribution(p, sc);
+  if (!a) { $("attr").innerHTML = ""; return; }
+  const parts = [
+    ["delta", a.delta, "the move itself"],
+    ["gamma", a.gamma, "the move compounding"],
+    ["theta", a.theta, "the minutes you held"],
+    ["vega", a.vega, "the IV change"],
+    ["resid.", a.residual, "beyond the greek story"],
+  ];
+  const span = Math.max(1, ...parts.map(x => Math.abs(x[1])), Math.abs(a.total));
+  $("attr").innerHTML = parts.map(x => barrow(x[0], x[1], span, x[2])).join("") +
+    '<div class="total-row">' + barrow("TOTAL", a.total, span,
+      "premium " + a.startPremium.toFixed(2) + " → " + a.endPremium.toFixed(2)) + "</div>";
+  const drivers = parts.slice(0, 4).filter(x => Math.abs(x[1]) > Math.abs(a.total) * 0.15 + 0.01);
+  $("attrVerdict").textContent = a.total >= 0
+    ? "This scenario nets " + fmt$(a.total) + ". Paid by " +
+      (drivers.filter(d => d[1] > 0).map(d => d[0]).join(" + ") || "nothing") +
+      "; rent charged by " + (drivers.filter(d => d[1] < 0).map(d => d[0]).join(" + ") || "nothing") + "."
+    : "This scenario costs " + fmt$(a.total) + " — " +
+      (drivers.filter(d => d[1] < 0).map(d => d[0]).join(" + ") || "decay") +
+      " outran " + (drivers.filter(d => d[1] > 0).map(d => d[0]).join(" + ") || "the move") + ".";
+}
+function barrow(lbl, v, span, note) {
+  const w = Math.min(Math.abs(v) / span * 50, 50);
+  const side = v >= 0 ? "left:50%" : "left:" + (50 - w) + "%";
+  return '<div class="barrow" title="' + note + '"><div class="lbl">' + lbl +
+    '</div><div class="track"><div class="mid"></div><div class="fill ' +
+    (v >= 0 ? "gain" : "loss") + '" style="' + side + ";width:" + w +
+    '%"></div></div><div class="num">' + fmt$(v) + "</div></div>";
+}
+
+/* --------------------------------------------------------- velocity */
+function renderVelo(p) {
+  const movePct = +$("mv").value, minutes = +$("mn").value, ivChange = +$("dv").value;
+  const slices = Math.max(1, Math.round(minutes / 15));
+  const rows = [];
+  let prev = p.premium;
+  for (let i = 1; i <= slices; i++) {
+    const frac = i / slices;
+    const level = p.spot * (1 + movePct / 100 * frac);
+    const d = p.days - (minutes * frac) / 1440;
+    const vol = p.vol + (ivChange / 100) * frac;
+    const g = d > 0 && vol > 0 ? OptionLab.blackScholes(level, p.strike, d, vol, RATE, p.kind) : null;
+    const prem = g ? g.price
+      : Math.max(0, p.kind === "put" ? p.strike - level : level - p.strike);
+    rows.push({ label: i * 15 + "m", captured: (prem - prev) * p.contracts * 100 });
+    prev = prem;
+  }
+  const span = Math.max(1, ...rows.map(r => Math.abs(r.captured)));
+  $("velo").innerHTML = rows.map(r => barrow(r.label, r.captured, span,
+    "premium captured in this 15-minute slice")).join("");
+  let verdict = "Dial a move and minutes above to see the slices.";
+  if (rows.length >= 2) {
+    const last = rows[rows.length - 1].captured, first = rows[0].captured;
+    verdict = last > first * 1.15
+      ? "Slices are growing — gamma is compounding the move. Let it work; move the stop."
+      : last < first * 0.85
+        ? "Slices are shrinking — the easy premium is in. This is the exit window the plan wrote down."
+        : "Slices are steady — delta is doing the paying and theta is metering it. Fine while the move continues.";
+  }
+  $("veloVerdict").textContent = verdict;
+}
+
+/* ------------------------------------------------- helper detection */
+const HELPER = "http://127.0.0.1:8877";
+function pingHelper() {
+  fetch(HELPER + "/ping", { signal: AbortSignal.timeout(1200) })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(() => { $("refreshBtn").disabled = false; $("helperState").textContent = "helper: connected"; })
+    .catch(() => { $("refreshBtn").disabled = true;
+      $("helperState").textContent = "helper: off (type prices, or run: python tools/spicy_lab.py serve)"; });
+}
+$("refreshBtn").addEventListener("click", () => {
+  fetch(HELPER + "/quote?symbol=" + encodeURIComponent($("sym").value.trim()),
+    { signal: AbortSignal.timeout(4000) })
+    .then(r => r.json())
+    .then(q => { if (q.price) { $("cur").value = q.price.toFixed(2); } })
+    .catch(() => { $("helperState").textContent = "helper: quote failed — type it in"; });
+});
+$("useCur").addEventListener("click", () => {
+  const cur = +$("cur").value, spot = +$("spot").value;
+  if (cur > 0 && spot > 0) { $("mv").value = ((cur / spot - 1) * 100).toFixed(2); renderAll(); }
+});
+
+/* -------------------------------------------------------- wire-up */
+function renderAll() {
+  const p = readPos();
+  renderStrip(p); renderLadder(p); renderAttr(p); renderVelo(p);
+  try { localStorage.setItem("spicy-lab",
+    JSON.stringify(Object.fromEntries(
+      ["sym","kind","spot","strike","days","iv","prem","qty","budget","cur"]
+        .map(id => [id, $(id).value])))); } catch (e) {}
+}
+["sym","kind","spot","strike","days","iv","prem","qty","budget","cur","mv","mn","dv"]
+  .forEach(id => $(id).addEventListener("input", renderAll));
+document.querySelectorAll(".chips button").forEach(b =>
+  b.addEventListener("click", () => { $("days").value = b.dataset.days; renderAll(); }));
+document.querySelectorAll("#rungToggle button").forEach(b =>
+  b.addEventListener("click", () => {
+    rungMode = b.dataset.mode;
+    document.querySelectorAll("#rungToggle button").forEach(x =>
+      x.classList.toggle("on", x === b));
+    renderAll();
+  }));
+try {
+  const saved = JSON.parse(localStorage.getItem("spicy-lab") || "null");
+  if (saved) Object.entries(saved).forEach(([id, v]) => { if ($(id) && v !== "") $(id).value = v; });
+} catch (e) {}
+renderAll();
+pingHelper();
+</script>
+</body>
+</html>

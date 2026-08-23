@@ -13,6 +13,7 @@ treating them as atoms costs nothing and simplifies every later stage.
 """
 
 import re
+from typing import Optional, Sequence
 
 from .nodes import (
     Assign,
@@ -164,18 +165,18 @@ class PineSyntaxError(SyntaxError):
 class Token:
     __slots__ = ("kind", "value", "line")
 
-    def __init__(self, kind, value, line):
+    def __init__(self, kind: str, value: Optional[object], line: int) -> None:
         self.kind = kind
         self.value = value
         self.line = line
 
-    def __repr__(self):  # pragma: no cover - debugging aid
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Token({self.kind!r}, {self.value!r}, line={self.line})"
 
 
 def _strip_comment(line: str) -> str:
     """Drop a trailing ``//`` comment, ignoring ``//`` inside string literals."""
-    quote = None
+    quote: Optional[str] = None
     i = 0
     while i < len(line):
         ch = line[i]
@@ -193,7 +194,7 @@ def _strip_comment(line: str) -> str:
     return line
 
 
-def _ends_dangling(tokens, start) -> bool:
+def _ends_dangling(tokens: Sequence[Token], start: int) -> bool:
     """True when the tokens lexed for one line cannot be a complete statement."""
     if len(tokens) <= start:
         return False
@@ -217,15 +218,15 @@ def _continues_previous(line: str, previous: str) -> bool:
     return True
 
 
-def tokenize(source: str) -> list:
+def tokenize(source: str) -> list[Token]:
     """Turn Pine source into tokens, with INDENT/DEDENT for block structure."""
-    tokens = []
-    indents = [0]
-    depth = 0  # bracket nesting; newlines inside brackets are insignificant
+    tokens: list[Token] = []
+    indents: list[int] = [0]
+    depth: int = 0  # bracket nesting; newlines inside brackets are insignificant
 
     # Comments and blank lines are dropped first, so a continuation still finds
     # its previous line across them.
-    lines = [
+    lines: list[tuple[int, str]] = [
         (n, stripped)
         for n, stripped in (
             (n, _strip_comment(raw)) for n, raw in enumerate(source.splitlines(), 1)
@@ -235,9 +236,9 @@ def tokenize(source: str) -> list:
 
     # A source of nothing but comments and blanks leaves the loop below
     # unentered, and the trailing DEDENT/EOF still need a line to point at.
-    lineno = len(source.splitlines()) or 1
+    lineno: int = len(source.splitlines()) or 1
 
-    continuing = False  # the previous line left an expression unfinished
+    continuing: bool = False  # the previous line left an expression unfinished
     for index, (lineno, line) in enumerate(lines):
         previous = lines[index - 1][1] if index else ""
         starts_continuation = _continues_previous(line, previous)
@@ -337,31 +338,31 @@ def tokenize(source: str) -> list:
 
 
 class Parser:
-    def __init__(self, tokens, lines):
-        self.tokens = tokens
-        self.lines = lines
-        self.pos = 0
+    def __init__(self, tokens: list[Token], lines: list[str]) -> None:
+        self.tokens: list[Token] = tokens
+        self.lines: list[str] = lines
+        self.pos: int = 0
         #: Names introduced by `type X` blocks, which then act as type words.
-        self.user_types = set()
+        self.user_types: set[str] = set()
         #: Pine name -> FuncDef, filled as declarations are parsed.
-        self.functions = {}
+        self.functions: dict[str, FuncDef] = {}
 
     # --- token helpers -------------------------------------------------------
 
     @property
-    def current(self):
+    def current(self) -> Token:
         return self.tokens[self.pos]
 
-    def at(self, kind, value=None) -> bool:
+    def at(self, kind: str, value: Optional[object] = None) -> bool:
         token = self.current
         return token.kind == kind and (value is None or token.value == value)
 
-    def advance(self):
+    def advance(self) -> Token:
         token = self.tokens[self.pos]
         self.pos += 1
         return token
 
-    def expect(self, kind, value=None):
+    def expect(self, kind: str, value: Optional[object] = None) -> Token:
         if not self.at(kind, value):
             token = self.current
             wanted = value or kind
@@ -370,16 +371,16 @@ class Parser:
             )
         return self.advance()
 
-    def skip_newlines(self):
+    def skip_newlines(self) -> None:
         while self.at("NEWLINE"):
             self.advance()
 
     # --- statements ----------------------------------------------------------
 
-    def parse_program(self, version):
-        body = []
-        declaration = None
-        declaration_call = None
+    def parse_program(self, version: Optional[int]) -> Program:
+        body: list = []
+        declaration: Optional[tuple[str, str]] = None
+        declaration_call: Optional[Call] = None
         self.skip_newlines()
         while not self.at("EOF"):
             statement = self.parse_statement()
@@ -411,16 +412,16 @@ class Parser:
             declaration_call=declaration_call,
         )
 
-    def _skip_block(self, kind, start_line):
+    def _skip_block(self, kind: str, start_line: int) -> Unsupported:
         """Consume a construct plus any indented body, returning it verbatim."""
         while not self.at("NEWLINE") and not self.at("EOF"):
             self.advance()
-        end_line = self.current.line
+        end_line: int = self.current.line
         if self.at("NEWLINE"):
             self.advance()
         if self.at("INDENT"):
             self.advance()
-            level = 1
+            level: int = 1
             while level and not self.at("EOF"):
                 if self.at("INDENT"):
                     level += 1
@@ -428,7 +429,7 @@ class Parser:
                     level -= 1
                 end_line = max(end_line, self.current.line)
                 self.advance()
-        text = "\n".join(self.lines[start_line - 1 : end_line]).strip()
+        text: str = "\n".join(self.lines[start_line - 1 : end_line]).strip()
         return Unsupported(kind=kind, text=text)
 
     def _at_function_declaration(self) -> bool:
@@ -458,7 +459,9 @@ class Parser:
             index += 1
         return False
 
-    def parse_statement(self, value_position=False):
+    def parse_statement(
+        self, value_position: bool = False
+    ) -> Optional[Assign | ExprStmt | FuncDef | If | TupleAssign | Unsupported]:
         token = self.current
 
         if token.kind == "NAME" and token.value in _BLOCK_KEYWORDS:
@@ -514,7 +517,7 @@ class Parser:
             self.expect("NEWLINE")
             return ExprStmt(value)
 
-        qualifier = ""
+        qualifier: str = ""
         if token.kind == "NAME" and token.value in ("var", "varip"):
             nxt = self.tokens[self.pos + 1]
             if nxt.kind == "NAME":
@@ -552,7 +555,7 @@ class Parser:
         self.expect("NEWLINE")
         return ExprStmt(value)
 
-    def parse_function(self, start_line):
+    def parse_function(self, start_line: int) -> FuncDef:
         """Parse ``name(a, b) =>`` and the body that follows it.
 
         The body may be an expression on the same line or an indented block;
@@ -561,7 +564,7 @@ class Parser:
         """
         name = self.expect("NAME").value
         self.expect("OP", "(")
-        params = []
+        params: list[Param] = []
         while not self.at("OP", ")"):
             params.append(self.parse_param())
             if self.at("OP", ","):
@@ -576,7 +579,7 @@ class Parser:
             self.expect("NEWLINE")
         return FuncDef(name=name, params=tuple(params), body=body)
 
-    def parse_param(self):
+    def parse_param(self) -> Param:
         """One parameter, with its type words dropped and its default kept.
 
         Pine writes these as `x`, `float x`, `series float x`, or
@@ -597,13 +600,13 @@ class Parser:
                 break  # a parameter named after a type, as in `f(color) =>`
             self.advance()
         name = self.expect("NAME").value
-        default = None
+        default: Optional[object] = None
         if self.at("OP", "="):
             self.advance()
             default = self.parse_expression()
         return Param(name=name, default=default)
 
-    def parse_switch(self):
+    def parse_switch(self) -> Ternary | Na:
         """Parse ``switch [subject]`` and its indented ``pattern => value`` block.
 
         Pine's switch is an expression, and it is exactly a chain of
@@ -612,17 +615,21 @@ class Parser:
         already a condition.
         """
         self.advance()  # `switch`
-        subject = None if self.at("NEWLINE") else self.parse_expression()
+        subject: Optional[object] = (
+            None if self.at("NEWLINE") else self.parse_expression()
+        )
         self.expect("NEWLINE")
         self.expect("INDENT")
 
-        cases = []
+        cases: list[tuple[Optional[object], object]] = []
         while not self.at("DEDENT") and not self.at("EOF"):
             self.skip_newlines()
             if self.at("DEDENT") or self.at("EOF"):
                 break
             # A case with no pattern before the arrow is the default.
-            pattern = None if self.at("OP", "=>") else self.parse_expression()
+            pattern: Optional[object] = (
+                None if self.at("OP", "=>") else self.parse_expression()
+            )
             self.expect("OP", "=>")
             cases.append((pattern, self.parse_expression()))
             self.skip_newlines()
@@ -630,7 +637,7 @@ class Parser:
             self.advance()
 
         # Pine yields `na` when nothing matches and no default was written.
-        result = Na()
+        result: Ternary | Na = Na()
         remaining = cases
         if cases and cases[-1][0] is None:
             result = cases[-1][1]
@@ -651,11 +658,11 @@ class Parser:
         name, after = self.tokens[self.pos + 1], self.tokens[self.pos + 2]
         return name.kind == "NAME" and after.kind == "NEWLINE"
 
-    def _is_call_at(self, index) -> bool:
+    def _is_call_at(self, index: int) -> bool:
         token = self.tokens[index] if index < len(self.tokens) else None
         return token is not None and token.kind == "OP" and token.value == "("
 
-    def _empty_brackets_at(self, index) -> bool:
+    def _empty_brackets_at(self, index: int) -> bool:
         """True for the `[]` in `float[] xs`, and never for `close[1]`.
 
         Emptiness is the whole discriminator: an array type carries nothing
@@ -671,7 +678,7 @@ class Parser:
             and closing.value == "]"
         )
 
-    def _generic_end(self, index):
+    def _generic_end(self, index: int) -> Optional[int]:
         """End of an ``array<float>``-style generic starting at ``index``.
 
         Returns None when the ``<`` is a comparison rather than a type
@@ -680,8 +687,8 @@ class Parser:
         """
         if self.tokens[index].kind != "OP" or self.tokens[index].value != "<":
             return None
-        depth = 0
-        i = index
+        depth: int = 0
+        i: int = index
         while i < len(self.tokens):
             token = self.tokens[i]
             if token.kind in ("NEWLINE", "EOF"):
@@ -700,14 +707,14 @@ class Parser:
             i += 1
         return None
 
-    def _skip_declared_type(self):
+    def _skip_declared_type(self) -> None:
         """Consume a type annotation such as the ``float`` in ``float x = na``.
 
         Only a run of type words followed by ``name =`` counts, so the cast
         ``float(x)`` and a variable that happens to be called ``color`` are
         both left alone.
         """
-        end = self.pos
+        end: int = self.pos
         while self.tokens[end].kind == "NAME" and (
             self.tokens[end].value in _TYPE_WORDS
             or self.tokens[end].value in self.user_types
@@ -737,7 +744,8 @@ class Parser:
 
     def _at_tuple_assign(self) -> bool:
         """True when the `[` here opens a target list rather than a tuple value."""
-        index, depth = self.pos, 0
+        index: int = self.pos
+        depth: int = 0
         while index < len(self.tokens):
             token = self.tokens[index]
             if token.kind in ("NEWLINE", "EOF"):
@@ -753,9 +761,9 @@ class Parser:
             index += 1
         return False
 
-    def parse_tuple_assign(self):
+    def parse_tuple_assign(self) -> TupleAssign:
         self.expect("OP", "[")
-        targets = []
+        targets: list[str] = []
         while not self.at("OP", "]"):
             targets.append(self.expect("NAME").value)
             if self.at("OP", ","):
@@ -766,7 +774,7 @@ class Parser:
         self.expect("NEWLINE")
         return TupleAssign(targets=targets, value=value)
 
-    def parse_block(self, value_position=False):
+    def parse_block(self, value_position: bool = False) -> list:
         """Parse an indented block.
 
         ``value_position`` marks a block whose statements stand for a value --
@@ -776,7 +784,7 @@ class Parser:
         """
         self.expect("NEWLINE")
         self.expect("INDENT")
-        body = []
+        body: list = []
         while not self.at("DEDENT") and not self.at("EOF"):
             self.skip_newlines()
             if self.at("DEDENT") or self.at("EOF"):
@@ -788,7 +796,7 @@ class Parser:
             self.advance()
         return body
 
-    def parse_if_expression(self):
+    def parse_if_expression(self) -> Ternary:
         """Parse an ``if`` used for its value rather than for its effect.
 
         Pine allows the same keyword in both roles. Read for its value it is a
@@ -800,7 +808,7 @@ class Parser:
         then = self._branch_value(self.parse_block())
 
         # No `else` at all: Pine yields `na` when the condition is false.
-        other = Na()
+        other: object = Na()
         self.skip_newlines()
         if self.at("NAME", "else"):
             self.advance()
@@ -810,7 +818,7 @@ class Parser:
                 other = self._branch_value(self.parse_block())
         return Ternary(cond, then, other)
 
-    def _branch_value(self, body):
+    def _branch_value(self, body: list) -> object:
         """The single expression a value-carrying branch yields."""
         if len(body) == 1 and isinstance(body[0], ExprStmt):
             return body[0].value
@@ -819,11 +827,11 @@ class Parser:
             "one carries a block, which a conditional expression cannot hold"
         )
 
-    def parse_if(self):
+    def parse_if(self) -> If:
         self.expect("NAME", "if")
         cond = self.parse_expression()
         body = self.parse_block()
-        orelse = []
+        orelse: list = []
         self.skip_newlines()
         if self.at("NAME", "else"):
             self.advance()
@@ -835,10 +843,10 @@ class Parser:
 
     # --- expressions ---------------------------------------------------------
 
-    def parse_expression(self):
+    def parse_expression(self) -> object:
         return self.parse_ternary()
 
-    def parse_ternary(self):
+    def parse_ternary(self) -> object:
         cond = self.parse_or()
         if self.at("OP", "?"):
             self.advance()
@@ -848,55 +856,55 @@ class Parser:
             return Ternary(cond=cond, then=then, other=other)
         return cond
 
-    def parse_or(self):
-        node = self.parse_and()
+    def parse_or(self) -> object:
+        node: object = self.parse_and()
         while self.at("NAME", "or"):
             self.advance()
             node = Binary("or", node, self.parse_and())
         return node
 
-    def parse_and(self):
-        node = self.parse_not()
+    def parse_and(self) -> object:
+        node: object = self.parse_not()
         while self.at("NAME", "and"):
             self.advance()
             node = Binary("and", node, self.parse_not())
         return node
 
-    def parse_not(self):
+    def parse_not(self) -> object:
         if self.at("NAME", "not"):
             self.advance()
             return Unary("not", self.parse_not())
         return self.parse_comparison()
 
-    def parse_comparison(self):
-        node = self.parse_additive()
+    def parse_comparison(self) -> object:
+        node: object = self.parse_additive()
         while self.current.kind == "OP" and self.current.value in _COMPARISONS:
             op = self.advance().value
             node = Binary(op, node, self.parse_additive())
         return node
 
-    def parse_additive(self):
-        node = self.parse_multiplicative()
+    def parse_additive(self) -> object:
+        node: object = self.parse_multiplicative()
         while self.current.kind == "OP" and self.current.value in ("+", "-"):
             op = self.advance().value
             node = Binary(op, node, self.parse_multiplicative())
         return node
 
-    def parse_multiplicative(self):
-        node = self.parse_unary()
+    def parse_multiplicative(self) -> object:
+        node: object = self.parse_unary()
         while self.current.kind == "OP" and self.current.value in ("*", "/", "%"):
             op = self.advance().value
             node = Binary(op, node, self.parse_unary())
         return node
 
-    def parse_unary(self):
+    def parse_unary(self) -> object:
         if self.current.kind == "OP" and self.current.value in ("-", "+"):
             op = self.advance().value
             return Unary(op, self.parse_unary())
         return self.parse_postfix()
 
-    def parse_postfix(self):
-        node = self.parse_primary()
+    def parse_postfix(self) -> object:
+        node: object = self.parse_primary()
         while True:
             if self.at("OP", "["):
                 self.advance()
@@ -906,7 +914,7 @@ class Parser:
             else:
                 return node
 
-    def parse_primary(self):
+    def parse_primary(self) -> object:
         token = self.current
 
         if token.kind == "NUMBER":
@@ -924,7 +932,7 @@ class Parser:
             # A list in expression position, not a history index -- indexing is
             # postfix and never reaches here.
             self.advance()
-            items = []
+            items: list[object] = []
             while not self.at("OP", "]"):
                 items.append(self.parse_expression())
                 if self.at("OP", ","):
@@ -954,9 +962,10 @@ class Parser:
 
         raise PineSyntaxError(f"unexpected {token.value!r} on line {token.line}")
 
-    def parse_call(self, func):
+    def parse_call(self, func: str) -> Call:
         self.expect("OP", "(")
-        args, kwargs = [], []
+        args: list[object] = []
+        kwargs: list[tuple[str, object]] = []
         while not self.at("OP", ")"):
             if (
                 self.at("NAME")
@@ -992,6 +1001,6 @@ def _declaration_title(call: Call) -> str:
 def parse(source: str) -> Program:
     """Parse Pine source into a :class:`Program`."""
     version_match = _VERSION_RE.search(source)
-    version = int(version_match.group(1)) if version_match else None
-    tokens = tokenize(source)
+    version: Optional[int] = int(version_match.group(1)) if version_match else None
+    tokens: list[Token] = tokenize(source)
     return Parser(tokens, source.splitlines()).parse_program(version)

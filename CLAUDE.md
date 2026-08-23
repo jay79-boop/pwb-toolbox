@@ -142,6 +142,40 @@ A worked example, for this repo's 21st MCP key:
   two vendors of the same instrument — the check that decides whether a
   single-instrument result meant anything
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
+- `tools/kronos_lab.py` — measures the Kronos K-line foundation model
+  (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
+  hit rate with exact p-value, information coefficient, error vs persistence)
+  plus a forecast-chart mode. Model runs happen on the user's machine — the
+  cloud proxy blocks Hugging Face — but the scoring core is pure math and
+  tested with fake predictors (`tests/test_kronos_lab.py`)
+- `tools/crypto_scan.py` — the "trade crypto" command: ranks liquid crypto
+  pairs by the signals with published evidence behind them (1–4 week momentum,
+  MA trend, volume surge; ATR% for sizing only) and flags the BTC regime every
+  alt trade swims in. A screener feeding the pre-trade pack and paper journal,
+  not a trader. Scoring is pure math tested on synthetic bars
+  (`tests/test_crypto_scan.py`); signal choices are sourced in
+  `docs/trading-wisdom.md`
+- `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
+  the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
+  sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
+  spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
+  pot is spent until `review` runs, scores every close in R-multiples, and
+  `check` alerts when an open trade's stop or target level trades. Protocol
+  in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
+  fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
+  `excel` writes the move ladder workbook for one contract (rungs × time
+  columns, greeks, shot clock, hurdle) through `pwb_toolbox.options`; `serve`
+  is the loopback-only stdlib quote helper (port 8877, CORS for file://) that
+  lights up the lab page's Refresh button. Ladder math and quote handling are
+  pure and tested (`tests/test_spicy_lab.py`)
+- `static/spicy-lab.html` — the speculative desk's visual instrument: enter
+  one contract, see the shot clock and hourly hurdle, a move ladder (rungs ×
+  expected-move or fixed %, columns marching through time), greek attribution
+  bars for any move/minutes/IV scenario, and premium-velocity slices with an
+  exit-tell verdict. Opens from `file://`, loads `option-lab.js` from the same
+  directory (never duplicates its math), saves inputs to localStorage.
+  Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
@@ -162,7 +196,16 @@ A worked example, for this repo's 21st MCP key:
   contracts through the Python module and requires node to agree to 1e-9, so the
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
-  tested against closed forms in `static/option-lab.test.js`
+  tested against closed forms in `static/option-lab.test.js`. Also home to
+  `attribution` — splits a repriced premium change into delta/gamma/theta/vega
+  dollars with the unexplained part reported as residual — which the spicy lab
+  leans on
+- `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
+  machine-enforceable risk rules with their originating traders/papers, the
+  retail base-rate studies that justify paper-first, the evidence review
+  behind `crypto_scan`'s signals, iron condor venue/construction facts, and
+  the propose-then-approve learning loop. Trading sessions and the desk agent
+  consult it; it grows by proposal, never by silent edit
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below) and
@@ -550,3 +593,189 @@ that `.env` alone does not reach `.mcp.json`, which reads the process environmen
 Locally that means exporting the key; on the web it means setting it in the cloud
 environment's variables. Both routes, and the network and visibility caveats that
 come with the web one, are under "Design tooling (UI/UX)" above.
+
+---
+
+# Operating System (Live State + Decisions + Roadmap)
+
+This section is **machine-read by Claude and the live dashboard**. Changes here drive both the dashboard display and Claude's understanding of project state.
+
+## Current State
+
+**Main Branch:** Merged operating system (d087261). Synced with remote.
+
+**Active Development (3 drafts in flight):**
+- **#87: Cross-Instrument Backtest Lab** (started 2026-08-22) — Test all three strategies head-to-head on same data. Detects correlation risk, diversification gaps. *In progress.*
+- **#78: Desk Agent + Risk Model** (started 2026-08-20) — Position limit manager, exposure tracking across strategies, live alerts. *In progress.*
+- **#71: 15-Minute Reversal** (started 2026-08-19) — New strategy + comparison harness vs. ICT AM/OB. *Pending backtest lab.*
+
+**Live/Backtesting Strategies:**
+- **ICT AM OB** (PR #77, #76, merged) — Session timezones, history tracking, order cancellation. Live for testing.
+- **ICT OB+FVG** (PR #75, merged) — Priced entries, session management, mintick conversion. Backtest baseline.
+- **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
+
+**Velocity:** 1 PR merged/day (7 in last 8 days). 3 PRs in parallel development (new mode).
+
+## Tech Stack & Dependencies
+
+| Component | Version | Status | Renewal/Update | Cost |
+|-----------|---------|--------|-----------------|------|
+| **Python** | 3.12 (local), 3.11 (CI) | Current | — | Free |
+| **Backtrader** | 1.9.78.123 | Legacy (2019, stable) | No active updates | Free |
+| **Interactive Brokers** | ib_insync | Current | Live subscription | ~$10/mo |
+| **Hugging Face** | `datasets` | Current | API-based | Free tier / Paid |
+| **pandas** | 3.0.5 | Current | Monthly updates | Free |
+| **black** | Pinned (requirements) | Current | Jan yearly updates | Free |
+| **pytest** | Current | Current | Regular updates | Free |
+| **21st.dev MCP** | HTTP server | Current | Per-request quota | ~$0.01/req |
+
+**Critical Path Dependencies:**
+- Backtrader: strategy compilation + execution (single point of failure, no replacement)
+- pandas: data munging + analysis
+- Interactive Brokers: live execution + account data
+
+## Decision Log
+
+### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
+**Decision:** Add a second, deliberately speculative track beside the core
+program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent
+protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped
+at 2.5%), momentum stocks, defined-risk credit spreads. Fixed pot as a slice
+of the paper account; per-trade max loss 10% of pot; 4 positions max; spent
+pot locks the desk until `review` runs; refill only after review. Owner
+executes every order (options in thinkorswim paperMoney — TradingView has no
+options; stocks/crypto in TradingView paper); agent plans, logs, watches
+(`check` alerts on stop/target), and reviews. Two triggers: "trade spicy" on
+demand, plus a Windows-scheduled morning scan.
+**Why:** The owner wants high-risk/high-reward speculation *and* steady safe
+core growth. The wall is the design: the spec pot can die without touching
+core statistics, and its scored record (R-multiples per lane) is the desk's
+real product — after 30 trades a lane either proves expectancy or gets a
+pause proposal. Self-learning follows the wisdom-doc contract: the agent
+drafts changes from the record; the owner approves.
+
+### [2026-08-22] Paper-first trading program: wisdom base + crypto scanner + condor mock run
+**Decision:** Start a paper-first trading program with hard gates to live
+money. Three pieces shipped together: `docs/trading-wisdom.md` (ten sourced,
+machine-enforceable risk rules and the evidence base), `tools/crypto_scan.py`
+(the "trade crypto" screener over evidence-backed momentum signals), and a
+weekly SPX/XSP iron condor mock run starting Monday (paper only, collecting
+expected-move-vs-realized data).
+**Why:** The owner wants to trade actively without breaking the bank. The
+published base rates (97% of persistent Brazilian day traders lost money;
+~1.6% of Taiwanese day traders predictably profitable) say unstructured
+retail trading fails by default; the documented practices of successful
+traders converge on small constant risk, positive expectancy proven before
+sizing up, and mechanically enforced limits.
+**Gates to live:** a strategy trades real money only after positive
+expectancy over ≥30 paper trades (rule 9 in the wisdom doc), and then under
+the desk agent's caps (PR #78). "Self-learning" = the propose-then-approve
+loop in the wisdom doc: the system drafts its own rule changes from journal
+evidence; the owner approves every change.
+**Also decided:** Kronos fine-tuning parked — not until the backtest lab
+(#87) is merged and the paper program is producing data; any future
+fine-tuned model must pass `kronos_lab` eval before use.
+
+### [2026-08-22] Kronos foundation model: measured, no zero-shot edge (PR #93)
+**Decision:** Before integrating the Kronos K-line foundation model
+(shiyu-coder/Kronos) anywhere, measure it with `tools/kronos_lab.py`. Result on
+Kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all
+post-training-cutoff 2026 data: BTC-USD 46.7% direction hit rate (p=0.70),
+ES=F 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse
+than persistence on both.
+**Why:** Three candidate uses were on the table — a fourth signal for the
+backtest lab, a confirmation filter on ICT entries, a discretionary forecast
+chart. All three require measurable directional skill; none was found.
+**Outcome:** Kronos stays out of the backtest lab, the desk agent, and live
+decisions. The forecast-chart mode exists but must not inform trades. The lab
+tool stays merged as the standing instrument for any future revisit (a
+fine-tuned variant, a newer model release) — re-run the eval before believing
+any of them.
+
+### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
+**Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
+**Why:** Can't compare strategies in a vacuum. Need to see: Do they hedge each other? Do they amplify losses? What's the portfolio win rate vs. individual strategy win rates?
+**What it measures:** Win rate, Sharpe ratio, max drawdown, correlation, portfolio cumulative return, monthly breakdown.
+**Target:** Identify if 15-Min Reversal adds value to ICT AM/OB, or if they're too correlated.
+
+### [2026-08-22] Desk Agent + Risk Model (PR #78)
+**Decision:** Build an agent that enforces position limits, exposure caps, and live risk alerts across all three strategies.
+**Why:** Live execution will have real consequences. Can't trade three correlated strategies if position sizes aren't coordinated. Need automatic stops and alerts.
+**What it does:** Reads live positions from IB, calculates portfolio Greeks, enforces per-strategy position caps, enforces max portfolio exposure, alerts on margin usage >80%.
+**Dependency:** Needs backtest lab results to set appropriate position sizing rules.
+
+### [2026-08-22] Blueprint as Operating System
+**Decision:** Turn CLAUDE.md into a machine-readable operating system that drives both the dashboard and Claude's decision context.
+**Why:** Scattered info (Git, GitHub, spreadsheets, chat) → single source of truth. Allows Claude to make better decisions without asking for status updates.
+**Outcome:** Merged into main. Syncs to live dashboard via GitHub MCP.
+
+### [2026-08-20] Live Work Dashboard
+**Decision:** Build GitHub-connected dashboard instead of static blueprint.
+**Why:** Previous blueprint went stale; live data self-updates.
+**Status:** Live. Auto-refreshes every 3 minutes.
+
+### [2026-08-15] Converter Test Coverage
+**Decision:** Test `pwb_toolbox.converting` by compiling generated Backtrader code + running on synthetic bars, not just parsing.
+**Why:** A converter that parses but doesn't execute is a failure waiting to happen.
+**Outcome:** Tests in `tests/test_converting.py` end-to-end section now validate execution.
+
+### [2026-08-10] ICT AM/OB Strategy Refactor
+**Decision:** Hoist computed security reads instead of subscripting floats in `next()`.
+**Why:** Cleaner data flow, reduces session state bugs.
+**Outcome:** Merged PR #76. Reduced float handling surface area.
+
+### [2026-08-01] T-Bill Ladder Offline-First Design
+**Decision:** Accept `--rate` overrides instead of calling Treasury when live data blocked.
+**Why:** Cloud containers can't reach home.treasury.gov; need to work offline.
+**Outcome:** Merged PR #68. Math still validates without live data.
+
+## Roadmap
+
+**Now (This week — parallel tracks):**
+
+*Backtest Lab (PR #87):*
+- [ ] Implement `StrategyComparator` — runs all three strategies on identical price data
+- [ ] Add correlation matrix calculation (Pearson + rolling)
+- [ ] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
+- [ ] Test on 90-day ICT price history
+- [ ] Success: See if 15-Min Reversal adds value or just adds noise
+
+*Desk Agent (PR #78):*
+- [ ] Implement risk model: Greeks calculator, margin tracker, exposure aggregator
+- [ ] Define position size rules (per-strategy caps, portfolio exposure cap)
+- [ ] Add live IB position feed + alerts on >80% margin usage
+- [ ] Add position limit enforcement (reject trades that violate caps)
+- [ ] Success: Can trade all three strategies without blowing up
+
+*15-Minute Reversal (PR #71):*
+- [ ] Finish strategy logic (entry, exit, hold conditions)
+- [ ] Backtest on 6 months of data
+- [ ] Validate win rate, Sharpe, max drawdown vs. ICT strategies
+- [ ] Await backtest lab results before deciding if it's live-tradeable
+
+**Next (After "Now" merges — 2-3 days):**
+- [ ] Merge #87 (backtest lab) → use results to size positions in desk agent
+- [ ] Merge #78 (desk agent) → build live execution harness on top of it
+- [ ] Merge #71 (15-Min Reversal) → add to desk agent position tracking
+- [ ] Run full portfolio backtest: all three strategies with desk agent constraints
+
+**Later (Backlog):**
+- [ ] Live execution: connect desk agent to IB, enable live trading
+- [ ] Performance analytics: daily P&L dashboard, monthly statement generation
+- [ ] Trade journal automation: hook desk agent events to trade journal
+- [ ] Strategy upgrade: Backtrader 1.9.78 → investigate modern fork or Zipline
+- [ ] Risk monitoring: multi-day drawdown alerts, portfolio stress tests
+
+**Done (Reference):**
+- [x] ICT AM/OB Strategy (PR #77, #76) — live testing
+- [x] ICT OB+FVG Strategy (PR #75) — backtest baseline
+- [x] T-Bill Ladder Tool (PR #68) — live with planner watcher
+- [x] Operating System (PR #88) — CLAUDE.md as single source of truth
+
+## Why This Format
+
+Claude reads this section on every turn. It means:
+- **No status meetings:** "What's the current state?" is answered by reading this file.
+- **Better decisions:** Claude sees the roadmap, knows active strategies, understands past choices.
+- **Change tracking:** Every decision lives here with context and outcome.
+- **Dashboard sync:** The live dashboard pulls from this section to stay current.
