@@ -514,6 +514,134 @@ def xlsx_to_json(input_file: str, output_file: str) -> None:
     print(f"✅ Converted to JSON: {output_file}")
 
 
+# A wait, a terminator and a jump are all real parts of a map, and none of them
+# is work anybody sits through.
+WORK_KINDS = ("task", "decision")
+
+
+def check_process(proc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Findings for one process, as {code, severity, step, message}.
+
+    static/process-grammar.js is the same rules for the browser tools, and
+    tests/test_process_grammar.py holds the two together by code and step
+    number. Adding a rule here means adding it there.
+    """
+    findings: List[Dict[str, Any]] = []
+
+    def add(code: str, severity: str, step: Any, message: str) -> None:
+        findings.append(
+            {"code": code, "severity": severity, "step": step, "message": message}
+        )
+
+    steps = proc.get("steps", [])
+    numbers = [step.get("number") for step in steps]
+
+    seen: Dict[Any, int] = {}
+    for number in numbers:
+        seen[number] = seen.get(number, 0) + 1
+    for number in sorted(n for n, c in seen.items() if c > 1 and n is not None):
+        add(
+            "duplicate_step_number",
+            "error",
+            number,
+            f"has more than one step numbered {number}",
+        )
+
+    known = {n for n in numbers if n is not None}
+    unpriced = 0
+
+    for step in steps:
+        number = step.get("number")
+        kind = step.get("kind", "task")
+        executor = step.get("executor", "person")
+        branches = step.get("branches") or []
+
+        if kind not in STEP_KINDS:
+            add("unknown_kind", "error", number, f"has unknown kind '{kind}'")
+        if executor not in EXECUTORS:
+            add(
+                "unknown_executor",
+                "error",
+                number,
+                f"has unknown executor '{executor}'",
+            )
+
+        for branch in branches:
+            if not str(branch.get("label", "")).strip():
+                add("unlabelled_branch", "error", number, "has a branch with no label")
+            dest = branch.get("to")
+            if dest == "end":
+                continue
+            if dest not in known:
+                shown = "None" if dest is None else dest
+                add(
+                    "branch_target_missing",
+                    "error",
+                    number,
+                    f"branches to step {shown}, which does not exist",
+                )
+            elif (
+                isinstance(dest, int)
+                and isinstance(number, int)
+                and number - dest > LOOP_BACK_LIMIT
+            ):
+                add(
+                    "long_loop_back",
+                    "warning",
+                    number,
+                    f"loops back {number - dest} steps to {dest} — make that a go-to step",
+                )
+
+        if kind == "decision" and len(branches) < 2:
+            add(
+                "thin_fork",
+                "warning",
+                number,
+                "is a decision with fewer than two ways out",
+            )
+        if kind != "decision" and branches:
+            add(
+                "branches_on_non_decision",
+                "warning",
+                number,
+                "carries branches but is not a decision",
+            )
+
+        if kind == "goto":
+            target = step.get("goto")
+            if target is None:
+                add(
+                    "goto_no_destination",
+                    "error",
+                    number,
+                    "is a go-to step with no destination",
+                )
+            elif target not in known:
+                add(
+                    "goto_target_missing",
+                    "error",
+                    number,
+                    f"jumps to step {target}, which does not exist",
+                )
+
+        # a step with only one of the two numbers cannot be costed, and saying
+        # so beats leaving a hole in the total that nothing points at
+        if executor == "person" and kind in WORK_KINDS:
+            if not step.get("duration") or not step.get("frequency"):
+                unpriced += 1
+
+    if unpriced:
+        add(
+            "unpriced_person_steps",
+            "warning",
+            None,
+            f"{unpriced} person step{'' if unpriced == 1 else 's'} "
+            "without both a duration and a monthly frequency",
+        )
+
+    return findings
+
+
 def check_blueprint(blueprint: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     """Return (errors, warnings) for a blueprint. Pure: no printing, no exit."""
     errors: List[str] = []
@@ -550,82 +678,19 @@ def check_blueprint(blueprint: Dict[str, Any]) -> Tuple[List[str], List[str]]:
 
     # Steps and branches. A branch that points nowhere is the failure this
     # catches: it reads fine in a list and loses the flow on any map built
-    # from it. The rules are in .claude/skills/process-mapping/SKILL.md.
-    unpriced = 0
+    # from it.
     for proc in blueprint.get("processes", []):
         name = proc.get("name") or proc.get("id") or "?"
-        steps = proc.get("steps", [])
-        numbers = [step.get("number") for step in steps]
-
-        seen: Dict[Any, int] = {}
-        for number in numbers:
-            seen[number] = seen.get(number, 0) + 1
-        for number in sorted(n for n, c in seen.items() if c > 1 and n is not None):
-            errors.append(
-                f"❌ Process '{name}' has more than one step numbered {number}"
-            )
-
-        known = {n for n in numbers if n is not None}
-        for step in steps:
-            where = f"Process '{name}' step {step.get('number', '?')}"
-            kind = step.get("kind", "task")
-            executor = step.get("executor", "person")
-            branches = step.get("branches") or []
-
-            if kind not in STEP_KINDS:
-                errors.append(f"❌ {where} has unknown kind '{kind}'")
-            if executor not in EXECUTORS:
-                errors.append(f"❌ {where} has unknown executor '{executor}'")
-
-            for branch in branches:
-                if not str(branch.get("label", "")).strip():
-                    errors.append(f"❌ {where} has an unlabelled branch")
-                dest = branch.get("to")
-                if dest == "end":
-                    continue
-                if dest not in known:
-                    errors.append(
-                        f"❌ {where} branches to step {dest!r}, which does not exist"
-                    )
-                elif (
-                    isinstance(dest, int)
-                    and isinstance(step.get("number"), int)
-                    and step["number"] - dest > LOOP_BACK_LIMIT
-                ):
-                    warnings.append(
-                        f"⚠️  {where} loops back {step['number'] - dest} steps to "
-                        f"{dest} — make that a go-to step"
-                    )
-
-            if kind == "decision" and len(branches) < 2:
-                warnings.append(
-                    f"⚠️  {where} is a decision with fewer than two ways out"
-                )
-            if kind != "decision" and branches:
-                warnings.append(f"⚠️  {where} carries branches but is not a decision")
-
-            if kind == "goto":
-                target = step.get("goto")
-                if target is None:
-                    errors.append(f"❌ {where} is a go-to step with no destination")
-                elif target not in known:
-                    errors.append(
-                        f"❌ {where} jumps to step {target!r}, which does not exist"
-                    )
-
-            if (
-                executor == "person"
-                and step.get("duration")
-                and not step.get("frequency")
-            ):
-                unpriced += 1
-
-    if unpriced:
-        warnings.append(
-            f"⚠️  {unpriced} person step{'' if unpriced == 1 else 's'} "
-            f"ha{'s' if unpriced == 1 else 've'} a duration but no monthly frequency — "
-            "duration alone does not cost a process"
-        )
+        for finding in check_process(proc):
+            if finding["step"] is None:
+                where = f"Process '{name}'"
+            else:
+                where = f"Process '{name}' step {finding['step']}"
+            line = f"{where} {finding['message']}"
+            if finding["severity"] == "error":
+                errors.append(f"❌ {line}")
+            else:
+                warnings.append(f"⚠️  {line}")
 
     return errors, warnings
 

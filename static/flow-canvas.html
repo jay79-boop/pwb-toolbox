@@ -136,7 +136,9 @@
   .load span { font-size:10.5px; color:var(--muted); }
   .checks { font-size:11.5px; line-height:1.45; }
   .checks div { display:flex; gap:7px; padding:3px 0; color:var(--muted); }
-  .checks div b { color:var(--danger); font-variant-numeric:tabular-nums; flex:none; }
+  .checks div b { flex:none; font-variant-numeric:tabular-nums; }
+  .checks .err b { color:var(--danger); }
+  .checks .warn b { color:var(--st-working); }
   .checks .ok { color:var(--st-live); }
 </style>
 </head>
@@ -169,8 +171,10 @@
   <input type="file" id="fileIn" accept=".json,application/json" style="display:none">
 </div>
 
+<script src="process-grammar.js"></script>
 <script>
 "use strict";
+var PG = window.ProcessGrammar;
 var STORE_KEY = "flow-canvas-v1";
 var STATUSES = ["draft", "working", "testing", "live"];
 var STATUS_LABEL = { draft:"Draft", working:"Working", testing:"Testing", live:"Live" };
@@ -178,9 +182,6 @@ var OWNERS = ["person", "ai", "auto"];
 var OWNER_LABEL = { person:"Person", ai:"AI agent", auto:"Automation" };
 var KINDS = ["step", "delay", "end", "goto"];
 var KIND_LABEL = { step:"Step", delay:"Wait", end:"End", goto:"Go to" };
-// A loop-back more than this many steps upstream should be a go-to step, not a
-// wire dragged back across the map. See .claude/skills/process-mapping/SKILL.md.
-var LOOP_BACK_LIMIT = 3;
 var NODE_W = 180, NODE_H = 66;
 
 var state = load() || seed();
@@ -247,119 +248,13 @@ function seed() {
 }
 
 // ---------- costing + checks ----------
-// Durations, in every shape a map actually carries them: "45m", "90",
-// "1h30m", "1.5h", "2d", and the prose a blueprint is written in — "30
-// minutes", "1 hour", "2-8 hours" (read as its midpoint), "instant". Anything
-// it cannot read returns null, which counts the step as unpriced rather than
-// quietly contributing zero. A day of work is 8 hours, not 24.
-var DUR_UNITS = {
-  m:1, min:1, mins:1, minute:1, minutes:1,
-  h:60, hr:60, hrs:60, hour:60, hours:60,
-  d:480, day:480, days:480
-};
-
-function parseDur(v) {
-  if (v === null || v === undefined) return null;
-  var t = String(v).trim().toLowerCase();
-  if (!t) return null;
-  if (t === "instant" || t === "immediate") return 0;
-  t = t.replace(/\s+to\s+/g, "-");
-  if (/^\d+(\.\d+)?$/.test(t)) return parseFloat(t);
-
-  var range = t.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*([a-z]+)$/);
-  if (range) {
-    var unit = DUR_UNITS[range[3]];
-    return unit === undefined ? null : ((parseFloat(range[1]) + parseFloat(range[2])) / 2) * unit;
-  }
-
-  var re = /(\d+(?:\.\d+)?)\s*([a-z]+)/g, m, total = 0, hit = false;
-  while ((m = re.exec(t))) {
-    var u = DUR_UNITS[m[2]];
-    if (u === undefined) return null;
-    hit = true;
-    total += parseFloat(m[1]) * u;
-  }
-  // whatever the numbers did not account for has to be punctuation, or this
-  // is prose we should not pretend to have understood
-  var rest = t.replace(/(\d+(?:\.\d+)?)\s*([a-z]+)/g, "").replace(/[\s,;.]+/g, "");
-  return hit && !rest ? total : null;
-}
-
+// The rules live in process-grammar.js, shared with the blueprint builder and
+// held against the Python validator by tests/test_process_grammar.py. The
+// canvas converts itself and asks.
+function graph() { return PG.fromCanvas(state); }
 function isGoto(n) { return n.kind === "goto"; }
 function isDelay(n) { return n.kind === "delay"; }
 function isEnd(n) { return n.kind === "end"; }
-// A wait, a terminator and a jump are all real parts of a map, and none of
-// them is work somebody sits through — so none of them is labour.
-function isWork(n) { return !isGoto(n) && !isDelay(n) && !isEnd(n); }
-
-// Person steps are the labour bill; automations run but nobody sits through
-// them. A step missing either number is unpriced, not free.
-function monthlyLoad() {
-  var minutes = 0, unpriced = 0;
-  state.nodes.forEach(function (n) {
-    if (!isWork(n) || n.owner !== "person") return;
-    var d = parseDur(n.dur), f = typeof n.freq === "number" ? n.freq : null;
-    if (d !== null && f) minutes += d * f;
-    else unpriced++;
-  });
-  return { minutes: minutes, unpriced: unpriced };
-}
-
-// Longest-path layer per node; shared by tidy() and the loop-back check.
-function ranks() {
-  var rank = {}, indeg = {};
-  state.nodes.forEach(function (n) { rank[n.id] = 0; indeg[n.id] = 0; });
-  state.edges.forEach(function (e2) { if (indeg[e2.to] !== undefined) indeg[e2.to]++; });
-  var queue = state.nodes.filter(function (n) { return indeg[n.id] === 0; }).map(function (n) { return n.id; });
-  if (!queue.length && state.nodes.length) queue = [state.nodes[0].id]; // cycle fallback
-  var seen = {}, guard = 0;
-  while (queue.length && guard++ < 10000) {
-    var id = queue.shift();
-    if (seen[id]) continue;
-    seen[id] = true;
-    state.edges.forEach(function (e2) {
-      if (e2.from === id && rank[e2.to] !== undefined) {
-        if (rank[e2.to] < rank[id] + 1) rank[e2.to] = rank[id] + 1;
-        if (!seen[e2.to]) queue.push(e2.to);
-      }
-    });
-  }
-  return rank;
-}
-
-function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
-
-// The map's own standard, checked against itself. Every line here is a rule
-// from the process-mapping skill, so the panel says what is unfinished
-// instead of the reader finding out later.
-function checks() {
-  var out = [];
-  var outEdges = {};
-  state.nodes.forEach(function (n) { outEdges[n.id] = []; });
-  state.edges.forEach(function (e2) { if (outEdges[e2.from]) outEdges[e2.from].push(e2); });
-
-  var unlabeled = 0, thin = 0, noTarget = 0, longBack = 0;
-  state.nodes.forEach(function (n) {
-    if (isGoto(n)) { if (!n.target || !nodeById(n.target)) noTarget++; return; }
-    if (!n.decision) return;
-    var outs = outEdges[n.id];
-    if (outs.length < 2) thin++;
-    outs.forEach(function (e2) { if (!String(e2.label || "").trim()) unlabeled++; });
-  });
-  var rank = ranks();
-  state.edges.forEach(function (e2) {
-    var a = rank[e2.from], b = rank[e2.to];
-    if (a !== undefined && b !== undefined && a - b > LOOP_BACK_LIMIT) longBack++;
-  });
-
-  var load = monthlyLoad();
-  if (load.unpriced) out.push([load.unpriced, plural(load.unpriced, "person step") + " with no duration and frequency"]);
-  if (unlabeled) out.push([unlabeled, plural(unlabeled, "branch") + " out of a decision with no label"]);
-  if (thin) out.push([thin, plural(thin, "decision step") + " with fewer than two ways out"]);
-  if (longBack) out.push([longBack, plural(longBack, "loop-back") + " over " + LOOP_BACK_LIMIT + " steps — make it a go-to step"]);
-  if (noTarget) out.push([noTarget, plural(noTarget, "go-to step") + " with no destination"]);
-  return out;
-}
 
 // A go-to card is named after where it goes, so its title is derived rather
 // than typed — otherwise renaming the target leaves the jump lying.
@@ -496,7 +391,7 @@ function drawNodes() {
 function drawLoad() {
   var box = document.getElementById("loadBox");
   if (!box) return;
-  var load = monthlyLoad();
+  var load = PG.monthlyLoad(graph());
   var v = load.minutes >= 60 ? (Math.round(load.minutes / 6) / 10) + " h" : Math.round(load.minutes) + " min";
   box.innerHTML = "<b></b><span></span>";
   box.querySelector("b").textContent = v;
@@ -507,7 +402,7 @@ function drawLoad() {
 function drawChecks() {
   var box = document.getElementById("checksBox");
   if (!box) return;
-  var list = checks();
+  var list = PG.checks(graph());
   box.innerHTML = "";
   if (!list.length) {
     var ok = document.createElement("div");
@@ -516,12 +411,13 @@ function drawChecks() {
     box.appendChild(ok);
     return;
   }
-  list.forEach(function (c) {
+  list.forEach(function (f) {
     var row = document.createElement("div");
+    row.className = f.severity === "error" ? "err" : "warn";
     var b = document.createElement("b");
-    b.textContent = c[0];
+    b.textContent = f.severity === "error" ? "\u2715" : "!";
     var sp = document.createElement("span");
-    sp.textContent = c[1];
+    sp.textContent = f.title ? f.title + " " + f.message : f.message;
     row.appendChild(b); row.appendChild(sp);
     box.appendChild(row);
   });
@@ -781,7 +677,7 @@ function addStep(x, y) {
 function tidy() {
   if (!state.nodes.length) return;
   snapshot();
-  var rank = ranks();
+  var rank = PG.ranks(graph());
   var cols = {};
   state.nodes.forEach(function (n) {
     var r = rank[n.id] || 0;

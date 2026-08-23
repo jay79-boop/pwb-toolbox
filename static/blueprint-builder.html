@@ -629,6 +629,16 @@
                     <label>Description</label>
                     <textarea id="deptDesc" placeholder="What does this department do?"></textarea>
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Processes it runs</label>
+                        <div class="tool-picker" id="deptProcPicker"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tools it uses</label>
+                        <div class="tool-picker" id="deptToolPicker"></div>
+                    </div>
+                </div>
                 <button id="deptSubmit" onclick="addDepartment()">Add Department</button>
                 <button id="deptCancel" class="secondary" style="display:none" onclick="cancelEdit('dept')">Cancel</button>
             </div>
@@ -672,6 +682,20 @@
                 <div class="form-group">
                     <label>Description</label>
                     <textarea id="procDesc" placeholder="What does this process do?"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>KPI — what is measured</label>
+                        <input type="text" id="procKpiMetric" placeholder="e.g., Execution slippage (avg)">
+                    </div>
+                    <div class="form-group">
+                        <label>Target</label>
+                        <input type="text" id="procKpiTarget" placeholder="e.g., &lt; 1 bp">
+                    </div>
+                    <div class="form-group">
+                        <label>Currently</label>
+                        <input type="text" id="procKpiCurrent" placeholder="e.g., 0.8 bp">
+                    </div>
                 </div>
                 <button id="procSubmit" onclick="addProcess()">Add Process</button>
                 <button id="procCancel" class="secondary" style="display:none" onclick="cancelEdit('proc')">Cancel</button>
@@ -816,6 +840,11 @@
                         </select>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label>Users</label>
+                    <input type="text" id="toolUsers" placeholder="e.g., Carol Zhang, Execution Operator">
+                    <div class="help-text">Comma separated. Who touches it, by name or by role.</div>
+                </div>
                 <button id="toolSubmit" onclick="addTool()">Add Tool</button>
                 <button id="toolCancel" class="secondary" style="display:none" onclick="cancelEdit('tool')">Cancel</button>
             </div>
@@ -942,7 +971,10 @@
         </div>
     </div>
 
+    <script src="process-grammar.js"></script>
     <script>
+        const PG = window.ProcessGrammar;
+
         let blueprint = {
             meta: { name: '', version: '1.0', owner: '', description: '', created: new Date().toISOString(), lastModified: new Date().toISOString() },
             departments: [],
@@ -1000,6 +1032,13 @@
             renderTools();
             renderChanges();
             renderRoadmap();
+            refreshDeptPickers();
+        }
+
+        // the pickers list whatever exists right now, so adding a process has
+        // to reach them or a department can never be pointed at it
+        function refreshDeptPickers() {
+            renderDeptPickers(readPicker('deptProcPicker'), readPicker('deptToolPicker'));
         }
 
         // ---------------------------------------------------------------
@@ -1019,8 +1058,10 @@
 
         const FORM_INPUTS = {
             dept:   ['deptName', 'deptOwner', 'deptDesc', 'deptMembers'],
-            proc:   ['procName', 'procOwner', 'procDesc', 'procFreq', 'procCategory'],
-            tool:   ['toolName', 'toolOwner', 'toolPurpose', 'toolCategory', 'toolCost', 'toolCrit', 'toolFreq'],
+            proc:   ['procName', 'procOwner', 'procDesc', 'procFreq', 'procCategory',
+                     'procKpiMetric', 'procKpiTarget', 'procKpiCurrent'],
+            tool:   ['toolName', 'toolOwner', 'toolPurpose', 'toolCategory', 'toolCost',
+                     'toolCrit', 'toolFreq', 'toolUsers'],
             change: ['chgTitle', 'chgDate', 'chgDesc', 'chgCategory', 'chgStatus'],
             road:   ['rmTitle', 'rmOwner', 'rmCategory', 'rmDesc', 'rmDate', 'rmPriority', 'rmStatus']
         };
@@ -1044,7 +1085,48 @@
                 if (el.tagName === 'SELECT') el.selectedIndex = 0;
                 else el.value = '';
             });
-            if (key === 'dept') document.getElementById('deptMembers').value = 1;
+            if (key === 'dept') {
+                document.getElementById('deptMembers').value = 1;
+                renderDeptPickers([], []);
+            }
+        }
+
+        // A department that owns nothing is the reason the dashboard's
+        // department cards came up empty: these two lists were never filled in.
+        function renderPicker(boxId, items, chosen) {
+            const box = document.getElementById(boxId);
+            if (!box) return;
+            box.innerHTML = '';
+            if (!items.length) {
+                const hint = document.createElement('span');
+                hint.className = 'help-text';
+                hint.textContent = 'Nothing to pick yet.';
+                box.appendChild(hint);
+                return;
+            }
+            items.forEach(item => {
+                const label = document.createElement('label');
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = item.id;
+                input.checked = (chosen || []).indexOf(item.id) > -1;
+                const span = document.createElement('span');
+                span.textContent = item.name || item.id;
+                label.appendChild(input);
+                label.appendChild(span);
+                box.appendChild(label);
+            });
+        }
+
+        function readPicker(boxId) {
+            return Array.prototype.filter
+                .call(document.querySelectorAll('#' + boxId + ' input'), c => c.checked)
+                .map(c => c.value);
+        }
+
+        function renderDeptPickers(processes, tools) {
+            renderPicker('deptProcPicker', blueprint.processes, processes);
+            renderPicker('deptToolPicker', blueprint.tools, tools);
         }
 
         function cancelEdit(key) {
@@ -1061,83 +1143,23 @@
         // ---------------------------------------------------------------
         // Step grammar
         // ---------------------------------------------------------------
-        // These mirror docs/blueprint-schema.json and the rules in
-        // .claude/skills/process-mapping/SKILL.md. check_blueprint() in
-        // tools/blueprint_converter.py runs the same checks over an exported
-        // file; keep the two in step.
-        const STEP_KINDS = ['task', 'decision', 'delay', 'end', 'goto'];
-        const KIND_LABEL = { task: 'Task', decision: 'Decision', delay: 'Wait', end: 'End', goto: 'Go to' };
-        const EXECUTOR_LABEL = { person: 'Person', automation: 'Automation', ai: 'AI agent' };
-        const LOOP_BACK_LIMIT = 3;
+        // The rules live in process-grammar.js, shared with the canvas and
+        // held against check_process() in tools/blueprint_converter.py by
+        // tests/test_process_grammar.py. Adding a rule means adding it there.
+        const STEP_KINDS = PG.STEP_KINDS;
+        const KIND_LABEL = PG.KIND_LABEL;
+        const EXECUTOR_LABEL = PG.EXECUTOR_LABEL;
 
         function stepChecks(proc) {
-            const steps = (proc && proc.steps) || [];
-            const known = {};
-            steps.forEach(st => { known[st.number] = true; });
-            const errors = [], warnings = [];
-            let unpriced = 0;
-
-            steps.forEach(st => {
-                const where = 'Step ' + st.number;
-                const kind = st.kind || 'task';
-                const branches = st.branches || [];
-
-                branches.forEach(br => {
-                    if (!String(br.label || '').trim()) {
-                        errors.push(where + ' has a branch with no label');
-                    }
-                    if (br.to === 'end') return;
-                    if (br.to === null || br.to === undefined || !known[br.to]) {
-                        errors.push(where + ' has a branch pointing at no step');
-                    } else if (st.number - br.to > LOOP_BACK_LIMIT) {
-                        warnings.push(where + ' loops back ' + (st.number - br.to) +
-                                      ' steps — make that a go-to step');
-                    }
-                });
-
-                if (kind === 'decision' && branches.length < 2) {
-                    warnings.push(where + ' is a decision with fewer than two ways out');
-                }
-                if (kind !== 'decision' && branches.length) {
-                    warnings.push(where + ' carries branches but is not a decision');
-                }
-                if (kind === 'goto') {
-                    if (st.goto === null || st.goto === undefined) {
-                        errors.push(where + ' is a go-to step with no destination');
-                    } else if (!known[st.goto]) {
-                        errors.push(where + ' jumps to a step that does not exist');
-                    }
-                }
-                if ((st.executor || 'person') === 'person' && st.duration && !st.frequency) {
-                    unpriced++;
-                }
-            });
-
-            if (unpriced) {
-                warnings.push(unpriced + ' person step' + (unpriced === 1 ? '' : 's') +
-                              ' with a duration but no monthly frequency');
-            }
-            return { errors: errors, warnings: warnings };
+            const findings = PG.checks(PG.fromProcess(proc || {}));
+            return {
+                errors: findings.filter(f => f.severity === "error"),
+                warnings: findings.filter(f => f.severity === "warning"),
+            };
         }
 
-        // Steps are numbered 1..n by position. After a delete or a move, every
-        // branch and go-to target is rewritten to follow the step it pointed
-        // at; targets whose step is gone are unset, and the checks panel says
-        // so rather than the file quietly pointing somewhere wrong.
         function renumberSteps(proc) {
-            const steps = proc.steps || [];
-            const map = {};
-            steps.forEach((st, i) => { map[st.number] = i + 1; });
-            steps.forEach((st, i) => { st.number = i + 1; });
-            steps.forEach(st => {
-                (st.branches || []).forEach(br => {
-                    if (br.to === 'end') return;
-                    br.to = Object.prototype.hasOwnProperty.call(map, br.to) ? map[br.to] : null;
-                });
-                if (st.goto !== undefined) {
-                    st.goto = Object.prototype.hasOwnProperty.call(map, st.goto) ? map[st.goto] : null;
-                }
-            });
+            PG.renumber(proc.steps || []);
         }
 
         function switchTab(tabName) {
@@ -1164,11 +1186,12 @@
             const data = {
                 name, owner,
                 members: parseInt(document.getElementById('deptMembers').value) || 1,
-                description: document.getElementById('deptDesc').value
+                description: document.getElementById('deptDesc').value,
+                processes: readPicker('deptProcPicker'),
+                tools: readPicker('deptToolPicker')
             };
             if (editing.dept === null) {
-                blueprint.departments.push(Object.assign({ id: `dept-${slug(name)}` },
-                    data, { processes: [], tools: [] }));
+                blueprint.departments.push(Object.assign({ id: `dept-${slug(name)}` }, data));
             } else {
                 // the id stays put on a rename: it is what everything else
                 // in the file points at
@@ -1185,6 +1208,7 @@
             document.getElementById('deptOwner').value = d.owner || '';
             document.getElementById('deptMembers').value = d.members || 1;
             document.getElementById('deptDesc').value = d.description || '';
+            renderDeptPickers(d.processes || [], d.tools || []);
             setFormMode('dept', i);
             document.getElementById('deptFormTitle').scrollIntoView({ block: 'center' });
         }
@@ -1227,11 +1251,16 @@
             const data = {
                 name, owner, category,
                 description: document.getElementById('procDesc').value,
-                frequency: document.getElementById('procFreq').value
+                frequency: document.getElementById('procFreq').value,
+                kpi: {
+                    metric: document.getElementById('procKpiMetric').value,
+                    target: document.getElementById('procKpiTarget').value,
+                    current: document.getElementById('procKpiCurrent').value
+                }
             };
             if (editing.proc === null) {
                 blueprint.processes.push(Object.assign({ id: `proc-${slug(name)}` },
-                    data, { steps: [], kpi: {} }));
+                    data, { steps: [] }));
             } else {
                 // merge rather than replace: the steps and the id are not in
                 // this form, and renaming a process must not throw them away
@@ -1249,11 +1278,16 @@
             document.getElementById('procCategory').value = proc.category || 'internal';
             document.getElementById('procDesc').value = proc.description || '';
             document.getElementById('procFreq').value = proc.frequency || '';
+            const kpi = proc.kpi || {};
+            document.getElementById('procKpiMetric').value = kpi.metric || '';
+            document.getElementById('procKpiTarget').value = kpi.target || '';
+            document.getElementById('procKpiCurrent').value = kpi.current || '';
             setFormMode('proc', i);
             document.getElementById('procFormTitle').scrollIntoView({ block: 'center' });
         }
 
         function renderProcesses() {
+            refreshDeptPickers();
             const list = document.getElementById('procList');
             const empty = document.getElementById('procEmpty');
             if (blueprint.processes.length === 0) {
@@ -1308,10 +1342,12 @@
                     amount: parseFloat(document.getElementById('toolCost').value) || 0,
                     currency: 'USD',
                     frequency: document.getElementById('toolFreq').value
-                }
+                },
+                users: document.getElementById('toolUsers').value
+                    .split(',').map(u => u.trim()).filter(Boolean)
             };
             if (editing.tool === null) {
-                blueprint.tools.push(Object.assign({ id: `tool-${slug(name)}` }, data, { users: [] }));
+                blueprint.tools.push(Object.assign({ id: `tool-${slug(name)}` }, data));
             } else {
                 // steps point at tools by id, so the id survives a rename
                 Object.assign(blueprint.tools[editing.tool], data);
@@ -1330,11 +1366,13 @@
             document.getElementById('toolCrit').value = t.criticality || 'important';
             document.getElementById('toolCost').value = (t.cost && t.cost.amount) || '';
             document.getElementById('toolFreq').value = (t.cost && t.cost.frequency) || 'monthly';
+            document.getElementById('toolUsers').value = (t.users || []).join(', ');
             setFormMode('tool', i);
             document.getElementById('toolFormTitle').scrollIntoView({ block: 'center' });
         }
 
         function renderTools() {
+            refreshDeptPickers();
             const list = document.getElementById('toolList');
             const empty = document.getElementById('toolEmpty');
             if (blueprint.tools.length === 0) {
@@ -1875,8 +1913,9 @@
             if (!result.errors.length && !result.warnings.length) {
                 html += '<div class="ok">✓ Nothing outstanding.</div>';
             } else {
-                result.errors.forEach(e => { html += '<div class="err">' + esc(e) + '</div>'; });
-                result.warnings.forEach(w => { html += '<div class="warn">' + esc(w) + '</div>'; });
+                const line = f => (f.step === null ? '' : 'Step ' + f.step + ' ') + f.message;
+                result.errors.forEach(f => { html += '<div class="err">' + esc(line(f)) + '</div>'; });
+                result.warnings.forEach(f => { html += '<div class="warn">' + esc(line(f)) + '</div>'; });
             }
             box.innerHTML = html;
         }

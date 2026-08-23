@@ -374,6 +374,61 @@
             font-size: 0.9em;
             color: var(--gray-600);
         }
+
+        /* --- process flows --- */
+        .flow-steps {
+            margin-top: 14px;
+            border-top: 1px solid var(--gray-200);
+            padding-top: 12px;
+        }
+
+        .flow-step {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 6px 0;
+        }
+
+        .flow-num {
+            flex: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--gray-200);
+            color: var(--gray-900);
+            font-size: 0.72em;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .flow-body { flex: 1; min-width: 0; font-size: 0.92em; line-height: 1.45; }
+
+        .flow-kind {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 20px;
+            font-size: 0.72em;
+            font-weight: 700;
+            background: var(--gray-200);
+            color: var(--gray-700);
+            vertical-align: 1px;
+        }
+
+        .flow-meta { font-size: 0.85em; color: var(--gray-600); }
+
+        .flow-flag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.62em;
+            font-weight: 700;
+            background: #fee2e2;
+            color: #991b1b;
+            vertical-align: 3px;
+        }
+
     </style>
 </head>
 <body>
@@ -440,7 +495,9 @@
         </div>
     </div>
 
+    <script src="process-grammar.js"></script>
     <script>
+        const PG = window.ProcessGrammar;
         let blueprint = {
             meta: {},
             departments: [],
@@ -758,6 +815,172 @@
         }
 
         // Status Dashboard
+        // Steps were the one part of a blueprint nothing here could show, so a
+        // process with branches in it had to be exported to flow-canvas to be
+        // looked at. The layout comes from process-grammar.js — the same
+        // layering the canvas uses, so the two agree about what follows what.
+        function dashEsc(value) {
+            return String(value === undefined || value === null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function clip(text, n) {
+            const t = String(text || '');
+            return t.length > n ? t.slice(0, n - 1) + '\u2026' : t;
+        }
+
+        const FLOW_W = 168, FLOW_H = 46, FLOW_GX = 58, FLOW_GY = 22;
+
+        function processFlowSvg(proc) {
+            const graph = PG.fromProcess(proc);
+            if (!graph.steps.length) return '';
+            const rank = PG.ranks(graph);
+            const columns = {};
+            graph.steps.forEach(st => {
+                const r = rank[st.id] || 0;
+                (columns[r] = columns[r] || []).push(st);
+            });
+            const keys = Object.keys(columns).map(Number).sort((a, b) => a - b);
+            let tallest = 0;
+            keys.forEach(r => { tallest = Math.max(tallest, columns[r].length); });
+
+            const at = {};
+            keys.forEach((r, ci) => {
+                const column = columns[r];
+                const offset = ((tallest - column.length) * (FLOW_H + FLOW_GY)) / 2;
+                column.forEach((st, i) => {
+                    at[st.id] = {
+                        x: 12 + ci * (FLOW_W + FLOW_GX),
+                        y: 12 + offset + i * (FLOW_H + FLOW_GY),
+                    };
+                });
+            });
+            const width = 24 + keys.length * (FLOW_W + FLOW_GX) - FLOW_GX;
+            const height = 24 + tallest * (FLOW_H + FLOW_GY) - FLOW_GY;
+
+            let wires = '', labels = '';
+            graph.links.forEach(link => {
+                const a = at[link.from], b = at[link.to];
+                if (!a || !b) return;
+                const x1 = a.x + FLOW_W, y1 = a.y + FLOW_H / 2;
+                const x2 = b.x, y2 = b.y + FLOW_H / 2;
+                let d, lx, ly;
+                if (x2 >= x1) {
+                    const mid = (x1 + x2) / 2;
+                    d = `M${x1} ${y1} L${mid} ${y1} L${mid} ${y2} L${x2} ${y2}`;
+                    lx = mid; ly = (y1 + y2) / 2 - 6;
+                } else {
+                    // a loop-back sweeps under the flow in its own direction
+                    const under = Math.max(a.y, b.y) + FLOW_H + 14;
+                    d = `M${a.x + FLOW_W / 2} ${a.y + FLOW_H} L${a.x + FLOW_W / 2} ${under} ` +
+                        `L${b.x + FLOW_W / 2} ${under} L${b.x + FLOW_W / 2} ${b.y + FLOW_H}`;
+                    lx = (a.x + b.x) / 2 + FLOW_W / 2; ly = under - 5;
+                }
+                wires += `<path d="${d}" fill="none" stroke="var(--gray-300)" stroke-width="1.5" marker-end="url(#flowArrow)"/>`;
+                if (link.label) {
+                    labels += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="10" ` +
+                              `fill="var(--gray-600)">${dashEsc(clip(link.label, 18))}</text>`;
+                }
+            });
+
+            let cards = '';
+            graph.steps.forEach(st => {
+                const box = at[st.id];
+                const dashed = st.kind === 'goto' || st.kind === 'end';
+                const fill = st.kind === 'decision' ? 'var(--warning)' : 'var(--primary)';
+                const label = st.number === null
+                    ? clip(st.title, 22)
+                    : st.number + '. ' + clip(st.title, 20);
+                cards +=
+                    `<g><title>${dashEsc(st.title)}</title>` +
+                    `<rect x="${box.x}" y="${box.y}" width="${FLOW_W}" height="${FLOW_H}" rx="7" ` +
+                        `fill="var(--gray-100)" stroke="var(--gray-300)" stroke-width="1"` +
+                        (dashed ? ' stroke-dasharray="4 3"' : '') + `/>` +
+                    `<rect x="${box.x}" y="${box.y}" width="4" height="${FLOW_H}" rx="2" fill="${fill}"/>` +
+                    `<text x="${box.x + 14}" y="${box.y + 19}" font-size="11.5" font-weight="600" ` +
+                        `fill="var(--gray-900)">${dashEsc(label)}</text>` +
+                    `<text x="${box.x + 14}" y="${box.y + 34}" font-size="10" fill="var(--gray-600)">` +
+                        `${dashEsc(PG.KIND_LABEL[st.kind] || 'Task')}` +
+                        `${st.synthetic ? '' : ' \u00b7 ' + dashEsc(PG.EXECUTOR_LABEL[st.executor] || 'Person')}` +
+                    `</text></g>`;
+            });
+
+            return `<div style="overflow-x:auto"><svg width="${width}" height="${height}" ` +
+                `viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" ` +
+                `style="max-width:none">` +
+                `<defs><marker id="flowArrow" viewBox="0 0 8 8" refX="7" refY="4" ` +
+                `markerWidth="6" markerHeight="6" orient="auto">` +
+                `<path d="M0 0 L8 4 L0 8 z" fill="var(--gray-300)"/></marker></defs>` +
+                wires + cards + labels + `</svg></div>`;
+        }
+
+        function processStepList(proc) {
+            const steps = (proc.steps || []).slice().sort((a, b) => (a.number || 0) - (b.number || 0));
+            if (!steps.length) return '';
+            // a destination is only worth printing if it is there; "step 99"
+            // reads as fine until you go looking for step 99
+            const known = {};
+            steps.forEach(st => { known[st.number] = true; });
+            const target = to => {
+                if (to === 'end') return 'ends';
+                if (to === null || to === undefined) return 'nowhere';
+                return known[to] ? 'step ' + to : 'step ' + to + ' (missing)';
+            };
+            let rows = '';
+            steps.forEach(st => {
+                const kind = st.kind || 'task';
+                const bits = [PG.EXECUTOR_LABEL[st.executor || 'person'] || 'Person'];
+                if (st.owner) bits.push(dashEsc(st.owner));
+                const time = [st.duration || '', st.frequency ? '\u00d7' + st.frequency + '/mo' : '']
+                    .filter(Boolean).join(' ');
+                if (time) bits.push(dashEsc(time));
+                let flow = '';
+                if (kind === 'goto') {
+                    flow = '\u21a9 jumps to ' + target(st.goto);
+                } else if (st.branches && st.branches.length) {
+                    flow = st.branches.map(br =>
+                        dashEsc(br.label || '(unlabelled)') + ' \u2192 ' + target(br.to)
+                    ).join(' \u00b7 ');
+                }
+                rows +=
+                    `<div class="flow-step">` +
+                        `<span class="flow-num">${st.number}</span>` +
+                        `<span class="flow-body"><b>${dashEsc(st.title || '')}</b>` +
+                        (kind !== 'task' ? ` <span class="flow-kind">${dashEsc(PG.KIND_LABEL[kind] || kind)}</span>` : '') +
+                        `<br><span class="flow-meta">${bits.join(' \u00b7 ')}</span>` +
+                        (flow ? `<br><span class="flow-meta">${flow}</span>` : '') +
+                        `</span></div>`;
+            });
+            return `<div class="flow-steps">${rows}</div>`;
+        }
+
+        function renderProcessFlows() {
+            const withSteps = (blueprint.processes || []).filter(p => (p.steps || []).length);
+            if (!withSteps.length) return '';
+            let html = `<h2 class="section-title">\u{1F9ED} Process Flows</h2>`;
+            withSteps.forEach(proc => {
+                const findings = PG.checks(PG.fromProcess(proc));
+                const errors = findings.filter(f => f.severity === 'error').length;
+                const load = PG.monthlyLoad(PG.fromProcess(proc));
+                const hours = load.minutes >= 60
+                    ? (Math.round(load.minutes / 6) / 10) + ' h'
+                    : Math.round(load.minutes) + ' min';
+                html += `<div class="card" style="margin-bottom:20px">` +
+                    `<div class="card-title">${dashEsc(proc.name)}` +
+                    (errors ? ` <span class="flow-flag">${errors} to fix</span>` : '') +
+                    `</div>` +
+                    `<div class="flow-meta" style="margin-bottom:12px">` +
+                        `${(proc.steps || []).length} steps \u00b7 ${hours} of person time per month` +
+                        (load.unpriced ? ` \u00b7 ${load.unpriced} unpriced` : '') +
+                    `</div>` +
+                    processFlowSvg(proc) +
+                    processStepList(proc) +
+                `</div>`;
+            });
+            return html;
+        }
+
         function renderStatusDashboard() {
             const content = document.getElementById('dashboardContent');
             const toolCost = blueprint.tools.reduce((sum, t) => {
@@ -866,7 +1089,9 @@
                 html += `</div>`;
             });
 
-            html += `</div><h2 class="section-title">🔧 Technology Stack</h2><div class="dashboard-grid">`;
+            html += `</div>`;
+            html += renderProcessFlows();
+            html += `<h2 class="section-title">🔧 Technology Stack</h2><div class="dashboard-grid">`;
 
             blueprint.tools?.forEach(t => {
                 html += `

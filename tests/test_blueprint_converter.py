@@ -17,6 +17,7 @@ import pytest
 from tools.blueprint_converter import (
     LOOP_BACK_LIMIT,
     check_blueprint,
+    check_process,
     format_branches,
     json_to_xlsx,
     parse_branches,
@@ -278,7 +279,7 @@ def test_unlabelled_branch_is_an_error():
             ]
         )
     )
-    assert any("unlabelled" in e for e in errors)
+    assert any("branch with no label" in e for e in errors)
 
 
 def test_fork_with_one_way_out_warns():
@@ -397,7 +398,7 @@ def test_unpriced_person_steps_warn_once():
         for n in range(1, 4)
     ]
     _, warnings = check_blueprint(_minimal(steps))
-    unpriced = [w for w in warnings if "no monthly frequency" in w]
+    unpriced = [w for w in warnings if "monthly frequency" in w]
     assert len(unpriced) == 1
     assert "3 person steps" in unpriced[0]
 
@@ -416,7 +417,7 @@ def test_a_priced_person_step_does_not_warn():
             ]
         )
     )
-    assert not any("no monthly frequency" in w for w in warnings)
+    assert not any("monthly frequency" in w for w in warnings)
 
 
 def test_automation_steps_are_not_labour():
@@ -432,7 +433,7 @@ def test_automation_steps_are_not_labour():
             ]
         )
     )
-    assert not any("no monthly frequency" in w for w in warnings)
+    assert not any("monthly frequency" in w for w in warnings)
 
 
 def test_existing_owner_checks_still_hold(example):
@@ -451,12 +452,63 @@ def test_end_is_a_valid_kind():
                     "number": 1,
                     "title": "Fork",
                     "kind": "decision",
+                    "duration": "2 minutes",
+                    "frequency": 10,
                     "branches": [{"label": "Yes", "to": 2}, {"label": "No", "to": 3}],
                 },
-                {"number": 2, "title": "Carry on"},
+                {
+                    "number": 2,
+                    "title": "Carry on",
+                    "duration": "5 minutes",
+                    "frequency": 10,
+                },
                 {"number": 3, "title": "End — rejected", "kind": "end"},
             ]
         )
     )
     assert errors == []
     assert warnings == []
+
+
+def test_a_person_step_with_neither_number_is_unpriced():
+    """Half-priced and not priced at all are the same hole in the total."""
+    _, warnings = check_blueprint(
+        _minimal([{"number": 1, "title": "Step", "executor": "person"}])
+    )
+    assert any("1 person step without" in w for w in warnings)
+
+
+def test_waits_and_terminators_are_not_labour():
+    """A wait is elapsed time, not somebody's hour."""
+    _, warnings = check_blueprint(
+        _minimal(
+            [
+                {"number": 1, "title": "Hold", "kind": "delay", "duration": "2 days"},
+                {"number": 2, "title": "Stop", "kind": "end"},
+            ]
+        )
+    )
+    assert not any("monthly frequency" in w for w in warnings)
+
+
+def test_check_process_reports_codes():
+    """The codes are what tests/test_process_grammar.py compares against JS."""
+    findings = check_process(
+        {
+            "steps": [
+                {"number": 1, "title": "One", "duration": "5 minutes", "frequency": 4},
+                {
+                    "number": 2,
+                    "title": "Fork",
+                    "kind": "decision",
+                    "duration": "1 minute",
+                    "frequency": 4,
+                    "branches": [{"label": "", "to": 99}],
+                },
+            ]
+        }
+    )
+    codes = sorted(f["code"] for f in findings)
+    assert codes == ["branch_target_missing", "thin_fork", "unlabelled_branch"]
+    assert all(f["step"] == 2 for f in findings)
+    assert [f["severity"] for f in findings if f["code"] == "thin_fork"] == ["warning"]
