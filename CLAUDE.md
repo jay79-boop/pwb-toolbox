@@ -635,24 +635,26 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `8698ecf` — the merge of #98 (blueprint builder step editor,
-autosave, editable lists). Last updated 2026-08-23.
+**Main Branch:** `fe12415` — the merge of #101. Last updated 2026-08-23.
 
-**Seven pull requests merged on 2026-08-23**, after a day when none had: #71
-(15-Minute Reversal), #87 (cross-instrument backtest lab), #90
-(`StrategyComparator`), #91 (date windows and risk rules), #92 (docs examples
-against real signatures), #96 (planner exit ladder), #98 (builder step editor).
-Six of them had gone stale enough to need `main` merged in first, and two no
-longer merged at all.
+**Thirteen pull requests merged on 2026-08-23**, ten of them in one afternoon
+after a day when none had: #71 (15-Minute Reversal), #87 (cross-instrument
+backtest lab), #90 (`StrategyComparator`), #91 (date windows and risk rules),
+#92 (docs examples against real signatures), #96 (planner exit ladder), #98
+(builder step editor), #99 (shared process grammar and dashboard flows), #100
+(night lab), #101 (this block), on top of #94, #95 and #97 earlier.
 
-**Open (4).**
+Every one of the ten needed something first, and the failures were all
+different: six had drifted far enough behind `main` to need it merged in, two
+of those no longer merged at all, one had never passed the format job, and
+#99's base branch was deleted out from under it when #98 landed — GitHub does
+not repair that on its own, so it sat pointing at a ref that no longer existed.
+
+**Open (1).**
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and 46 commits behind; another session was working it |
-| #99 | One shared `static/process-grammar.js`, plus process flows on the dashboard | level with `main`, green |
-| #100 | The night lab: unattended overnight stress testing on a local model | level with `main` |
-| #101 | This block | level with `main` |
+| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and 55 commits behind. It was being worked in another session while the rest of the backlog drained, and every merge since has widened the gap |
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -668,13 +670,23 @@ rebuild something, check the decision log first.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
 **Keeping this honest:** this block is machine-read, so a stale copy actively
-misleads. Two lessons paid for already. Update it when a pull request opens,
-merges or closes — not on a schedule; the version this replaced said "3 drafts
-in flight" while ten were open, and that is how two sessions built adjacent
-things without noticing each other. And file a decision-log entry under the
-pull request that actually carries the work: #90's entry, filed under #87, is
-the whole reason two different tools looked like one. When the count here
-disagrees with GitHub, believe GitHub and fix this.
+misleads. Three lessons paid for already.
+
+1. **Update it when a pull request opens, merges or closes — not on a
+   schedule.** The version this replaced said "3 drafts in flight" while ten
+   were open, and that is how two sessions built adjacent things without
+   noticing each other. This block went stale three times in one afternoon
+   while the backlog drained; that is the cost of the rule, and it is smaller
+   than the cost of skipping it.
+2. **File a decision-log entry under the pull request that actually carries
+   the work.** #90's entry, filed under #87, is the whole reason two different
+   tools looked like one built twice.
+3. **A branch left alone does not hold still.** #78 went from seventeen commits
+   behind and merging cleanly to fifty-five behind and conflicting in a single
+   afternoon, without anybody touching it, purely because everything around it
+   landed.
+
+When the count here disagrees with GitHub, believe GitHub and fix this.
 
 ## Tech Stack & Dependencies
 
