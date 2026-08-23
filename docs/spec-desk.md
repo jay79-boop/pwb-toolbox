@@ -17,9 +17,13 @@ and reports.
 
 1. **swing-buy** — directional calls/puts on liquid names, 15–45 DTE, on
    momentum or a dated catalyst. Max loss = premium paid. The workhorse.
-2. **short-dte** — 0–7 DTE lottery tickets. Sub-capped at 2.5% of the pot
-   because the base rate is incineration; the lane exists to measure that
-   honestly, not to pretend otherwise.
+2. **short-dte** — 0–7 DTE trades: the owner's stated focus (they trade
+   the daily and weekly expirations). Discipline for this lane: 0–2 DTE
+   stays near the money (40–50 delta), 3–7 DTE can reach 30–40 delta, and
+   every plan states its shot clock (`pwb_toolbox.options.shot_clock`) and
+   hourly hurdle so entry timing is a number, not a feeling. Sub-capped at
+   2.5% of the pot per trade — focus means more shots, not bigger ones,
+   and the cap is what lets the record reach a verdict.
 3. **momentum-stock** — high-beta shares breaking out on volume. No decay
    working against the thesis; stop distance defines the risk.
 4. **premium-sell** — defined-risk credit spreads on names the agent thinks
