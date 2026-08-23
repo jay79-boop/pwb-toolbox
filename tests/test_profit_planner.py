@@ -319,3 +319,41 @@ def test_the_next_rung_never_lands_on_a_blank_row(wb):
         assert "MATCH(0," in which
         assert f"COUNT($C${TP_RUNG_FIRST}" in which, "cap on rungs, not on rows"
         assert "IFERROR(" in which, "no rung passed yet is not an error"
+
+
+def test_the_ladder_takes_percents_and_derives_units(wb):
+    """Typing a unit count over the seeded formulas froze the old ladder.
+
+    The typed cell held the cascade formula, so the first edit destroyed it
+    and every rung below stopped re-sizing. The input is now a plain percent
+    of the remainder and the units column is formula-only, so nothing the
+    owner types can stop the rows below reacting.
+    """
+    for index in range(1, PLAN_COUNT + 1):
+        ws = wb[f"Plan {index}"]
+        for offset, (_, share) in enumerate(TP_RUNGS):
+            r = TP_RUNG_FIRST + offset
+            typed = ws.cell(row=r, column=8).value
+            assert typed == share, "the input cell is a number, never a formula"
+            units = ws.cell(row=r, column=9).value
+            assert units.startswith("=IF("), f"Plan {index} row {r}"
+            assert f"MIN($H{r},1)" in units, "a typo past 100% cannot oversell"
+            if r > TP_RUNG_FIRST:
+                assert f"SUM($I${TP_RUNG_FIRST}:$I{r - 1})" in units, (
+                    "each rung sizes itself from the units the rungs above "
+                    "actually took"
+                )
+        next_units = ws.cell(row=TP_RUNG_FIRST + 9 + 4, column=18).value
+        assert f"$I${TP_RUNG_FIRST}" in next_units, "next-rung panel reads units"
+
+
+def test_a_what_if_price_reprices_the_tab_and_says_so(wb):
+    """The scenario price must drive the whole tab, and only this tab."""
+    for index in range(1, PLAN_COUNT + 1):
+        ws = wb[f"Plan {index}"]
+        price = ws.cell(row=TP_INPUT, column=8).value
+        assert price.startswith(f'=IF($O${TP_INPUT}<>""'), "what-if wins first"
+        assert "GOOGLEFINANCE" in price, "the live feed still backs the tab"
+        feed = ws.cell(row=TP_INPUT, column=9).value
+        assert '"what-if' in feed, "the Feed cell must admit a pinned scenario"
+        assert ws.cell(row=TP_INPUT, column=15).value is None, "ships empty"

@@ -749,6 +749,7 @@ def build_plan_tab(wb: Workbook, index: int):
     ticker, units, cost = f"$C${row}", f"$D${row}", f"$E${row}"
     mode, yours, live = f"$F${row}", f"$G${row}", f"$H${row}"
     basis = f"$J${row}"
+    whatif = f"$O${row}"
 
     def from_register(column: str) -> str:
         return f'IFERROR({pos_lookup(column, holding)},"")'
@@ -771,15 +772,17 @@ def build_plan_tab(wb: Workbook, index: int):
         (
             8,
             "Price used",
-            f'=IF({mode}="Manual",{yours},IFERROR(GOOGLEFINANCE({ticker}),{yours}))',
+            f'=IF({whatif}<>"",{whatif},'
+            f'IF({mode}="Manual",{yours},IFERROR(GOOGLEFINANCE({ticker}),{yours})))',
             MONEY,
             False,
         ),
         (
             9,
             "Feed",
-            f'=IF({mode}="Manual","manual — pinned by you",'
-            f'IF(ISERROR(GOOGLEFINANCE({ticker})),"no feed — using your price","live"))',
+            f'=IF({whatif}<>"","what-if — clear What-if price to go live",'
+            f'IF({mode}="Manual","manual — pinned by you",'
+            f'IF(ISERROR(GOOGLEFINANCE({ticker})),"no feed — using your price","live")))',
             None,
             False,
         ),
@@ -806,6 +809,11 @@ def build_plan_tab(wb: Workbook, index: int):
             None,
             False,
         ),
+        # A scenario price. While it holds a number the whole tab is priced at
+        # it — Market value, distance to each rung, the next-rung panel — and
+        # the Feed cell says so. The register and Dashboard never see it, and
+        # the watcher skips any row whose feed is not "live".
+        (15, "What-if price", None, MONEY, True),
     ]
     for col, label, value, fmt, typed in strip:
         head = ws.cell(row=TP_LABEL, column=col, value=label.upper())
@@ -878,10 +886,18 @@ def build_plan_tab(wb: Workbook, index: int):
             fill=PatternFill("solid", fgColor=WARN_SOFT),
         ),
     )
+    ws.conditional_formatting.add(
+        f"I{TP_INPUT}",
+        FormulaRule(
+            formula=[f'LEFT($I${TP_INPUT},7)="what-if"'],
+            font=Font(bold=True, color="92400E"),
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
+    )
 
     # ---- what the whole plan adds up to ------------------------------------
     first, last = TP_RUNG_FIRST, TP_RUNG_LAST
-    planned = f"SUM($H${first}:$H${last})"
+    planned = f"SUM($I${first}:$I${last})"
     tiles = [
         (2, "Net cash it returns", f"=SUM($K${first}:$K${last})", MONEY0),
         (
@@ -973,8 +989,8 @@ def build_plan_tab(wb: Workbook, index: int):
         "Profit per unit",
         "Net cash",
         "Net profit",
+        "% of what's left",
         "Units to sell",
-        "% of remainder",
         "Gross",
         "Net cash",
         "Cash so far",
@@ -1005,15 +1021,14 @@ def build_plan_tab(wb: Workbook, index: int):
         gain = ws.cell(row=r, column=2, value=seed[0] if seed else None)
         gain.number_format = PCT0
 
-        sold_above = "0" if r == first else f"SUM($H${first}:$H{r - 1})"
+        sold_above = "0" if r == first else f"SUM($I${first}:$I{r - 1})"
         remaining = f"MAX(0,{units}-{sold_above})"
-        used = f"MIN($H{r},{remaining})"
-        qty = ws.cell(
-            row=r,
-            column=8,
-            value=f"=ROUND({seed[1]}*{remaining},6)" if seed else None,
-        )
-        qty.number_format = QTY
+        # The typed cell is a plain percent-of-what-is-left, nothing else. The
+        # units cell is formula-only, so typing a number can no longer destroy
+        # the cascade — the defect that froze the old ladder, where the input
+        # and the formula shared a cell and the first edit wiped the formula.
+        share = ws.cell(row=r, column=8, value=seed[1] if seed else None)
+        share.number_format = PCT
 
         blank = f'$B{r}=""'
         noqty = f'OR($B{r}="",$H{r}="")'
@@ -1041,17 +1056,17 @@ def build_plan_tab(wb: Workbook, index: int):
         ws.cell(
             row=r,
             column=9,
-            value=f'=IF(OR({noqty},{remaining}=0),"",{used}/{remaining})',
-        ).number_format = PCT
+            value=f'=IF({noqty},"",ROUND(MIN($H{r},1)*{remaining},6))',
+        ).number_format = QTY
         ws.cell(
-            row=r, column=10, value=f'=IF({noqty},"",{used}*$C{r})'
+            row=r, column=10, value=f'=IF({noqty},"",$I{r}*$C{r})'
         ).number_format = MONEY
         ws.cell(
             row=r,
             column=11,
             value=(
                 f'=IF({noqty},"",$J{r}*(1-FeeRate)'
-                f"-MAX(0,($C{r}-{cost})*{used})*TaxRate)"
+                f"-MAX(0,($C{r}-{cost})*$I{r})*TaxRate)"
             ),
         ).number_format = MONEY
         ws.cell(
@@ -1060,13 +1075,16 @@ def build_plan_tab(wb: Workbook, index: int):
         ws.cell(
             row=r,
             column=13,
-            value=f'=IF({noqty},"",MAX(0,{units}-SUM($H${first}:$H{r})))',
+            value=f'=IF({noqty},"",MAX(0,{units}-SUM($I${first}:$I{r})))',
         ).number_format = QTY
         ws.cell(
             row=r,
             column=14,
             value=(
-                f'=IF({noqty},"",IF(SUM($H${first}:$H{r})>{units},"Oversold",'
+                # The 0.0001 is rounding headroom: each derived unit count is
+                # ROUNDed, so a full ladder can overshoot the position by a
+                # millionth and must not read as oversold.
+                f'=IF({noqty},"",IF(SUM($I${first}:$I{r})>{units}+0.0001,"Oversold",'
                 f'IF($L{r}>={basis},"Free ride","Still exposed")))'
             ),
         )
@@ -1075,6 +1093,24 @@ def build_plan_tab(wb: Workbook, index: int):
             column=15,
             value=f'=IF({noqty},"",IF($M{r}<=0,"—",MAX(0,{basis}-$L{r})/$M{r}))',
         ).number_format = MONEY
+
+    share_dv = DataValidation(
+        type="decimal",
+        operator="between",
+        formula1="0",
+        formula2="1",
+        allow_blank=True,
+        promptTitle="A percent of what is left",
+        prompt=(
+            "Type a percent, like 25%. It means a quarter of whatever the "
+            "rungs above this one have not already sold, so the ladder can "
+            "never sell more than you hold. The units column beside it works "
+            "itself out and never needs touching."
+        ),
+        showInputMessage=True,
+    )
+    ws.add_data_validation(share_dv)
+    share_dv.add(f"H{first}:H{last}")
 
     ws.conditional_formatting.add(
         f"N{first}:N{last}",
@@ -1169,7 +1205,7 @@ def build_plan_tab(wb: Workbook, index: int):
         ("gain", f"=INDEX($B${first}:$B${last},$R{nxt})", PCT0),
         ("target price", f"=INDEX($C${first}:$C${last},$R{nxt})", MONEY),
         ("away", f"=INDEX($D${first}:$D${last},$R{nxt})", PCT),
-        ("units to sell", f"=INDEX($H${first}:$H${last},$R{nxt})", QTY),
+        ("units to sell", f"=INDEX($I${first}:$I${last},$R{nxt})", QTY),
         ("net cash", f"=INDEX($K${first}:$K${last},$R{nxt})", MONEY),
         ("units left after", f"=INDEX($M${first}:$M${last},$R{nxt})", QTY),
         ("break-even after", f"=INDEX($O${first}:$O${last},$R{nxt})", MONEY),
@@ -1192,9 +1228,11 @@ def build_plan_tab(wb: Workbook, index: int):
             "it is the name of a row you keep. Type over what it pulls in for "
             "a what-if and the tab says EDITED; name something that is not on "
             "Positions and it says so in red.\n"
-            "Every unit cell is a share of what the rungs above it left, so "
-            "changing one re-sizes the rest against what actually remains. "
-            "Price mode on Manual pins Your price over the feed."
+            "What you type at each rung is a percent of what is left, so "
+            "changing one re-sizes every rung below it against what actually "
+            "remains — the units column works itself out and is never typed. "
+            "Price mode on Manual pins Your price over the feed, and a "
+            "What-if price re-prices this tab alone until you clear it."
         ),
     )
     note.font = SMALL_F
@@ -1882,8 +1920,9 @@ def build_start_here(wb: Workbook):
         "Each position calls GOOGLEFINANCE on its ticker. When the feed does not "
         "carry a symbol — it does not carry every altcoin — the price falls back "
         "to the manual price beside it and the Feed column says so. Set Price "
-        "mode to Manual to pin a price deliberately. The Dashboard counts how "
-        "many rows are running on hand-typed prices.",
+        "mode to Manual to pin a price deliberately, or type a What-if price on "
+        "a Plan tab to re-price that one plan hypothetically. The Dashboard "
+        "counts how many rows are running on hand-typed prices.",
     )
     row += 1
 
