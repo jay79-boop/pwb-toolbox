@@ -1,0 +1,251 @@
+// The Purpose Driven Trader — 15-Minute Reversal
+//
+// Built for CME_MINI:NQ1! on a 15-minute chart with EXTENDED (electronic) hours
+// enabled. The whole strategy hangs off the 09:15 America/New_York bar, which a
+// regular-hours chart does not contain — on an RTH-only chart this strategy takes
+// ZERO trades by design, rather than quietly trading a different setup. If the
+// backtest is empty, the chart is the problem, not the script.
+//
+// Rules (all times America/New_York):
+//   Candle 1     the 09:15 15-minute bar. Its high and low are the day's opening range.
+//   Scan         from 09:30 onward, the day's FIRST failure swing that agrees with the
+//                trend filter (a 60-period SMA taken from the DAILY timeframe).
+//   Long setup   a bar dips below Candle 1's low but CLOSES back above it, with its
+//                high staying under Candle 1's high, while price is above the SMA.
+//   Short setup  mirror: pokes above Candle 1's high, closes back below it, low staying
+//                above Candle 1's low, while price is below the SMA.
+//   Confirmation the CLOSE confirms. Nothing is acted on intrabar from a wick.
+//   Commitment   failure swings against the SMA are skipped and do not use up the day.
+//                Once the first aligned one prints, the day is COMMITTED to that
+//                direction — no second setup, even if the entry never fills.
+//   Entry        stop order at the setup bar's BODY extreme (long = higher of open/close,
+//                short = lower). It can only fill on a LATER bar. No fill, no trade.
+//   Target       Candle 1's opposite extreme (long -> Candle 1 high, short -> Candle 1 low).
+//   Stop-loss    entry-to-target distance / 2.4, placed on the other side of entry.
+//   Size         one contract. One trade per day. No adding, no averaging.
+//   Calendar     Monday-Thursday only. Fridays skipped entirely.
+//   Flat by      15:55 — cancel any unfilled order and close any open position.
+//
+// Note on the flatten: Pine fills market orders at the OPEN of the bar after the one
+// that generated them, so the flatten is signalled on the last bar that straddles 15:55
+// (the 15:45 bar on a 15m chart) and fills at 16:00. `process_orders_on_close` would
+// move that to 15:45's close, but it would also let the entry stop fill on the setup bar
+// itself, which the rules forbid — so it stays off and the flatten lands at 16:00.
+
+//@version=6
+strategy("PDT 15-Minute Reversal",
+     overlay              = true,
+     default_qty_type     = strategy.fixed,
+     default_qty_value    = 1,
+     pyramiding           = 0,
+     initial_capital      = 25000,
+     currency             = currency.USD,
+     commission_type      = strategy.commission.cash_per_contract,
+     commission_value     = 2.50,
+     slippage             = 1,
+     calc_on_every_tick   = false,
+     calc_on_order_fills  = false,
+     close_entries_rule   = "ANY")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+TZ = "America/New_York"
+
+G_SETUP = "Setup"
+G_TREND = "Trend filter"
+G_RISK  = "Risk"
+G_DAY   = "Session rules"
+G_VIEW  = "Display"
+
+c1TimeStr  = input.string("09:15", "Candle 1 time (ET, HH:MM)", group = G_SETUP,
+     tooltip = "Opening-range bar. On a 15m chart this must be a bar that actually " +
+               "exists — 09:15 only exists with EXTENDED hours switched on.")
+
+smaLen     = input.int(60, "SMA length", minval = 1, group = G_TREND)
+smaTf      = input.timeframe("D", "SMA timeframe", group = G_TREND)
+useSma     = input.bool(true, "Use SMA trend filter", group = G_TREND,
+     tooltip = "Off: the day commits to the first failure swing in either direction.")
+
+rr         = input.float(2.4, "Reward : risk", minval = 0.1, step = 0.1, group = G_RISK,
+     tooltip = "Stop distance = (entry to target) / this. 2.4 means risk one to make 2.4.")
+
+skipFriday = input.bool(true, "Skip Fridays", group = G_DAY)
+flatTimeStr= input.string("15:55", "Flatten time (ET, HH:MM)", group = G_DAY,
+     tooltip = "Cancel any unfilled order and close any open position at or after this time.")
+
+showLevels = input.bool(true, "Show Candle 1 range and order levels", group = G_VIEW)
+showWarn   = input.bool(true, "Warn when Candle 1 is missing", group = G_VIEW)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Time parsing
+// ─────────────────────────────────────────────────────────────────────────────
+// Returns minutes-from-midnight, or -1 if the string is not HH:MM.
+parseHM(s) =>
+    parts = str.split(str.replace_all(s, " ", ""), ":")
+    int out = -1
+    if array.size(parts) == 2
+        h = str.tonumber(array.get(parts, 0))
+        m = str.tonumber(array.get(parts, 1))
+        if not na(h) and not na(m) and h >= 0 and h <= 23 and m >= 0 and m <= 59
+            out := int(h) * 60 + int(m)
+    out
+
+c1Min   = parseHM(c1TimeStr)
+flatMin = parseHM(flatTimeStr)
+
+if barstate.isfirst and (c1Min < 0 or flatMin < 0)
+    runtime.error("Candle 1 time and Flatten time must be written as HH:MM, e.g. 09:15 and 15:55.")
+
+barOpenMin  = hour(time, TZ) * 60 + minute(time, TZ)
+barCloseMin = hour(time_close, TZ) * 60 + minute(time_close, TZ)
+
+isCandle1 = barOpenMin == c1Min
+
+// The bar that straddles the flatten time. `barOpenMin < flatMin` keeps the overnight
+// session (whose bars also close "after" 15:55 by clock arithmetic) out of it.
+isFlattenBar = barOpenMin < flatMin and barCloseMin >= flatMin
+
+// Bars eligible to produce a setup: strictly after Candle 1, and closing at or before
+// the flatten time.
+inTradeWindow = barOpenMin > c1Min and barOpenMin < flatMin and barCloseMin <= flatMin
+
+dow      = dayofweek(time, TZ)
+dayIsOk  = not (skipFriday and dow == dayofweek.friday)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trend filter
+// ─────────────────────────────────────────────────────────────────────────────
+smaVal = request.security(syminfo.tickerid, smaTf, ta.sma(close, smaLen),
+     lookahead = barmerge.lookahead_off)
+
+trendLong  = not useSma or (not na(smaVal) and close > smaVal)
+trendShort = not useSma or (not na(smaVal) and close < smaVal)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-day state
+// ─────────────────────────────────────────────────────────────────────────────
+var float c1High    = na
+var float c1Low     = na
+var bool  c1Set     = false
+var bool  committed = false
+var int   dir       = 0
+var float entryPx   = na
+var float targetPx  = na
+var float stopPx    = na
+var bool  filled    = false
+var bool  dayDone   = false
+var int   daysSeen  = 0
+var int   daysWithC1= 0
+
+newDay = na(time[1]) or dayofmonth(time, TZ) != dayofmonth(time[1], TZ)
+
+if newDay
+    c1High    := na
+    c1Low     := na
+    c1Set     := false
+    committed := false
+    dir       := 0
+    entryPx   := na
+    targetPx  := na
+    stopPx    := na
+    filled    := false
+    dayDone   := false
+    daysSeen  += 1
+
+if isCandle1 and dayIsOk
+    c1High     := high
+    c1Low      := low
+    c1Set      := true
+    daysWithC1 += 1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup detection — the close confirms, never the wick
+// ─────────────────────────────────────────────────────────────────────────────
+canScan = c1Set and dayIsOk and not committed and not dayDone and inTradeWindow and not isFlattenBar
+
+longFail  = canScan and low  < c1Low  and close > c1Low  and high < c1High
+shortFail = canScan and high > c1High and close < c1High and low  > c1Low
+
+// A failure swing that disagrees with the SMA is skipped outright: it does not commit
+// the day, so a later aligned one can still be taken.
+takeLong  = longFail  and trendLong
+takeShort = shortFail and trendShort
+
+justCommitted = false
+
+if takeLong
+    committed     := true
+    dir           := 1
+    entryPx       := math.max(open, close)
+    targetPx      := c1High
+    stopPx        := entryPx - (targetPx - entryPx) / rr
+    justCommitted := true
+else if takeShort
+    committed     := true
+    dir           := -1
+    entryPx       := math.min(open, close)
+    targetPx      := c1Low
+    stopPx        := entryPx + (entryPx - targetPx) / rr
+    justCommitted := true
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orders
+// ─────────────────────────────────────────────────────────────────────────────
+// The entry is a stop order placed at the close of the setup bar, so the broker
+// emulator can only fill it on a subsequent bar.
+if justCommitted
+    if dir == 1
+        strategy.entry("Long", strategy.long, stop = entryPx, comment = "Long stop")
+        strategy.exit("Long X", from_entry = "Long", limit = targetPx, stop = stopPx)
+    else
+        strategy.entry("Short", strategy.short, stop = entryPx, comment = "Short stop")
+        strategy.exit("Short X", from_entry = "Short", limit = targetPx, stop = stopPx)
+
+// Keep the bracket attached for as long as the position is open.
+if committed and strategy.position_size != 0
+    filled := true
+    if dir == 1
+        strategy.exit("Long X", from_entry = "Long", limit = targetPx, stop = stopPx)
+    else
+        strategy.exit("Short X", from_entry = "Short", limit = targetPx, stop = stopPx)
+
+// Target or stop hit: the day's one trade is spent.
+if filled and strategy.position_size == 0 and not dayDone
+    dayDone := true
+    strategy.cancel_all()
+
+// 15:55 — cancel anything unfilled, flatten anything open. No overnight holds.
+if isFlattenBar
+    strategy.cancel_all()
+    if strategy.position_size != 0
+        strategy.close_all(comment = "EOD flat")
+    dayDone := true
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Display
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showLevels and c1Set ? c1High : na, "Candle 1 high", color.new(color.gray, 30),
+     2, plot.style_linebr)
+plot(showLevels and c1Set ? c1Low : na, "Candle 1 low", color.new(color.gray, 30),
+     2, plot.style_linebr)
+plot(showLevels and committed and not dayDone ? entryPx : na, "Entry",
+     color.new(color.blue, 0), 1, plot.style_linebr)
+plot(showLevels and committed and not dayDone ? targetPx : na, "Target",
+     color.new(color.teal, 0), 1, plot.style_linebr)
+plot(showLevels and committed and not dayDone ? stopPx : na, "Stop",
+     color.new(color.red, 0), 1, plot.style_linebr)
+plot(useSma ? smaVal : na, "Trend SMA", color.new(color.orange, 0), 2)
+
+plotshape(takeLong,  "Long setup",  shape.triangleup,   location.belowbar,
+     color.new(color.teal, 0), size = size.tiny)
+plotshape(takeShort, "Short setup", shape.triangledown, location.abovebar,
+     color.new(color.red, 0), size = size.tiny)
+
+// The loud diagnostic: no Candle 1 anywhere means the chart is not showing extended hours.
+if showWarn and barstate.islastconfirmedhistory and daysWithC1 == 0
+    label.new(bar_index, high, "No " + c1TimeStr + " ET bar found in " +
+         str.tostring(daysSeen) + " days.\nTurn ON extended hours (chart settings → " +
+         "Symbol → Extended trading hours) and use a 15-minute chart.",
+         style = label.style_label_down, color = color.new(color.red, 0),
+         textcolor = color.white, size = size.normal)
