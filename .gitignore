@@ -44,3 +44,8 @@ spec_desk/*
 # records, and this fork is public. Only the README explaining that is tracked.
 night_lab/*
 !night_lab/README.md
+
+# seasonality lab (tools/season_scan.py) - universe.txt names what the
+# owner watches and the report derives from it; this fork is public.
+season/*
+!season/README.md
