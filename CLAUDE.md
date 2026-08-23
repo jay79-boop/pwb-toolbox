@@ -143,6 +143,21 @@ A worked example, for this repo's 21st MCP key:
   plus a forecast-chart mode. Model runs happen on the user's machine — the
   cloud proxy blocks Hugging Face — but the scoring core is pure math and
   tested with fake predictors (`tests/test_kronos_lab.py`)
+- `tools/crypto_scan.py` — the "trade crypto" command: ranks liquid crypto
+  pairs by the signals with published evidence behind them (1–4 week momentum,
+  MA trend, volume surge; ATR% for sizing only) and flags the BTC regime every
+  alt trade swims in. A screener feeding the pre-trade pack and paper journal,
+  not a trader. Scoring is pure math tested on synthetic bars
+  (`tests/test_crypto_scan.py`); signal choices are sourced in
+  `docs/trading-wisdom.md`
+- `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
+  the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
+  sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
+  spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
+  pot is spent until `review` runs, scores every close in R-multiples, and
+  `check` alerts when an open trade's stop or target level trades. Protocol
+  in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
+  fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
@@ -164,6 +179,12 @@ A worked example, for this repo's 21st MCP key:
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
   tested against closed forms in `static/option-lab.test.js`
+- `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
+  machine-enforceable risk rules with their originating traders/papers, the
+  retail base-rate studies that justify paper-first, the evidence review
+  behind `crypto_scan`'s signals, iron condor venue/construction facts, and
+  the propose-then-approve learning loop. Trading sessions and the desk agent
+  consult it; it grows by proposal, never by silent edit
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below) and
@@ -549,6 +570,46 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
+**Decision:** Add a second, deliberately speculative track beside the core
+program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent
+protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped
+at 2.5%), momentum stocks, defined-risk credit spreads. Fixed pot as a slice
+of the paper account; per-trade max loss 10% of pot; 4 positions max; spent
+pot locks the desk until `review` runs; refill only after review. Owner
+executes every order (options in thinkorswim paperMoney — TradingView has no
+options; stocks/crypto in TradingView paper); agent plans, logs, watches
+(`check` alerts on stop/target), and reviews. Two triggers: "trade spicy" on
+demand, plus a Windows-scheduled morning scan.
+**Why:** The owner wants high-risk/high-reward speculation *and* steady safe
+core growth. The wall is the design: the spec pot can die without touching
+core statistics, and its scored record (R-multiples per lane) is the desk's
+real product — after 30 trades a lane either proves expectancy or gets a
+pause proposal. Self-learning follows the wisdom-doc contract: the agent
+drafts changes from the record; the owner approves.
+
+### [2026-08-22] Paper-first trading program: wisdom base + crypto scanner + condor mock run
+**Decision:** Start a paper-first trading program with hard gates to live
+money. Three pieces shipped together: `docs/trading-wisdom.md` (ten sourced,
+machine-enforceable risk rules and the evidence base), `tools/crypto_scan.py`
+(the "trade crypto" screener over evidence-backed momentum signals), and a
+weekly SPX/XSP iron condor mock run starting Monday (paper only, collecting
+expected-move-vs-realized data).
+**Why:** The owner wants to trade actively without breaking the bank. The
+published base rates (97% of persistent Brazilian day traders lost money;
+~1.6% of Taiwanese day traders predictably profitable) say unstructured
+retail trading fails by default; the documented practices of successful
+traders converge on small constant risk, positive expectancy proven before
+sizing up, and mechanically enforced limits.
+**Gates to live:** a strategy trades real money only after positive
+expectancy over ≥30 paper trades (rule 9 in the wisdom doc), and then under
+the desk agent's caps (PR #78). "Self-learning" = the propose-then-approve
+loop in the wisdom doc: the system drafts its own rule changes from journal
+evidence; the owner approves every change.
+**Also decided:** Kronos fine-tuning parked — not until the backtest lab
+(#87) is merged and the paper program is producing data; any future
+fine-tuned model must pass `kronos_lab` eval before use.
 
 ### [2026-08-22] Kronos foundation model: measured, no zero-shot edge (PR #93)
 **Decision:** Before integrating the Kronos K-line foundation model
