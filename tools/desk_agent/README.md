@@ -76,6 +76,33 @@ branch, and never falls back to pushing straight to `main`. Should it keep
 happening, the recurring-blocker machinery raises it after the third week --
 which is the loop noticing its own gap.
 
+## The first weekly review fired and left no trace
+
+2026-08-23, 14:01 UTC. The Routine's `last_fired_at` confirms it ran. It produced no
+run record, no branch, no pull request — nothing, on any branch. The cause was never
+established: a trigger-fired session does not appear in the session listing, so its
+transcript could not be read, and the obvious hypothesis was tested and disproved
+(`python -m tools.desk_agent.runlog` works fine on a bare checkout with no venv and
+no `PYTHONPATH`).
+
+What made this visible at all was a check that had been added to a PR watch two hours
+earlier for an unrelated reason: count the records in `runs.jsonl` and treat a number
+that has not grown as a finding. Without it, the week would have read as quiet.
+
+That is the whole failure mode this design exists to catch, arriving from a direction
+nobody had guarded: not a job that runs and fails, but a job that runs and reports
+nothing. Two changes followed.
+
+**The Routine now notifies on completion.** `update_trigger` cannot add notifications,
+so it was recreated with `push` enabled. A run that goes wrong now reaches the owner
+directly instead of depending on somebody counting records afterwards.
+
+**Its prompt now leads with the obligation to leave evidence.** Whatever blocks it — a
+missing file, a failed command, no push access — it appends a record saying so, commits
+it, pushes it, and states the problem in its final message. Logging is the last thing it
+gives up, not the first. The old prompt put that instruction at the end, where anything
+that stopped the run early also stopped the logging.
+
 ## Reading the log yourself
 
 ```bash
