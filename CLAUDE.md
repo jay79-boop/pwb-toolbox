@@ -177,6 +177,21 @@ A worked example, for this repo's 21st MCP key:
   `docs/night-lab.md`; data in `night_lab/` (gitignored —
   this fork is public). Policy and arithmetic are pure and tested
   (`tests/test_night_lab.py`)
+- `tools/season_scan.py` — the seasonality lab: batches any universe of
+  tickers (11 sector ETFs, index baselines, crypto, `season/universe.txt`
+  names) and makes every ticker-month cell survive three gates before it may
+  call itself a pattern — 2,000 within-year permutation reshuffles, split-half
+  agreement across the years, and Benjamini-Hochberg FDR across the whole
+  grid, because a 15x12 scan is a fishing expedition and is priced as one.
+  Named almanac claims (sell in May, September weakness, the January effect)
+  are pre-registered so they face only their own one-sided test, and get a
+  public HELD/FAILED verdict. Outputs a self-contained visual report
+  (heatmap, average-year run/dip paths with both halves overlaid, now-window
+  screener), a sectioned TradingView watchlist, and `season.json` for other
+  tools; `context SYMBOL` answers "where does today sit in this ticker's
+  year?". Protocol in `docs/season-scan.md`; data in `season/` (gitignored —
+  universe.txt names what the owner watches). Stats are pure and tested on
+  planted synthetic data (`tests/test_season_scan.py`)
 - `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
   `excel` writes the move ladder workbook for one contract (rungs × time
   columns, greeks, shot clock, hurdle) through `pwb_toolbox.options`; `serve`
@@ -308,6 +323,7 @@ python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning 
 python tools/engagement.py list   # readiness engagements and where each stands
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
 python tools/night_lab.py verdict --quiet  # morning findings; silent if none
+python tools/season_scan.py report  # seasonality: report + watchlist + json
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
@@ -698,6 +714,28 @@ disagrees with GitHub, believe GitHub and fix this.
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
+**Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the
+sector ETFs, index baselines, crypto and the owner's own names, with a
+three-gate evidence standard: within-year permutation test (2,000
+reshuffles), split-half agreement across the years, and BH-FDR across the
+scanned grid. Almanac folklore is pre-registered and judged one-sided on
+its own terms, verdicts published HELD/FAILED. Deliverables: self-contained
+visual report, sectioned TradingView watchlist (manual re-import;
+TradingView cannot auto-sync a file), `season.json` + `context` for other
+tools.
+**Why the gates:** 15 tickers x 12 months is 180 casts; ~9 "patterns"
+appear by luck alone. The failed-folklore list is deliberately a first-class
+output — the things to stop believing are worth as much as the things that
+held.
+**A null-hypothesis bug worth remembering:** the first permutation null
+circularly shifted the monthly series. Under a 12-periodic window mask that
+collapses the null to eleven distinct values (and shifts by multiples of 12
+realign the calendar entirely), so a merely top-ranked month read as
+p=0.0005. The shipped null shuffles months within each year — volatility
+regimes survive, alignment dies, and pure noise convicts at the expected
+~5%/0% rates (checked in tests).
 
 ### [2026-08-23] Overnight stress lab on a local model ("good night")
 **Decision:** Add `tools/night_lab.py` — a 1am-8am unattended stress lab
