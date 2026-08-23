@@ -128,6 +128,19 @@ TP_RUNGS = [
     (1.00, 0.33),
 ]
 
+TP_RUNG_COUNT = TP_RUNG_LAST - TP_RUNG_FIRST + 1
+
+# Whole ladders, so a change of mind is a dropdown rather than ten edits.
+# Balanced is what the rungs ship seeded with. Aggressive front-loads the
+# selling and keeps a thin tail; Patient sells little early and rides most of
+# the position into the higher rungs. Each is a share of what is still held,
+# so none of them can oversell however far the ladder runs.
+TP_PRESETS = {
+    "Balanced": [share for _, share in TP_RUNGS],
+    "Aggressive": [0.20, 0.20, 0.25, 0.25, 0.30, 0.30, 0.35, 0.35, 0.40, 0.40],
+    "Patient": [0.05, 0.05, 0.05, 0.08, 0.10, 0.10, 0.15, 0.15, 0.20, 0.25],
+}
+
 
 @dataclass
 class Position:
@@ -325,12 +338,32 @@ def build_lists(wb: Workbook):
             ("Yes/No", ["Yes", "No"]),
             ("Class", CLASSES),
             ("Status", STATUSES),
+            ("Ladder preset", list(TP_PRESETS)),
         ],
         start=1,
     ):
         ws.cell(row=1, column=col, value=header)
         for offset, value in enumerate(values, start=2):
             ws.cell(row=offset, column=col, value=value)
+
+    # The preset percentages, one column per preset and one row per rung. A
+    # plan reads these through defined names rather than by sheet reference,
+    # so duplicating a plan tab still resolves them.
+    first_preset_col = 8
+    for offset, (name, shares) in enumerate(TP_PRESETS.items()):
+        col = first_preset_col + offset
+        ws.cell(row=1, column=col, value=name)
+        for index, share in enumerate(shares):
+            ws.cell(row=2 + index, column=col, value=share)
+    last_preset_col = first_preset_col + len(TP_PRESETS) - 1
+    names = f"Lists!${get_column_letter(first_preset_col)}$1"
+    names += f":${get_column_letter(last_preset_col)}$1"
+    body = f"Lists!${get_column_letter(first_preset_col)}$2"
+    body += f":${get_column_letter(last_preset_col)}${1 + TP_RUNG_COUNT}"
+    ws.parent.defined_names["PresetNames"] = DefinedName("PresetNames", attr_text=names)
+    ws.parent.defined_names["PresetShares"] = DefinedName(
+        "PresetShares", attr_text=body
+    )
     return ws
 
 
@@ -341,8 +374,8 @@ def build_settings(wb: Workbook):
     sheet_title(
         ws,
         "Settings",
-        "Four numbers the rest of the workbook reads. Change them here and "
-        "every tab follows.",
+        "The handful of numbers the rest of the workbook reads. Change them "
+        "here and every tab follows.",
         8,
     )
     ws.column_dimensions["A"].width = 3
@@ -380,14 +413,24 @@ def build_settings(wb: Workbook):
     label_value(
         ws,
         7,
+        "Keep at least this much riding",
+        0.10,
+        PCT,
+        "A ladder that quietly sells 97% of a position should say so. Any rung "
+        "whose Units left falls below this share of what you started with "
+        "turns amber on the plan. A tripwire, not a rule.",
+    )
+    label_value(
+        ws,
+        8,
         "Portfolio name",
         "Main book",
         None,
         "Shown on the Dashboard.",
     )
 
-    ws["B9"] = "Colour code"
-    ws["B9"].font = BOLD_F
+    ws["B10"] = "Colour code"
+    ws["B10"].font = BOLD_F
     swatches = [
         (
             INPUT_BG,
@@ -402,7 +445,7 @@ def build_settings(wb: Workbook):
         (WHITE, LINE, "White = calculated. Leave it alone and it stays right."),
     ]
     for offset, (bg, edge, text) in enumerate(swatches):
-        row = 10 + offset
+        row = 11 + offset
         chip = ws.cell(row=row, column=2, value="")
         chip.fill = PatternFill("solid", fgColor=bg)
         side = Side(style="thin", color=edge)
@@ -414,6 +457,7 @@ def build_settings(wb: Workbook):
     wb.defined_names["TaxRate"] = DefinedName("TaxRate", attr_text="Settings!$C$4")
     wb.defined_names["FeeRate"] = DefinedName("FeeRate", attr_text="Settings!$C$5")
     wb.defined_names["MaxWeight"] = DefinedName("MaxWeight", attr_text="Settings!$C$6")
+    wb.defined_names["TailFloor"] = DefinedName("TailFloor", attr_text="Settings!$C$7")
     return ws
 
 
@@ -738,10 +782,10 @@ def build_plan_tab(wb: Workbook, index: int):
 
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 20
-    for col in "CDEFGHIJKLMNO":
+    for col in "CDEFGHIJKLMNOPQ":
         ws.column_dimensions[col].width = 14
-    ws.column_dimensions["P"].width = 2
-    for col in "QRST":
+    ws.column_dimensions["R"].width = 2
+    for col in "STUV":
         ws.column_dimensions[col].width = 15
 
     row = TP_INPUT
@@ -814,6 +858,7 @@ def build_plan_tab(wb: Workbook, index: int):
         # the Feed cell says so. The register and Dashboard never see it, and
         # the watcher skips any row whose feed is not "live".
         (15, "What-if price", None, MONEY, True),
+        (16, "Ladder preset", "Balanced", None, True),
     ]
     for col, label, value, fmt, typed in strip:
         head = ws.cell(row=TP_LABEL, column=col, value=label.upper())
@@ -843,7 +888,21 @@ def build_plan_tab(wb: Workbook, index: int):
         showInputMessage=True,
     )
     mode_dv = DataValidation(type="list", formula1='"Auto,Manual"', allow_blank=True)
-    for dv, column in ((holding_dv, 2), (mode_dv, 6)):
+    preset_dv = DataValidation(
+        type="list",
+        formula1='"' + ",".join(TP_PRESETS) + '"',
+        allow_blank=True,
+        promptTitle="A whole ladder in one choice",
+        prompt=(
+            "Sets every rung at once. Balanced is the shipped plan; "
+            "Aggressive front-loads the selling; Patient rides more of the "
+            "position into the higher rungs.\n\n"
+            "Any rung where you have typed your own percent keeps it — the "
+            "preset only fills the ones you have left blank."
+        ),
+        showInputMessage=True,
+    )
+    for dv, column in ((holding_dv, 2), (mode_dv, 6), (preset_dv, 16)):
         ws.add_data_validation(dv)
         dv.add(ws.cell(row=TP_INPUT, column=column))
 
@@ -897,14 +956,15 @@ def build_plan_tab(wb: Workbook, index: int):
 
     # ---- what the whole plan adds up to ------------------------------------
     first, last = TP_RUNG_FIRST, TP_RUNG_LAST
-    planned = f"SUM($I${first}:$I${last})"
+    planned = f"SUM($J${first}:$J${last})"
+    preset = f"$P${row}"
     tiles = [
         (2, "Net cash it returns", f"=SUM($K${first}:$K${last})", MONEY0),
         (
             4,
             "Average exit price",
             f'=IF(MIN({planned},{units})=0,"—",'
-            f"SUM($J${first}:$J${last})/MIN({planned},{units}))",
+            f"SUM($K${first}:$K${last})/MIN({planned},{units}))",
             MONEY,
         ),
         (6, "% of position sold", f'=IF({units}=0,"",{planned}/{units})', PCT),
@@ -963,12 +1023,22 @@ def build_plan_tab(wb: Workbook, index: int):
             fill=over,
         ),
     )
+    ws.conditional_formatting.add(
+        f"H{TP_TILE_VALUE}",
+        FormulaRule(
+            formula=[
+                f"AND($H${TP_TILE_VALUE}>=0," f"$H${TP_TILE_VALUE}<{units}*TailFloor)"
+            ],
+            font=Font(size=15, bold=True, color="92400E"),
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
+        ),
+    )
 
     # ---- the ladder --------------------------------------------------------
     for start, end, text, colour in [
         (2, 5, "The rung", SLATE),
         (6, 7, "If you sold the whole position here", "1D4ED8"),
-        (8, 15, "Or take a slice at each rung", ACCENT),
+        (8, 17, "Or take a slice at each rung", ACCENT),
     ]:
         ws.merge_cells(
             start_row=TP_BANNER, start_column=start, end_row=TP_BANNER, end_column=end
@@ -990,11 +1060,13 @@ def build_plan_tab(wb: Workbook, index: int):
         "Net cash",
         "Net profit",
         "% of what's left",
+        "% used",
         "Units to sell",
         "Gross",
         "Net cash",
         "Cash so far",
         "Units left",
+        "Sold so far",
         "Status",
         "Break-even of the rest",
     ]
@@ -1010,7 +1082,7 @@ def build_plan_tab(wb: Workbook, index: int):
     for offset in range(last - first + 1):
         r = first + offset
         seed = TP_RUNGS[offset] if offset < len(TP_RUNGS) else None
-        for col in range(2, 16):
+        for col in range(2, 18):
             cell = ws.cell(row=r, column=col)
             style_body(cell)
             if offset % 2 == 1:
@@ -1021,17 +1093,20 @@ def build_plan_tab(wb: Workbook, index: int):
         gain = ws.cell(row=r, column=2, value=seed[0] if seed else None)
         gain.number_format = PCT0
 
-        sold_above = "0" if r == first else f"SUM($I${first}:$I{r - 1})"
+        sold_above = "0" if r == first else f"SUM($J${first}:$J{r - 1})"
         remaining = f"MAX(0,{units}-{sold_above})"
-        # The typed cell is a plain percent-of-what-is-left, nothing else. The
-        # units cell is formula-only, so typing a number can no longer destroy
-        # the cascade — the defect that froze the old ladder, where the input
-        # and the formula shared a cell and the first edit wiped the formula.
-        share = ws.cell(row=r, column=8, value=seed[1] if seed else None)
+        # The typed cell is a plain percent-of-what-is-left and nothing else.
+        # Blank means "whatever the preset says for this rung", so choosing a
+        # preset re-plans the whole ladder without overwriting a rung the owner
+        # has decided for themselves. Everything derived from it lives in cells
+        # that are never typed, which is what stops an edit freezing the
+        # cascade — the defect where the input and the formula shared a cell
+        # and the first edit wiped the formula.
+        share = ws.cell(row=r, column=8)
         share.number_format = PCT
 
         blank = f'$B{r}=""'
-        noqty = f'OR($B{r}="",$H{r}="")'
+        noqty = f'OR($B{r}="",$I{r}="")'
 
         ws.cell(
             row=r, column=3, value=f'=IF({blank},"",{cost}*(1+$B{r}))'
@@ -1053,45 +1128,63 @@ def build_plan_tab(wb: Workbook, index: int):
         ws.cell(
             row=r, column=7, value=f'=IF({blank},"",$F{r}-{basis})'
         ).number_format = MONEY
+        # The percent actually in force: what you typed, or the preset's share
+        # for this rung when you have left the cell blank. Shown rather than
+        # folded into the units formula, so a preset-driven ladder still reads
+        # as numbers on the screen instead of ten empty cells.
         ws.cell(
             row=r,
             column=9,
-            value=f'=IF({noqty},"",ROUND(MIN($H{r},1)*{remaining},6))',
+            value=(
+                f'=IF({blank},"",IF($H{r}<>"",MIN($H{r},1),'
+                f"IFERROR(INDEX(PresetShares,{offset + 1},"
+                f'MATCH({preset},PresetNames,0)),"")))'
+            ),
+        ).number_format = PCT
+        ws.cell(
+            row=r,
+            column=10,
+            value=f'=IF({noqty},"",ROUND($I{r}*{remaining},6))',
         ).number_format = QTY
         ws.cell(
-            row=r, column=10, value=f'=IF({noqty},"",$I{r}*$C{r})'
+            row=r, column=11, value=f'=IF({noqty},"",$J{r}*$C{r})'
         ).number_format = MONEY
         ws.cell(
             row=r,
-            column=11,
+            column=12,
             value=(
-                f'=IF({noqty},"",$J{r}*(1-FeeRate)'
-                f"-MAX(0,($C{r}-{cost})*$I{r})*TaxRate)"
+                f'=IF({noqty},"",$K{r}*(1-FeeRate)'
+                f"-MAX(0,($C{r}-{cost})*$J{r})*TaxRate)"
             ),
         ).number_format = MONEY
         ws.cell(
-            row=r, column=12, value=f'=IF({noqty},"",SUM($K${first}:$K{r}))'
+            row=r, column=13, value=f'=IF({noqty},"",SUM($L${first}:$L{r}))'
         ).number_format = MONEY
         ws.cell(
             row=r,
-            column=13,
-            value=f'=IF({noqty},"",MAX(0,{units}-SUM($I${first}:$I{r})))',
+            column=14,
+            value=f'=IF({noqty},"",MAX(0,{units}-SUM($J${first}:$J{r})))',
         ).number_format = QTY
         ws.cell(
             row=r,
-            column=14,
+            column=15,
+            value=f'=IF(OR({noqty},{units}=0),"",SUM($J${first}:$J{r})/{units})',
+        ).number_format = PCT
+        ws.cell(
+            row=r,
+            column=16,
             value=(
                 # The 0.0001 is rounding headroom: each derived unit count is
                 # ROUNDed, so a full ladder can overshoot the position by a
                 # millionth and must not read as oversold.
-                f'=IF({noqty},"",IF(SUM($I${first}:$I{r})>{units}+0.0001,"Oversold",'
-                f'IF($L{r}>={basis},"Free ride","Still exposed")))'
+                f'=IF({noqty},"",IF(SUM($J${first}:$J{r})>{units}+0.0001,"Oversold",'
+                f'IF($M{r}>={basis},"Free ride","Still exposed")))'
             ),
         )
         ws.cell(
             row=r,
-            column=15,
-            value=f'=IF({noqty},"",IF($M{r}<=0,"—",MAX(0,{basis}-$L{r})/$M{r}))',
+            column=17,
+            value=f'=IF({noqty},"",IF($N{r}<=0,"—",MAX(0,{basis}-$M{r})/$N{r}))',
         ).number_format = MONEY
 
     share_dv = DataValidation(
@@ -1113,7 +1206,7 @@ def build_plan_tab(wb: Workbook, index: int):
     share_dv.add(f"H{first}:H{last}")
 
     ws.conditional_formatting.add(
-        f"N{first}:N{last}",
+        f"P{first}:P{last}",
         CellIsRule(
             operator="equal",
             formula=['"Free ride"'],
@@ -1122,12 +1215,23 @@ def build_plan_tab(wb: Workbook, index: int):
         ),
     )
     ws.conditional_formatting.add(
-        f"N{first}:N{last}",
+        f"P{first}:P{last}",
         CellIsRule(
             operator="equal",
             formula=['"Oversold"'],
             font=Font(color=BAD, bold=True),
             fill=over,
+        ),
+    )
+    # The rung where the tail gets thinner than you said you wanted. A ladder
+    # that sells 97% of a position is a decision, not an accident — but only if
+    # it is visible on the row where it happens.
+    ws.conditional_formatting.add(
+        f"N{first}:N{last}",
+        FormulaRule(
+            formula=[f'AND($N{first}<>"",$N{first}<{units}*TailFloor)'],
+            font=Font(bold=True, color="92400E"),
+            fill=PatternFill("solid", fgColor=WARN_SOFT),
         ),
     )
     ws.conditional_formatting.add(
@@ -1140,17 +1244,23 @@ def build_plan_tab(wb: Workbook, index: int):
         ),
     )
     ws.conditional_formatting.add(
-        f"L{first}:L{last}",
+        f"M{first}:M{last}",
         DataBarRule(start_type="min", end_type="max", color=ACCENT),
+    )
+    ws.conditional_formatting.add(
+        f"O{first}:O{last}",
+        DataBarRule(
+            start_type="num", start_value=0, end_type="num", end_value=1, color=MUTED
+        ),
     )
 
     # ---- recovery math, beside the ladder ----------------------------------
     ws.merge_cells(
-        start_row=TP_BANNER, start_column=17, end_row=TP_BANNER, end_column=20
+        start_row=TP_BANNER, start_column=19, end_row=TP_BANNER, end_column=22
     )
-    for col in range(17, 21):
+    for col in range(19, 23):
         ws.cell(row=TP_BANNER, column=col).fill = PatternFill("solid", fgColor=BAD)
-    rec = ws.cell(row=TP_BANNER, column=17, value="If it goes the other way")
+    rec = ws.cell(row=TP_BANNER, column=19, value="If it goes the other way")
     rec.font = HEAD_F
     rec.alignment = Alignment(vertical="center", horizontal="center")
     for offset, label in enumerate(
@@ -1161,7 +1271,7 @@ def build_plan_tab(wb: Workbook, index: int):
             "Gain needed to get back",
         ]
     ):
-        cell = ws.cell(row=TP_HEADER, column=17 + offset, value=label)
+        cell = ws.cell(row=TP_HEADER, column=19 + offset, value=label)
         cell.font = HEAD_F
         cell.fill = HEAD_FILL
         cell.border = BOX
@@ -1169,17 +1279,17 @@ def build_plan_tab(wb: Workbook, index: int):
 
     for offset, drawdown in enumerate([i / 100 for i in range(10, 81, 10)]):
         r = TP_RUNG_FIRST + offset
-        for col in range(17, 21):
+        for col in range(19, 23):
             cell = ws.cell(row=r, column=col)
             style_body(cell)
             if offset % 2 == 1:
                 cell.fill = BAND_FILL
-        ws.cell(row=r, column=17, value=round(drawdown, 2)).number_format = PCT0
-        ws.cell(row=r, column=18, value=f"={cost}*(1-$Q{r})").number_format = MONEY
-        ws.cell(row=r, column=19, value=f"=$R{r}*{units}").number_format = MONEY
-        ws.cell(row=r, column=20, value=f"=1/(1-$Q{r})-1").number_format = PCT0
+        ws.cell(row=r, column=19, value=round(drawdown, 2)).number_format = PCT0
+        ws.cell(row=r, column=20, value=f"={cost}*(1-$S{r})").number_format = MONEY
+        ws.cell(row=r, column=21, value=f"=$T{r}*{units}").number_format = MONEY
+        ws.cell(row=r, column=22, value=f"=1/(1-$S{r})-1").number_format = PCT0
     ws.conditional_formatting.add(
-        f"T{TP_RUNG_FIRST}:T{TP_RUNG_FIRST + 7}",
+        f"V{TP_RUNG_FIRST}:V{TP_RUNG_FIRST + 7}",
         CellIsRule(
             operator="greaterThanOrEqual",
             formula=["1"],
@@ -1191,7 +1301,7 @@ def build_plan_tab(wb: Workbook, index: int):
     # The rung the market is heading for next, resolved here rather than in the
     # watcher so the sheet and the alert can never disagree about it.
     nxt = TP_RUNG_FIRST + 9
-    ws.cell(row=nxt, column=17, value="NEXT RUNG").font = KPI_LABEL_F
+    ws.cell(row=nxt, column=19, value="NEXT RUNG").font = KPI_LABEL_F
     next_block = [
         (
             "which",
@@ -1202,19 +1312,19 @@ def build_plan_tab(wb: Workbook, index: int):
             f"COUNT($C${first}:$C${last})),1)",
             "0",
         ),
-        ("gain", f"=INDEX($B${first}:$B${last},$R{nxt})", PCT0),
-        ("target price", f"=INDEX($C${first}:$C${last},$R{nxt})", MONEY),
-        ("away", f"=INDEX($D${first}:$D${last},$R{nxt})", PCT),
-        ("units to sell", f"=INDEX($I${first}:$I${last},$R{nxt})", QTY),
-        ("net cash", f"=INDEX($K${first}:$K${last},$R{nxt})", MONEY),
-        ("units left after", f"=INDEX($M${first}:$M${last},$R{nxt})", QTY),
-        ("break-even after", f"=INDEX($O${first}:$O${last},$R{nxt})", MONEY),
+        ("gain", f"=INDEX($B${first}:$B${last},$T{nxt})", PCT0),
+        ("target price", f"=INDEX($C${first}:$C${last},$T{nxt})", MONEY),
+        ("away", f"=INDEX($D${first}:$D${last},$T{nxt})", PCT),
+        ("units to sell", f"=INDEX($J${first}:$J${last},$T{nxt})", QTY),
+        ("net cash", f"=INDEX($L${first}:$L${last},$T{nxt})", MONEY),
+        ("units left after", f"=INDEX($N${first}:$N${last},$T{nxt})", QTY),
+        ("break-even after", f"=INDEX($Q${first}:$Q${last},$T{nxt})", MONEY),
     ]
     for offset, (label, formula, fmt) in enumerate(next_block):
         r = nxt + offset
-        lab = ws.cell(row=r, column=17, value=label if offset else "which rung")
+        lab = ws.cell(row=r, column=19, value=label if offset else "which rung")
         lab.font = SMALL_F
-        cell = ws.cell(row=r, column=18, value=formula)
+        cell = ws.cell(row=r, column=20, value=formula)
         style_derived(cell)
         cell.number_format = fmt
 
@@ -1231,13 +1341,16 @@ def build_plan_tab(wb: Workbook, index: int):
             "What you type at each rung is a percent of what is left, so "
             "changing one re-sizes every rung below it against what actually "
             "remains — the units column works itself out and is never typed. "
-            "Price mode on Manual pins Your price over the feed, and a "
-            "What-if price re-prices this tab alone until you clear it."
+            "Leave a rung blank and the Ladder preset fills it, so a whole "
+            "plan is one dropdown. Units left turns amber once the tail drops "
+            "under the share you set on Settings. Price mode on Manual pins "
+            "Your price over the feed, and a What-if price re-prices this tab "
+            "alone until you clear it."
         ),
     )
     note.font = SMALL_F
     note.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.merge_cells(start_row=last + 2, start_column=2, end_row=last + 3, end_column=11)
+    ws.merge_cells(start_row=last + 2, start_column=2, end_row=last + 4, end_column=11)
     return ws
 
 
@@ -1448,11 +1561,11 @@ def build_watch(wb: Workbook):
                 "))",
                 PCT,
             ),
-            (9, f'=IF({holding}="","",{plan}!$R${nxt + 1})', PCT0),
-            (10, f'=IF({holding}="","",{plan}!$R${nxt + 2})', MONEY),
-            (11, f'=IF({holding}="","",{plan}!$R${nxt + 3})', PCT),
-            (12, f'=IF({holding}="","",{plan}!$R${nxt + 4})', QTY),
-            (13, f'=IF({holding}="","",{plan}!$R${nxt + 5})', MONEY),
+            (9, f'=IF({holding}="","",{plan}!$T${nxt + 1})', PCT0),
+            (10, f'=IF({holding}="","",{plan}!$T${nxt + 2})', MONEY),
+            (11, f'=IF({holding}="","",{plan}!$T${nxt + 3})', PCT),
+            (12, f'=IF({holding}="","",{plan}!$T${nxt + 4})', QTY),
+            (13, f'=IF({holding}="","",{plan}!$T${nxt + 5})', MONEY),
         ]
         for col, formula, fmt in cells:
             cell = ws.cell(row=row, column=col, value=formula)
@@ -1521,7 +1634,7 @@ def build_dashboard(wb: Workbook):
     ws.cell(
         row=2,
         column=1,
-        value='=Settings!$C$7&" — everything here is calculated, nothing here is typed."',
+        value='=Settings!$C$8&" — everything here is calculated, nothing here is typed."',
     ).font = SUB_F
 
     ws.column_dimensions["A"].width = 3
@@ -1909,7 +2022,8 @@ def build_start_here(wb: Workbook):
     row = line(
         row,
         "Settings",
-        "Tax rate, fees, weight limit. Four numbers the other tabs read.",
+        "Tax rate, fees, weight limit, the tail you want left riding. The "
+        "numbers the other tabs read.",
     )
     row += 1
 

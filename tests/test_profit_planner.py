@@ -27,6 +27,7 @@ from tools.build_profit_planner import (  # noqa: E402
     STATUSES,
     TP_HEADER,
     TP_INPUT,
+    TP_PRESETS,
     TP_RUNG_FIRST,
     TP_RUNG_LAST,
     TP_RUNGS,
@@ -315,7 +316,7 @@ def test_the_next_rung_never_lands_on_a_blank_row(wb):
     about the position that had run furthest.
     """
     for index in range(1, PLAN_COUNT + 1):
-        which = wb[f"Plan {index}"].cell(row=TP_RUNG_FIRST + 9, column=18).value
+        which = wb[f"Plan {index}"].cell(row=TP_RUNG_FIRST + 9, column=20).value
         assert "MATCH(0," in which
         assert f"COUNT($C${TP_RUNG_FIRST}" in which, "cap on rungs, not on rows"
         assert "IFERROR(" in which, "no rung passed yet is not an error"
@@ -325,26 +326,74 @@ def test_the_ladder_takes_percents_and_derives_units(wb):
     """Typing a unit count over the seeded formulas froze the old ladder.
 
     The typed cell held the cascade formula, so the first edit destroyed it
-    and every rung below stopped re-sizing. The input is now a plain percent
-    of the remainder and the units column is formula-only, so nothing the
-    owner types can stop the rows below reacting.
+    and every rung below stopped re-sizing. The input is now a bare percent
+    cell and everything downstream of it is formula-only, so nothing the owner
+    types can stop the rows below reacting.
     """
     for index in range(1, PLAN_COUNT + 1):
         ws = wb[f"Plan {index}"]
-        for offset, (_, share) in enumerate(TP_RUNGS):
+        for offset in range(len(TP_RUNGS)):
             r = TP_RUNG_FIRST + offset
-            typed = ws.cell(row=r, column=8).value
-            assert typed == share, "the input cell is a number, never a formula"
-            units = ws.cell(row=r, column=9).value
+            assert (
+                ws.cell(row=r, column=8).value is None
+            ), "the input cell ships empty and holds no formula to destroy"
+            used = ws.cell(row=r, column=9).value
+            assert f"MIN($H{r},1)" in used, "a typo past 100% cannot oversell"
+            assert "PresetShares" in used, "a blank rung falls back to the preset"
+            units = ws.cell(row=r, column=10).value
             assert units.startswith("=IF("), f"Plan {index} row {r}"
-            assert f"MIN($H{r},1)" in units, "a typo past 100% cannot oversell"
+            assert f"$I{r}" in units, "units derive from the percent in force"
             if r > TP_RUNG_FIRST:
-                assert f"SUM($I${TP_RUNG_FIRST}:$I{r - 1})" in units, (
+                assert f"SUM($J${TP_RUNG_FIRST}:$J{r - 1})" in units, (
                     "each rung sizes itself from the units the rungs above "
                     "actually took"
                 )
-        next_units = ws.cell(row=TP_RUNG_FIRST + 9 + 4, column=18).value
-        assert f"$I${TP_RUNG_FIRST}" in next_units, "next-rung panel reads units"
+        next_units = ws.cell(row=TP_RUNG_FIRST + 9 + 4, column=20).value
+        assert f"$J${TP_RUNG_FIRST}" in next_units, "next-rung panel reads units"
+
+
+def test_a_preset_fills_only_the_rungs_left_blank(wb):
+    """A preset is a starting point, not an override.
+
+    Picking one must not silently discard a rung the owner has decided for
+    themselves, so the fallback is keyed on the input cell being empty.
+    """
+    assert set(TP_PRESETS) >= {"Balanced"}, "the shipped ladder needs a name"
+    for name, shares in TP_PRESETS.items():
+        assert len(shares) >= len(TP_RUNGS), f"{name} covers every seeded rung"
+        assert all(0 < share <= 1 for share in shares), f"{name} is a share"
+        left = 1.0
+        for share in shares:
+            left *= 1 - share
+        assert left > 0, f"{name} must leave a tail riding"
+    assert TP_PRESETS["Balanced"] == [share for _, share in TP_RUNGS]
+
+    for index in range(1, PLAN_COUNT + 1):
+        ws = wb[f"Plan {index}"]
+        for offset in range(len(TP_RUNGS)):
+            r = TP_RUNG_FIRST + offset
+            used = ws.cell(row=r, column=9).value
+            assert f'$H{r}<>""' in used, "a typed percent always wins"
+            assert f"INDEX(PresetShares,{offset + 1}," in used, "right rung row"
+            assert "IFERROR(" in used, "an unnamed preset must not error"
+        assert ws.cell(row=TP_INPUT, column=16).value == "Balanced"
+
+
+def test_the_thin_tail_warning_is_driven_by_settings(wb):
+    """A ladder that sells 97% of a position has to say so on the row."""
+    settings = wb["Settings"]
+    assert settings.cell(row=7, column=3).value == 0.10
+    for index in range(1, PLAN_COUNT + 1):
+        rules = wb[f"Plan {index}"].conditional_formatting
+        formulas = [
+            formula
+            for group in rules
+            for rule in group.rules
+            for formula in (rule.formula or [])
+        ]
+        assert any(
+            "TailFloor" in formula for formula in formulas
+        ), f"Plan {index} never checks the tail against Settings"
 
 
 def test_a_what_if_price_reprices_the_tab_and_says_so(wb):
