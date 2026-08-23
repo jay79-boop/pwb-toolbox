@@ -163,6 +163,17 @@ A worked example, for this repo's 21st MCP key:
   `check` alerts when an open trade's stop or target level trades. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/night_lab.py` — the "good night" command: unattended trade stress
+  testing between 1am and 8am, driven by a local Ollama model. The design rule
+  is **the model proposes, Python computes** — an LLM cannot calculate a
+  drawdown, so it only ever generates hypotheses (thesis attacks, shock
+  scenarios, suspected leaks) and deterministic arithmetic produces every
+  number from the real record. Anything unparseable or uncheckable is dropped
+  rather than repaired. Yields the machine the moment you touch the keyboard
+  and checkpoints after every job, so an interruption costs one job, not the
+  night. Protocol in `docs/night-lab.md`; data in `night_lab/` (gitignored —
+  this fork is public). Policy and arithmetic are pure and tested
+  (`tests/test_night_lab.py`)
 - `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
   `excel` writes the move ladder workbook for one contract (rungs × time
   columns, greeks, shot clock, hurdle) through `pwb_toolbox.options`; `serve`
@@ -292,6 +303,8 @@ python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
+python tools/night_lab.py plan    # queue tonight's overnight stress jobs
+python tools/night_lab.py verdict --quiet  # morning findings; silent if none
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
@@ -655,6 +668,31 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-23] Overnight stress lab on a local model ("good night")
+**Decision:** Add `tools/night_lab.py` — a 1am-8am unattended stress lab
+driven by a local Ollama model, triggered by saying "good night". Four job
+kinds: adversarial attacks on open theses, shock scenarios over the closed
+record, parameter fragility sweeps, and leak-mining the paper history.
+**The rule:** *the model proposes, Python computes.* An LLM cannot calculate
+a drawdown; asked to, it produces a fluent unfalsifiable number, and seven
+hours of that is seven hours of fiction that looks like analysis. So the
+model only generates hypotheses — the thing it is good at and that gets
+better with volume you could not afford to buy at cloud prices — and every
+resulting figure comes from deterministic arithmetic over the real ledger.
+Proposals that will not parse, name no checkable condition, or drift onto a
+ticker the trade does not hold are **dropped, never repaired**.
+**Why overnight at all:** the arithmetic alone runs in seconds and does not
+need the night. What needs the night is *volume* of hypotheses, which is
+exactly what a free local model buys.
+**Yielding:** the window and the idle timer are a pure function
+(`next_action`), so 3am behaviour is tested at 3pm. Jobs are small and the
+queue checkpoints after each one, so a person sitting down at 3am costs the
+job in flight and nothing else. `keep_alive: 0` hands the GPU straight back.
+**Morning:** silence is the good outcome — `verdict --quiet` prints nothing
+when nothing broke, and the orientation hook stays quiet with it. Findings
+stage as **pending** proposals under the wisdom doc's propose-then-approve
+contract; the lab never changes a rule or places a trade.
 
 ### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
 **Decision:** Add a second, deliberately speculative track beside the core
