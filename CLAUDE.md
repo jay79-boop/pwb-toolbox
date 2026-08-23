@@ -121,9 +121,65 @@ A worked example, for this repo's 21st MCP key:
   and says when a rung is within reach, a holding has moved, or a position has
   outgrown its limit. Skips anything without a live price rather than alerting
   on a number somebody typed months ago
+- `tools/engagement.py` — tracks a business through the AI & automation
+  readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
+  from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
+  lessons retro. The `engagement-flow` skill is what actually does the phase
+  work; this is the state and the gates. Engagement data lands in
+  `engagements/`, which is gitignored because this fork is public.
+  `export-flow` writes the engagement as a `flow.json` that
+  `static/flow-canvas.html` imports, so an engagement can be seen as a map
+- `tools/blueprint_converter.py` — converts a business blueprint
+  (`docs/blueprint-schema.json`) between JSON and Excel. The blueprint is the
+  shared data model of this trio: `static/blueprint-builder.html` edits one,
+  `static/blueprint-dashboard.html` visualizes one read-only, and
+  `static/flow-canvas.html` imports one (each process renders as a chain of
+  steps). `docs/blueprint-example.json` is a worked example,
+  `docs/blueprint-guide.md` the manual
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
+- `tools/kronos_lab.py` — measures the Kronos K-line foundation model
+  (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
+  hit rate with exact p-value, information coefficient, error vs persistence)
+  plus a forecast-chart mode. Model runs happen on the user's machine — the
+  cloud proxy blocks Hugging Face — but the scoring core is pure math and
+  tested with fake predictors (`tests/test_kronos_lab.py`)
+- `tools/crypto_scan.py` — the "trade crypto" command: ranks liquid crypto
+  pairs by the signals with published evidence behind them (1–4 week momentum,
+  MA trend, volume surge; ATR% for sizing only) and flags the BTC regime every
+  alt trade swims in. A screener feeding the pre-trade pack and paper journal,
+  not a trader. Scoring is pure math tested on synthetic bars
+  (`tests/test_crypto_scan.py`); signal choices are sourced in
+  `docs/trading-wisdom.md`
+- `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
+  the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
+  sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
+  spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
+  pot is spent until `review` runs, scores every close in R-multiples, and
+  `check` alerts when an open trade's stop or target level trades. Protocol
+  in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
+  fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
+  `excel` writes the move ladder workbook for one contract (rungs × time
+  columns, greeks, shot clock, hurdle) through `pwb_toolbox.options`; `serve`
+  is the loopback-only stdlib quote helper (port 8877, CORS for file://) that
+  lights up the lab page's Refresh button. Ladder math and quote handling are
+  pure and tested (`tests/test_spicy_lab.py`)
+- `static/spicy-lab.html` — the speculative desk's visual instrument: enter
+  one contract, see the shot clock and hourly hurdle, a move ladder (rungs ×
+  expected-move or fixed %, columns marching through time), greek attribution
+  bars for any move/minutes/IV scenario, and premium-velocity slices with an
+  exit-tell verdict. Opens from `file://`, loads `option-lab.js` from the same
+  directory (never duplicates its math), saves inputs to localStorage.
+  Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
+  redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
+  status/owner coloring, layered auto-layout, undo, and Paper/Slate themes.
+  Opens from `file://`, saves to localStorage, exports JSON. Import accepts
+  its own exports, `engagement.py export-flow` files, and business blueprints
+  (`docs/blueprint-schema.json`). Design spec in
+  `docs/specs/2026-08-22-flow-canvas-design.md`
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -135,8 +191,18 @@ A worked example, for this repo's 21st MCP key:
   contracts through the Python module and requires node to agree to 1e-9, so the
   two cannot drift into disagreeing about the same contract. Adds what Python has
   no counterpart for — rho, touch and finish probabilities, and the ladders —
-  tested against closed forms in `static/option-lab.test.js`
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`, plus
+  tested against closed forms in `static/option-lab.test.js`. Also home to
+  `attribution` — splits a repriced premium change into delta/gamma/theta/vega
+  dollars with the unexplained part reported as residual — which the spicy lab
+  leans on
+- `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
+  machine-enforceable risk rules with their originating traders/papers, the
+  retail base-rate studies that justify paper-first, the evidence review
+  behind `crypto_scan`'s signals, iron condor venue/construction facts, and
+  the propose-then-approve learning loop. Trading sessions and the desk agent
+  consult it; it grows by proposal, never by silent edit
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
+  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below) and
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
@@ -201,6 +267,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
+python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
@@ -520,11 +587,76 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Decision Log
 
-### [2026-08-22] StrategyComparator Implementation (PR #87)
-**Decision:** Built a reusable harness (`pwb_toolbox.backtesting.comparator`) to run multiple strategies on identical data and compare them.
-**How:** `StrategyComparator` class orchestrates running registered strategies, extracts NAV series, calculates individual metrics, creates weighted portfolio, computes correlation matrix. Supports custom indicators, strategy kwargs, Cerebro/broker config.
-**What it solves:** Eliminates manual result wrangling. One call returns navs, individual_metrics, portfolio_metrics, correlation_matrix for N strategies. 18 unit tests validate calculations on synthetic data.
-**Dependencies:** Used by backtest lab to compare all three strategies head-to-head.
+### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
+**Decision:** Add a second, deliberately speculative track beside the core
+program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent
+protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped
+at 2.5%), momentum stocks, defined-risk credit spreads. Fixed pot as a slice
+of the paper account; per-trade max loss 10% of pot; 4 positions max; spent
+pot locks the desk until `review` runs; refill only after review. Owner
+executes every order (options in thinkorswim paperMoney — TradingView has no
+options; stocks/crypto in TradingView paper); agent plans, logs, watches
+(`check` alerts on stop/target), and reviews. Two triggers: "trade spicy" on
+demand, plus a Windows-scheduled morning scan.
+**Why:** The owner wants high-risk/high-reward speculation *and* steady safe
+core growth. The wall is the design: the spec pot can die without touching
+core statistics, and its scored record (R-multiples per lane) is the desk's
+real product — after 30 trades a lane either proves expectancy or gets a
+pause proposal. Self-learning follows the wisdom-doc contract: the agent
+drafts changes from the record; the owner approves.
+
+### [2026-08-22] Paper-first trading program: wisdom base + crypto scanner + condor mock run
+**Decision:** Start a paper-first trading program with hard gates to live
+money. Three pieces shipped together: `docs/trading-wisdom.md` (ten sourced,
+machine-enforceable risk rules and the evidence base), `tools/crypto_scan.py`
+(the "trade crypto" screener over evidence-backed momentum signals), and a
+weekly SPX/XSP iron condor mock run starting Monday (paper only, collecting
+expected-move-vs-realized data).
+**Why:** The owner wants to trade actively without breaking the bank. The
+published base rates (97% of persistent Brazilian day traders lost money;
+~1.6% of Taiwanese day traders predictably profitable) say unstructured
+retail trading fails by default; the documented practices of successful
+traders converge on small constant risk, positive expectancy proven before
+sizing up, and mechanically enforced limits.
+**Gates to live:** a strategy trades real money only after positive
+expectancy over ≥30 paper trades (rule 9 in the wisdom doc), and then under
+the desk agent's caps (PR #78). "Self-learning" = the propose-then-approve
+loop in the wisdom doc: the system drafts its own rule changes from journal
+evidence; the owner approves every change.
+**Also decided:** Kronos fine-tuning parked — not until the backtest lab
+(#87) is merged and the paper program is producing data; any future
+fine-tuned model must pass `kronos_lab` eval before use.
+
+### [2026-08-22] Kronos foundation model: measured, no zero-shot edge (PR #93)
+**Decision:** Before integrating the Kronos K-line foundation model
+(shiyu-coder/Kronos) anywhere, measure it with `tools/kronos_lab.py`. Result on
+Kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all
+post-training-cutoff 2026 data: BTC-USD 46.7% direction hit rate (p=0.70),
+ES=F 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse
+than persistence on both.
+**Why:** Three candidate uses were on the table — a fourth signal for the
+backtest lab, a confirmation filter on ICT entries, a discretionary forecast
+chart. All three require measurable directional skill; none was found.
+**Outcome:** Kronos stays out of the backtest lab, the desk agent, and live
+decisions. The forecast-chart mode exists but must not inform trades. The lab
+tool stays merged as the standing instrument for any future revisit (a
+fine-tuned variant, a newer model release) — re-run the eval before believing
+any of them.
+
+### [2026-08-22] StrategyComparator: the portfolio side (PR #90)
+**Decision:** A reusable harness, `pwb_toolbox.backtesting.comparator`, that runs
+several strategies over identical data and reports how they interact.
+**How:** `StrategyComparator` runs each registered strategy, extracts its NAV
+series, computes per-strategy metrics through `pwb_toolbox.performance`, builds a
+weighted portfolio NAV, and returns the correlation matrix alongside both sets of
+metrics. 18 unit tests drive it on synthetic data.
+**Why it is not the backtest lab (PR #87):** they answer different questions on
+different axes. The lab takes *one* strategy across many instruments and two
+vendor feeds and asks whether its edge survives the data. The comparator takes
+*many* strategies over one dataset and asks whether they hedge each other or
+amplify. The lab decides whether an edge is real; the comparator decides whether
+several real ones belong in the same account. This entry was originally filed
+under "(PR #87)", which is how the two came to look like duplicated work.
 
 ### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
 **Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
@@ -567,10 +699,12 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 **Now (This week — parallel tracks):**
 
-*Backtest Lab (PR #87):*
+*StrategyComparator (PR #90):*
 - [x] Implement `StrategyComparator` — runs all three strategies on identical price data
 - [x] Add correlation matrix calculation (Pearson + rolling)
 - [x] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
+
+*Backtest Lab (PR #87):*
 - [ ] Test on 90-day ICT price history
 - [ ] Success: See if 15-Min Reversal adds value or just adds noise
 

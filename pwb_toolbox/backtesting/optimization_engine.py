@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .backtest_engine import run_strategy
+from .config import StrategyConfig, GAOptimizationConfig
 from ..datasets import get_pricing
 from ..performance.metrics import calmar_ratio
 
@@ -34,7 +35,7 @@ def _evaluate(
         "weights": weights,
     }
 
-    strategy = run_strategy(
+    config = StrategyConfig(
         indicator_cls=indicator_cls,
         indicator_kwargs=indicator_kwargs,
         strategy_cls=strategy_cls,
@@ -45,6 +46,7 @@ def _evaluate(
         cerebro_kwargs=cerebro_kwargs,
         broker_kwargs=broker_kwargs,
     )
+    strategy = run_strategy(config)
 
     # Get strategy NAV
     nav_df = pd.DataFrame(strategy.log_data)
@@ -57,28 +59,23 @@ def _evaluate(
 
 
 def optimize_strategy_ga(
-    indicator_cls,
-    strategy_cls,
-    strategy_kwargs,
-    symbols,
-    start_date,
-    cash,
-    n_weights,  # <-- number of weights to optimise
-    bias_bounds=(-10, 10),
-    weight_bounds=(-10, 10),
-    pop_size=64,
-    n_generations=40,
-    cx_prob=0.6,  # crossover probability
-    mut_prob=0.3,  # mutation probability
-    cerebro_kwargs=None,
-    broker_kwargs=None,
-    seed=None,
+    strategy_config: StrategyConfig,
+    optimization_config: GAOptimizationConfig,
 ):
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
+    """Optimize strategy indicator parameters using genetic algorithm.
 
-    genome_len = 1 + n_weights  # bias + weights
+    Args:
+        strategy_config: StrategyConfig with strategy, data, and backtrader settings.
+        optimization_config: GAOptimizationConfig with GA hyperparameters.
+
+    Returns:
+        Dict with best bias, weights, Calmar ratio, and convergence logbook.
+    """
+    if optimization_config.seed is not None:
+        random.seed(optimization_config.seed)
+        np.random.seed(optimization_config.seed)
+
+    genome_len = 1 + optimization_config.n_weights  # bias + weights
 
     # Fitness (single objective, we minimise negative Calmar)
     creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
@@ -87,8 +84,8 @@ def optimize_strategy_ga(
     toolbox = base.Toolbox()
 
     # Gene initialisers ------------------------------------------------
-    bias_low, bias_high = bias_bounds
-    w_low, w_high = weight_bounds
+    bias_low, bias_high = optimization_config.bias_bounds
+    w_low, w_high = optimization_config.weight_bounds
 
     toolbox.register("bias_gene", random.uniform, bias_low, bias_high)
     toolbox.register("weight_gene", random.uniform, w_low, w_high)
@@ -98,7 +95,7 @@ def optimize_strategy_ga(
         "individual",
         tools.initCycle,
         creator.Individual,
-        (toolbox.bias_gene,) + (toolbox.weight_gene,) * n_weights,
+        (toolbox.bias_gene,) + (toolbox.weight_gene,) * optimization_config.n_weights,
         n=1,
     )
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
@@ -108,15 +105,15 @@ def optimize_strategy_ga(
         "evaluate",
         partial(
             _evaluate,
-            indicator_cls=indicator_cls,
-            strategy_cls=strategy_cls,
-            strategy_kwargs=strategy_kwargs,
-            symbols=symbols,
-            start_date=start_date,
-            cash=cash,
-            cerebro_kwargs=cerebro_kwargs,
-            broker_kwargs=broker_kwargs,
-            n_weights=n_weights,
+            indicator_cls=strategy_config.indicator_cls,
+            strategy_cls=strategy_config.strategy_cls,
+            strategy_kwargs=strategy_config.strategy_kwargs,
+            symbols=strategy_config.symbols,
+            start_date=strategy_config.start_date,
+            cash=strategy_config.cash,
+            cerebro_kwargs=strategy_config.cerebro_kwargs,
+            broker_kwargs=strategy_config.broker_kwargs,
+            n_weights=optimization_config.n_weights,
         ),
     )
 
@@ -132,7 +129,7 @@ def optimize_strategy_ga(
     toolbox.register("select", tools.selTournament, tournsize=3)
 
     # GA loop ----------------------------------------------------------
-    pop = toolbox.population(pop_size)
+    pop = toolbox.population(optimization_config.pop_size)
 
     # statistics (optional)
     stats = tools.Statistics(lambda ind: -ind.fitness.values[0])  # Calmar
@@ -142,9 +139,9 @@ def optimize_strategy_ga(
     pop, logbook = algorithms.eaSimple(
         pop,
         toolbox,
-        cxpb=cx_prob,
-        mutpb=mut_prob,
-        ngen=n_generations,
+        cxpb=optimization_config.cx_prob,
+        mutpb=optimization_config.mut_prob,
+        ngen=optimization_config.n_generations,
         stats=stats,
         verbose=True,
     )
