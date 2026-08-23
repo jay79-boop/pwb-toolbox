@@ -71,7 +71,9 @@ class TestCalculateMetrics:
 
     def test_uptrend_has_positive_return(self):
         # Constant returns produce zero volatility; vary them to get non-zero vol
-        nav = _synthetic_nav(base=100.0, returns=[0.01, -0.005, 0.01, -0.005] * 12 + [0.01])
+        nav = _synthetic_nav(
+            base=100.0, returns=[0.01, -0.005, 0.01, -0.005] * 12 + [0.01]
+        )
         metrics = _calculate_metrics(nav)
 
         assert metrics["final_nav"] > 100.0
@@ -94,8 +96,14 @@ class TestCalculateMetrics:
         metrics = _calculate_metrics(nav)
 
         required_fields = {
-            "final_nav", "total_return", "cagr", "volatility",
-            "max_drawdown", "sharpe_ratio", "sortino_ratio", "win_rate"
+            "final_nav",
+            "total_return",
+            "cagr",
+            "volatility",
+            "max_drawdown",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "win_rate",
         }
         assert required_fields.issubset(metrics.keys())
 
@@ -152,13 +160,13 @@ class TestCreatePortfolioNav:
         # Equal weight: average performance
         portfolio_equal = _create_portfolio_nav(
             {"weak": nav_weak, "strong": nav_strong},
-            weights={"weak": 0.5, "strong": 0.5}
+            weights={"weak": 0.5, "strong": 0.5},
         )
 
         # Heavy toward strong: better performance
         portfolio_heavy = _create_portfolio_nav(
             {"weak": nav_weak, "strong": nav_strong},
-            weights={"weak": 0.1, "strong": 0.9}
+            weights={"weak": 0.1, "strong": 0.9},
         )
 
         assert portfolio_heavy.iloc[-1] > portfolio_equal.iloc[-1]
@@ -220,9 +228,13 @@ class TestStrategyComparator:
 
         class MockStrategy:
             """A strategy that just logs synthetic NAV data."""
+
             def __init__(self):
                 self.log_data = [
-                    {"date": (datetime(2025, 1, 1) + timedelta(days=i)).isoformat(), "value": 100.0 + i}
+                    {
+                        "date": (datetime(2025, 1, 1) + timedelta(days=i)).isoformat(),
+                        "value": 100.0 + i,
+                    }
                     for i in range(50)
                 ]
 
