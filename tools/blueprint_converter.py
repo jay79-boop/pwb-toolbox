@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 try:
     import openpyxl
@@ -21,6 +21,128 @@ try:
     XLSX_AVAILABLE = True
 except ImportError:
     XLSX_AVAILABLE = False
+
+
+STEP_KINDS = ("task", "decision", "delay", "end", "goto")
+EXECUTORS = ("person", "automation", "ai")
+
+# A branch reaching further back than this is a long loop-back, and should be a
+# go-to step rather than a wire dragged across the map. The rule, and why it
+# exists, is in .claude/skills/process-mapping/SKILL.md.
+LOOP_BACK_LIMIT = 3
+
+STEP_HEADERS = [
+    "Process ID",
+    "Number",
+    "Title",
+    "Kind",
+    "Executor",
+    "Owner",
+    "Duration",
+    "Frequency",
+    "Tools",
+    "Branches",
+    "Go To",
+    "Notes",
+]
+
+
+def _as_int(value: Any, fallback: Any = None) -> Any:
+    """int(value), or fallback when it is not a whole number."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _as_number(value: Any, fallback: Any = None) -> Any:
+    """Numeric cell as int where it is whole, else float, else fallback."""
+    try:
+        n = float(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+    return int(n) if n == int(n) else n
+
+
+def format_branches(branches: Any) -> str:
+    """One cell per step: 'Approved > 3; Rejected > end'."""
+    parts = []
+    for branch in branches or []:
+        label = str(branch.get("label", "")).strip()
+        parts.append(f"{label} > {branch.get('to', '')}")
+    return "; ".join(parts)
+
+
+def parse_branches(cell: Any) -> list:
+    """Read back what format_branches wrote.
+
+    A destination that is neither a step number nor 'end' is kept verbatim so
+    validation can name it, rather than being dropped here and going missing.
+    """
+    out = []
+    for chunk in str(cell or "").split(";"):
+        chunk = chunk.strip()
+        if not chunk or ">" not in chunk:
+            continue
+        label, _, dest = chunk.rpartition(">")
+        label, dest = label.strip(), dest.strip()
+        if not label:
+            continue
+        out.append(
+            {"label": label, "to": dest if dest == "end" else _as_int(dest, dest)}
+        )
+    return out
+
+
+def step_to_row(process_id: str, step: Dict[str, Any]) -> list:
+    """A step as one Steps-sheet row, in STEP_HEADERS order.
+
+    Absent fields stay absent — writing defaults here would invent a `kind` on
+    every step of a plain linear process and the round trip would not be one.
+    """
+    return [
+        process_id,
+        step.get("number", ""),
+        step.get("title", ""),
+        step.get("kind", ""),
+        step.get("executor", ""),
+        step.get("owner", ""),
+        step.get("duration", ""),
+        step.get("frequency", ""),
+        ", ".join(step.get("tools", [])),
+        format_branches(step.get("branches")),
+        step.get("goto", ""),
+        step.get("notes", ""),
+    ]
+
+
+def row_to_step(row: Any) -> Dict[str, Any]:
+    """One Steps-sheet row back into a step dict."""
+    row = tuple(row) + (None,) * (len(STEP_HEADERS) - len(row))
+    step: Dict[str, Any] = {
+        "number": _as_int(row[1], row[1]),
+        "title": row[2] or "",
+    }
+    for key, cell in (
+        ("kind", row[3]),
+        ("executor", row[4]),
+        ("owner", row[5]),
+        ("duration", row[6]),
+        ("notes", row[11]),
+    ):
+        if cell not in (None, ""):
+            step[key] = str(cell)
+    if row[7] not in (None, ""):
+        step["frequency"] = _as_number(row[7], row[7])
+    tools = [t.strip() for t in str(row[8] or "").split(",") if t.strip()]
+    if tools:
+        step["tools"] = tools
+    branches = parse_branches(row[9])
+    if branches:
+        step["branches"] = branches
+    if row[10] not in (None, ""):
+        step["goto"] = _as_int(row[10], row[10])
+    return step
 
 
 def load_json_blueprint(file_path: str) -> Dict[str, Any]:
@@ -116,6 +238,23 @@ def json_to_xlsx(input_file: str, output_file: str) -> None:
         ws.cell(row, 7).value = kpi.get("metric", "")
         ws.cell(row, 8).value = kpi.get("target", "")
         ws.cell(row, 9).value = kpi.get("current", "")
+
+    # Steps sheet — the steps of every process, one row each. Without this
+    # sheet a round trip through Excel silently deletes every step in the file.
+    ws = wb.create_sheet("Steps")
+    for col, header in enumerate(STEP_HEADERS, 1):
+        ws.cell(1, col).value = header
+        ws.cell(1, col).font = Font(bold=True, color="FFFFFF")
+        ws.cell(1, col).fill = PatternFill(
+            start_color="1F4E78", end_color="1F4E78", fill_type="solid"
+        )
+
+    row = 2
+    for proc in blueprint.get("processes", []):
+        for step in proc.get("steps", []):
+            for col, value in enumerate(step_to_row(proc.get("id", ""), step), 1):
+                ws.cell(row, col).value = value
+            row += 1
 
     # Tools sheet
     ws = wb.create_sheet("Tools")
@@ -291,6 +430,24 @@ def xlsx_to_json(input_file: str, output_file: str) -> None:
                     }
                 )
 
+    # Read steps back onto their processes
+    if "Steps" in wb.sheetnames:
+        by_id = {proc["id"]: proc for proc in blueprint["processes"] if proc.get("id")}
+        orphans = []
+        for row in wb["Steps"].iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            proc = by_id.get(row[0])
+            if proc is None:
+                orphans.append(row[0])
+                continue
+            proc.setdefault("steps", []).append(row_to_step(row))
+        for proc in blueprint["processes"]:
+            proc["steps"].sort(key=lambda st: _as_int(st.get("number"), 0))
+        if orphans:
+            names = ", ".join(sorted(set(orphans)))
+            print(f"⚠️  Steps sheet references unknown processes, skipped: {names}")
+
     # Read tools
     if "Tools" in wb.sheetnames:
         ws = wb["Tools"]
@@ -357,12 +514,10 @@ def xlsx_to_json(input_file: str, output_file: str) -> None:
     print(f"✅ Converted to JSON: {output_file}")
 
 
-def validate_blueprint(file_path: str) -> None:
-    """Validate a blueprint against the schema."""
-    blueprint = load_json_blueprint(file_path)
-
-    errors = []
-    warnings = []
+def check_blueprint(blueprint: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """Return (errors, warnings) for a blueprint. Pure: no printing, no exit."""
+    errors: List[str] = []
+    warnings: List[str] = []
 
     # Required fields in meta
     if not blueprint.get("meta", {}).get("name"):
@@ -393,6 +548,93 @@ def validate_blueprint(file_path: str) -> None:
         if not tool.get("owner"):
             errors.append(f"❌ Tool '{tool.get('name', '?')}' has no owner")
 
+    # Steps and branches. A branch that points nowhere is the failure this
+    # catches: it reads fine in a list and loses the flow on any map built
+    # from it. The rules are in .claude/skills/process-mapping/SKILL.md.
+    unpriced = 0
+    for proc in blueprint.get("processes", []):
+        name = proc.get("name") or proc.get("id") or "?"
+        steps = proc.get("steps", [])
+        numbers = [step.get("number") for step in steps]
+
+        seen: Dict[Any, int] = {}
+        for number in numbers:
+            seen[number] = seen.get(number, 0) + 1
+        for number in sorted(n for n, c in seen.items() if c > 1 and n is not None):
+            errors.append(
+                f"❌ Process '{name}' has more than one step numbered {number}"
+            )
+
+        known = {n for n in numbers if n is not None}
+        for step in steps:
+            where = f"Process '{name}' step {step.get('number', '?')}"
+            kind = step.get("kind", "task")
+            executor = step.get("executor", "person")
+            branches = step.get("branches") or []
+
+            if kind not in STEP_KINDS:
+                errors.append(f"❌ {where} has unknown kind '{kind}'")
+            if executor not in EXECUTORS:
+                errors.append(f"❌ {where} has unknown executor '{executor}'")
+
+            for branch in branches:
+                if not str(branch.get("label", "")).strip():
+                    errors.append(f"❌ {where} has an unlabelled branch")
+                dest = branch.get("to")
+                if dest == "end":
+                    continue
+                if dest not in known:
+                    errors.append(
+                        f"❌ {where} branches to step {dest!r}, which does not exist"
+                    )
+                elif (
+                    isinstance(dest, int)
+                    and isinstance(step.get("number"), int)
+                    and step["number"] - dest > LOOP_BACK_LIMIT
+                ):
+                    warnings.append(
+                        f"⚠️  {where} loops back {step['number'] - dest} steps to "
+                        f"{dest} — make that a go-to step"
+                    )
+
+            if kind == "decision" and len(branches) < 2:
+                warnings.append(
+                    f"⚠️  {where} is a decision with fewer than two ways out"
+                )
+            if kind != "decision" and branches:
+                warnings.append(f"⚠️  {where} carries branches but is not a decision")
+
+            if kind == "goto":
+                target = step.get("goto")
+                if target is None:
+                    errors.append(f"❌ {where} is a go-to step with no destination")
+                elif target not in known:
+                    errors.append(
+                        f"❌ {where} jumps to step {target!r}, which does not exist"
+                    )
+
+            if (
+                executor == "person"
+                and step.get("duration")
+                and not step.get("frequency")
+            ):
+                unpriced += 1
+
+    if unpriced:
+        warnings.append(
+            f"⚠️  {unpriced} person step{'' if unpriced == 1 else 's'} "
+            f"ha{'s' if unpriced == 1 else 've'} a duration but no monthly frequency — "
+            "duration alone does not cost a process"
+        )
+
+    return errors, warnings
+
+
+def validate_blueprint(file_path: str) -> None:
+    """Validate a blueprint against the schema."""
+    blueprint = load_json_blueprint(file_path)
+    errors, warnings = check_blueprint(blueprint)
+
     # Print results
     if errors:
         print("\n🔴 VALIDATION ERRORS:")
@@ -406,9 +648,11 @@ def validate_blueprint(file_path: str) -> None:
             print(warning)
 
     # Summary
+    steps = sum(len(p.get("steps", [])) for p in blueprint.get("processes", []))
     print("\n✅ BLUEPRINT VALID")
     print(f"   Departments: {len(blueprint.get('departments', []))}")
     print(f"   Processes: {len(blueprint.get('processes', []))}")
+    print(f"   Process steps: {steps}")
     print(f"   Tools: {len(blueprint.get('tools', []))}")
     print(f"   Changes logged: {len(blueprint.get('changes', []))}")
     print(f"   Roadmap items: {len(blueprint.get('roadmap', []))}")

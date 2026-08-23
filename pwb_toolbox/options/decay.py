@@ -75,6 +75,29 @@ def hurdle_ratio(
     return breakeven_drift / daily_sigma
 
 
+def shot_clock(hours_to_expiry: float, loss_tolerance: float = 0.10) -> float:
+    """Hours a near-the-money option can sit on a flat underlying before
+    decay has eaten ``loss_tolerance`` of its value.
+
+    Near the money, remaining option value scales with the square root of
+    time left (V proportional to sqrt(T)), so on a flat underlying the value
+    after holding for t of T remaining hours is sqrt((T - t) / T) of what you
+    paid. Inverting: the tolerated loss x is spent at t = T * (1 - (1 - x)^2).
+
+    This is the number that turns "0DTE decays fast" into a decision: bought
+    at 10:00 with 5.5 trading hours left and a 10% decay budget, the clock
+    reads about an hour — if the move hasn't started by then, the thesis is
+    late and the rent is compounding. The approximation is for near-the-money
+    contracts; far OTM near expiry decays faster still, as the probability of
+    reaching the strike collapses on top of this.
+    """
+    if hours_to_expiry <= 0:
+        raise ValueError("hours_to_expiry must be positive")
+    if not 0 < loss_tolerance < 1:
+        raise ValueError("loss_tolerance must be between 0 and 1")
+    return hours_to_expiry * (1.0 - (1.0 - loss_tolerance) ** 2)
+
+
 def breakeven_spot(
     target_premium: float,
     strike: float,

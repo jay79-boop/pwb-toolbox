@@ -112,3 +112,32 @@ def test_half_of_extrinsic_is_gone_well_before_half_the_time():
     rows = dict((r[0], r[2]) for r in decay_schedule(100.0, 100.0, 45.0, 0.30))
     assert rows[21] < 100.0 * (21.0 / 45.0) ** 0.5 + 1.0
     assert rows[7] < 50.0
+
+
+def test_shot_clock_worked_example():
+    from pwb_toolbox.options import shot_clock
+
+    # 0DTE bought at 10:00 ET: 5.5 trading hours left, 10% decay budget
+    assert shot_clock(5.5, 0.10) == pytest.approx(5.5 * (1 - 0.81))
+    # consistency with V ~ sqrt(T): half the value is gone at 3/4 of the time
+    assert shot_clock(8.0, 0.50) == pytest.approx(6.0)
+    # spending the whole premium takes the whole clock
+    assert shot_clock(6.5, 0.999) == pytest.approx(6.5, abs=0.02)
+
+
+def test_shot_clock_scales_with_time_and_tolerance():
+    from pwb_toolbox.options import shot_clock
+
+    # five days of trading hours buys ~5x the sitting time of one day
+    assert shot_clock(32.5, 0.10) == pytest.approx(5 * shot_clock(6.5, 0.10))
+    # a bigger decay budget always buys more time
+    assert shot_clock(6.5, 0.20) > shot_clock(6.5, 0.10)
+
+
+def test_shot_clock_rejects_nonsense():
+    from pwb_toolbox.options import shot_clock
+
+    with pytest.raises(ValueError):
+        shot_clock(0.0, 0.10)
+    with pytest.raises(ValueError):
+        shot_clock(6.5, 1.5)
