@@ -100,6 +100,14 @@ duplicate is pure waste.
 | a parameter with a type, a default, or both | the type dropped, the default kept |
 | an expression split over several lines | joined before parsing |
 | `strategy.entry(..., strategy.long/short, qty=)` | one entry per direction, reversing — see below |
+| `strategy.entry(..., limit=, stop=)` | a resting bracket parent, submitted at bar close — see below |
+| `strategy.exit(..., from_entry, ...)` on a pending entry | the bracket's exit legs, live when the entry fills |
+| `strategy.cancel(id)` | withdraws the unfilled entry with that id |
+| `strategy.cancel_all()` | withdraws every unfilled order, standing exits included |
+| `time(res, session)`, `input.session` | na outside the session, checked on the feed's clock — see below |
+| `time(res, session, tz)` | the same, with the feed's clock read as UTC and converted into `tz` |
+| history of a computed value, e.g. `inSess[1]` | a promoted line, or the definition re-read a bar back — see below |
+| `syminfo.mintick` | a `mintick` param, default 0.01 — see below |
 | `strategy.closedtrades`, `opentrades`, `wintrades`, `losstrades`, `eventrades` | counters kept from `notify_trade` |
 | any of those with `[1]` | the previous bar's value |
 | `strategy.closedtrades.entry_price/exit_price/profit/size(i)` | a ledger built as trades close |
@@ -117,6 +125,8 @@ duplicate is pure waste.
 | `x += y`, and `-=` `*=` `/=` `%=` | desugared to `x := x + y` |
 | `na(x)` | the NaN test `x != x` |
 | `request.security(syminfo.tickerid, tf, expr)` | a read from a resampled `self.datas[n]` |
+| `request.security("SPY", tf, expr)`, `input.symbol` | a second instrument, recorded in `feed_spec` |
+| `close[n]` where `n` is a param or computed | a guarded read back — see below |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 | `math.pow`, `math.sign`, `math.avg` | the arithmetic spelled out |
 | `math.sqrt/log/log10/exp/floor/ceil`, the trig set, `math.pi` | the `math` module, imported only when used |
@@ -149,7 +159,6 @@ every later reference — that is what the Pine source means by the name.
 
 Reported in `result.unsupported`, never approximated:
 
-- `request.security` on a symbol other than `syminfo.tickerid` — a second instrument is a data-loading decision
 - `request.security(..., lookahead=barmerge.lookahead_on)` — reads a bar before it closes
 - `varip` — updates on every tick, and a bar-close run has no ticks
 - `var x = <expression>` — only a literal initial value works; see below
@@ -208,6 +217,77 @@ is how a script spells "no level yet", and a stop at NaN would never compare.
 measured in ticks, and tick size is a property of the instrument rather than
 anything the script states.
 
+## Priced entries
+
+`strategy.entry` with a `limit` or `stop` price is a standing order too: it
+rests until it fills, until the same id is re-issued — which *moves* it — or
+until `strategy.cancel` withdraws it. And the `strategy.exit` that names it
+through `from_entry` is issued on the same bar, while the position is still
+size zero, so translating that exit against the position would place nothing
+and leave the eventual fill unprotected.
+
+The generated class collects priced entries per id while the bar's statements
+run and submits them once, at the end of `next()`, as a Backtrader bracket:
+the entry as parent, the exit's stop and limit as legs that only go live when
+the parent fills, each cancelling the other.
+
+```pinescript
+strategy.entry("L", strategy.long, limit=entryP)
+strategy.exit("Lx", "L", stop=stopP, limit=tgtP)
+// ...bars later, if it never filled...
+strategy.cancel("L")
+```
+
+Re-issuing `"L"` at new levels cancels and replaces the resting bracket; an
+unchanged one is left alone; `strategy.cancel("L")` withdraws it while the
+entry is unfilled and, exactly as in Pine, touches nothing once it has filled —
+the legs keep protecting the open position. A `strategy.exit` re-issued after
+the fill moves those legs rather than stacking a second pair beside them.
+
+Only a literal id works for `strategy.cancel`, because the id is what names
+the pending order; a computed one is reported.
+
+`strategy.cancel_all()` needs no id: it withdraws every unfilled order at
+once — pending entries, resting brackets, *and* the standing exits protecting
+an open position, exactly as Pine's does. That last part means a position can
+be left unprotected, which is why the force-flat idiom pairs it with
+`strategy.close_all()`.
+
+## Sessions and tick size
+
+`time(res, session)` answers na on bars outside the session, which is how
+`not na(time(timeframe.period, sess))` gates entries to market hours. The
+check runs on the feed's own timestamps — Pine consults the exchange calendar
+and timezone, the feed carries neither, and the feed's clock is the one clock
+a backtest has — so data stamped in another timezone than the exchange filters
+at shifted hours. Ranges (`"0930-1600"`, comma-separated, overnight allowed)
+and a day suffix (`":23456"`, Sunday=1, naming the day the session ends on)
+are understood; `input.session` becomes an ordinary string param, so the
+window stays tunable from `addstrategy`.
+
+A third argument names the timezone the session is meant in —
+`time(timeframe.period, "0930-1130", "America/New_York")` is how a script
+pins its window to New York regardless of the chart. The generated check then
+reads the feed's clock as UTC and converts it into that zone, DST included,
+so data already stamped in exchange time should not pass a timezone at all.
+`syminfo.timezone` as the argument is dropped rather than converted: the
+exchange's own zone is exactly what the bare check already assumes of the
+feed's clock.
+
+`syminfo.mintick` becomes a param named `mintick`, defaulting to the 0.01 of a
+US equity. A Backtrader feed does not know its instrument's tick size, so the
+knob is handed to the caller and the report says to set it per instrument.
+
+## Reading history before it exists
+
+`high[2]` on the first bar of a run reads history that is not there. Pine
+answers `na`, and no condition on na fires. Backtrader preloads the feed into
+flat arrays, and the same read wraps around to the *end* of the array — bars
+from the future, silently. So the generated `next()` opens by sitting out the
+bars that lack the deepest history the script reads; the regression test pins
+a tape where only the wraparound could trigger a trade, and asserts it never
+does.
+
 ## A second timeframe
 
 Pine reaches another timeframe inline. Backtrader reaches it through a second
@@ -221,22 +301,29 @@ htfMa = request.security(syminfo.tickerid, htfTF, ta.ema(close, 4))
 ```
 
 ```python
-resample_spec = (
-    (bt.TimeFrame.Weeks, 1),
+feed_spec = (
+    (None, bt.TimeFrame.Weeks, 1),
 )
 
 def __init__(self):
     if len(self.datas) < 2:
-        raise ValueError("HTFTrend needs 2 data feeds; see resample_spec")
+        raise ValueError("HTFTrend needs 2 data feeds; see feed_spec")
     self._ema_1 = bt.indicators.EMA(self.datas[1].close, period=4)
 ```
 
-Wiring it up is then mechanical:
+Each entry is `(symbol, timeframe, compression)`, in the order the feeds become
+`self.datas[1:]`. A symbol of `None` means the chart's own instrument, so the
+entry is a resample; a named symbol means that instrument's own data. Wiring it
+up is then mechanical:
 
 ```python
 cerebro.adddata(data)
-for timeframe, compression in HTFTrend.resample_spec:
-    cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+for symbol, timeframe, compression in HTFTrend.feed_spec:
+    feed = data if symbol is None else load(symbol)
+    if timeframe is None:
+        cerebro.adddata(feed)
+    else:
+        cerebro.resampledata(feed, timeframe=timeframe, compression=compression)
 cerebro.addstrategy(HTFTrend)
 ```
 
@@ -251,7 +338,67 @@ timeframe, so it adds no feed at all.
 the strategy. A timeframe read from an input is therefore resolved to that
 input's default and baked in — and reported in `result.ignored`, because a knob
 that looks live and is not would be a silently wrong backtest. Change
-`resample_spec`, not the param.
+`feed_spec`, not the param.
+
+### A second instrument
+
+The same machinery carries a different symbol. A relative-strength script names
+one and compares against it:
+
+```pinescript
+peerSymbol = input.symbol("SPY", "Comparative Symbol")
+peer = request.security(peerSymbol, timeframe.period, close)
+```
+
+```python
+feed_spec = (
+    ('SPY', None, None),
+)
+...
+peer = self.datas[1].close[0]
+```
+
+A timeframe of `None` means that instrument at the chart's own timeframe — data
+to add, with nothing to resample. `('SPY', bt.TimeFrame.Days, 1)` is SPY *and*
+a resample, and counts as one feed. Reads sharing a symbol and a timeframe
+share a feed; a symbol and a timeframe that differ are separate ones.
+
+**The symbol stops being tunable for exactly the reason the timeframe does.**
+The feed is loaded before the strategy is instantiated, so a param changed at
+`addstrategy` time cannot swap the instrument underneath it. An `input.symbol`
+is resolved to its default and baked in, the param stays because the script may
+read it elsewhere, and the conversion says so in `result.ignored`.
+
+Naming a symbol is not a way around the lookahead refusal below; that check
+runs on every `request.security` regardless of which instrument it names.
+
+### Reading back a variable number of bars
+
+`baseClose[rsPeriod]`, where `rsPeriod` is an input, cannot be counted at
+conversion time — so the bars it reaches over cannot be sat out in advance the
+way a constant offset's are.
+
+That matters more than it sounds, because of how Backtrader answers a read past
+the start of a series. It does not raise, and it does not answer `na`: the
+series is preloaded, so Python's negative indexing counts back from the **end**
+and hands over a bar from the future. On the first bar of a thirty-bar feed,
+`close[5]` reads bar 26.
+
+```python
+def _pine_back(self, line, back):
+    """`x[n]` with n known only per bar, `na` before the series starts."""
+    try:
+        step = int(back)
+    except (TypeError, ValueError):
+        return float('nan')
+    if step < 0 or step >= len(line):
+        return float('nan')
+    return line[-step]
+```
+
+The test for this walks a ramp where every bar's price is distinct, and asserts
+both halves: the early bars answer `na`, and no bar ever reads a price from
+later in the feed.
 
 ### On lookahead
 
@@ -753,6 +900,20 @@ means, and each of these is a separate rule:
 - **assigned more than once** — two assignments are two different values
 - **assigned inside an `if`** — it holds a value on some bars and not others, where a line is computed on every one
 - **reassigned with `:=`, or a `var`** — the same objection, spread over time
+
+### History without a line
+
+`inSess = not na(time(timeframe.period, sess))` cannot be promoted — `time()`
+is a per-bar read of the feed's clock, not a line — yet `inSess and not
+inSess[1]` is Pine's standard "first bar of the session". So history of a
+computed value has a fallback: since the definition holds on every bar, the
+previous bar's value is the same expression with every bar-relative read
+shifted one bar further back — `time()[1]` reads the previous bar's stamp,
+`close` becomes `close[1]`, and so on, recursively through other computed
+values. Only the pure per-bar subset shifts (prices and lines, constants and
+params, `time()`, `na`/`nz`, the math builtins); a definition reading a
+`var` or a trade counter holds only its current value, so that history stays
+refused rather than answered with today's state.
 
 ### A conditional needs a function, not a line operation
 

@@ -343,7 +343,6 @@ def _unsupported(source):
 @pytest.mark.parametrize(
     "snippet, marker",
     [
-        ("s = request.security('AAPL', '1D', close)\n", "syminfo.tickerid"),
         ("varip count = 0\n", "varip count"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
@@ -915,10 +914,15 @@ def _run_htf(source, feeds=None):
     cerebro = bt.Cerebro()
     data = bt.feeds.PandasData(dataname=_price_frame())
     cerebro.adddata(data)
-    for timeframe, compression in (
-        feeds if feeds is not None else strategy_cls.resample_spec
+    for _symbol, timeframe, compression in (
+        feeds if feeds is not None else strategy_cls.feed_spec
     ):
-        cerebro.resampledata(data, timeframe=timeframe, compression=compression)
+        # Every symbol here is stood up from the same frame; what is being
+        # tested is the wiring, not that two instruments differ.
+        if timeframe is None:
+            cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+        else:
+            cerebro.resampledata(data, timeframe=timeframe, compression=compression)
     cerebro.addstrategy(strategy_cls)
     cerebro.broker.setcash(10_000.0)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
@@ -930,11 +934,11 @@ def _run_htf(source, feeds=None):
 @pytest.mark.parametrize(
     "timeframe, expected",
     [
-        ("D", "(bt.TimeFrame.Days, 1)"),
-        ("1D", "(bt.TimeFrame.Days, 1)"),
-        ("W", "(bt.TimeFrame.Weeks, 1)"),
-        ("240", "(bt.TimeFrame.Minutes, 240)"),
-        ("30S", "(bt.TimeFrame.Seconds, 30)"),
+        ("D", "(None, bt.TimeFrame.Days, 1)"),
+        ("1D", "(None, bt.TimeFrame.Days, 1)"),
+        ("W", "(None, bt.TimeFrame.Weeks, 1)"),
+        ("240", "(None, bt.TimeFrame.Minutes, 240)"),
+        ("30S", "(None, bt.TimeFrame.Seconds, 30)"),
     ],
 )
 def test_security_records_the_feed_it_needs(timeframe, expected):
@@ -981,16 +985,19 @@ def test_chart_timeframe_needs_no_second_feed():
     )
     result = convert(source)
     assert result.ok, result.unsupported
-    assert "resample_spec" not in result.code
+    assert "feed_spec" not in result.code
     assert "h = self.data.close[0]" in result.code
 
 
-def test_security_on_another_symbol_is_reported():
+def test_security_on_another_symbol_asks_for_that_instrument():
+    """A second instrument is a feed to load, and now it is recorded as one."""
     result = convert(
         "//@version=6\nstrategy(\"S\")\nh = request.security('AAPL', 'D', close)\n"
+        "if h > close\n    strategy.close()\n"
     )
-    assert not result.ok
-    assert any("syminfo.tickerid" in item for item in result.unsupported)
+    assert result.ok, result.unsupported
+    assert "('AAPL', bt.TimeFrame.Days, 1)," in result.code
+    assert "h = self.datas[1].close[0]" in result.code
 
 
 def test_lookahead_on_is_reported():
@@ -1019,7 +1026,7 @@ def test_timeframe_from_a_param_says_the_param_cannot_move_the_feed():
     """A knob that looks live and is not would be a silently wrong backtest."""
     result = convert(HTF_STRATEGY)
     assert result.ok, result.unsupported
-    assert any("htfTF" in item and "resample_spec" in item for item in result.ignored)
+    assert any("htfTF" in item and "feed_spec" in item for item in result.ignored)
 
 
 def test_security_with_a_non_literal_timeframe_is_reported():
@@ -3382,11 +3389,11 @@ if h < s
 # --- the clock: timeframe.period and time() ---------------------------------
 
 
-def _intraday_frame(bars=96, minutes=60, seed=11):
+def _intraday_frame(bars=96, minutes=60, seed=11, start=None):
     """Hourly bars from midnight, so a 4-hour bucket turns over inside the run."""
     rng = random.Random(seed)
     price = 100.0
-    start = datetime.datetime(2022, 1, 1, 0, 0)
+    start = datetime.datetime(2022, 1, 1, 0, 0) if start is None else start
     rows = []
     for i in range(bars):
         price *= 1 + rng.gauss(0, 0.01)
@@ -3483,16 +3490,187 @@ def test_time_floors_to_the_resolution_not_to_the_bar():
     assert strategy.stamp == calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)) * 1000
 
 
-def test_time_with_a_session_is_reported_rather_than_approximated():
-    """The session argument needs the exchange calendar. The feed has none, and
-    guessing one would move every bucket boundary."""
-    result = convert(
+def test_time_with_a_session_filters_by_the_bars_own_clock():
+    """`not na(time(timeframe.period, sess))` is how Pine asks "is this bar in
+    the session". The check runs on the feed's own timestamps -- the one clock
+    a backtest has -- and hourly bars stamped 10:00 through 15:00 are the ones
+    inside 0930-1600."""
+    source = (
         '//@version=6\nstrategy("S")\n'
-        'x = time("240", "0930-1600")\n'
-        "if x > 0\n    strategy.close()\n"
+        "var int seen = 0\n"
+        'if not na(time(timeframe.period, "0930-1600"))\n    seen := seen + 1\n'
     )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 12  # 6 in-session hourly bars on each of 2 days
+
+
+def test_an_overnight_session_wraps_midnight():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if not na(time(timeframe.period, "2200-0400"))\n    seen := seen + 1\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    # 22:00 and 23:00 on each day, plus 00:00 through 03:00 on each day.
+    assert strategy.seen == 12
+
+
+def test_a_session_day_suffix_counts_sundays_as_1():
+    """The intraday frame starts Saturday 2022-01-01, so a Sunday-only session
+    admits exactly the second day's morning bars."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if not na(time(timeframe.period, "0000-1200:1"))\n    seen := seen + 1\n'
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 12  # 00:00-11:00 on the Sunday only
+
+
+def test_a_session_composes_with_a_resolution_floor():
+    """`time("240", sess)` still answers the 4-hour bucket's opening time on
+    the bars the session admits, and na on the rest."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int stamp = 0\n"
+        'v = time("240", "0000-0300")\n'
+        "if not na(v)\n    stamp := v\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=8, minutes=60))
+    # 00:00-02:00 are admitted and all floor to the day's first 4-hour bucket.
+    assert strategy.stamp == calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_a_time_timezone_checks_the_session_on_that_zones_clock():
+    """January 2022 is EST, five hours behind UTC: a 0500-0700 New York
+    session admits the bars stamped 10:00 and 11:00 UTC. The captured stamp
+    is the proof -- an unconverted clock would have admitted 05:00 instead."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        "var int stamp = 0\n"
+        'v = time(timeframe.period, "0500-0700", "America/New_York")\n'
+        "if not na(v)\n"
+        "    seen := seen + 1\n"
+        "    if stamp == 0\n"
+        "        stamp := v\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 4  # 10:00 and 11:00 UTC on each of 2 days
+    assert strategy.stamp == calendar.timegm((2022, 1, 1, 10, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_a_timezone_session_moves_with_dst():
+    """The same New York window sits four hours behind UTC in July, not five:
+    the first admitted bar is 09:00 UTC where the winter test saw 10:00."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int stamp = 0\n"
+        'v = time(timeframe.period, "0500-0700", "America/New_York")\n'
+        "if stamp == 0 and not na(v)\n    stamp := v\n"
+    )
+    july = _intraday_frame(bars=24, minutes=60, start=datetime.datetime(2022, 7, 1))
+    strategy = _instance(source, frame=july)
+    assert strategy.stamp == calendar.timegm((2022, 7, 1, 9, 0, 0, 0, 0, 0)) * 1000
+
+
+def test_syminfo_timezone_is_dropped_as_the_feeds_own_clock():
+    """`time(tf, sess, syminfo.timezone)` names the exchange's zone, which is
+    exactly what the bare session check already assumes the feed's clock to
+    be, so it filters like the two-argument form."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var int seen = 0\n"
+        'if not na(time(timeframe.period, "0930-1600", syminfo.timezone))\n'
+        "    seen := seen + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.seen == 12  # the same 6 hourly bars on each of 2 days
+
+
+def test_history_of_a_session_check_reads_the_previous_bars_clock():
+    """`inSess and not inSess[1]` is Pine's "first bar of the session". No
+    line exists to read `inSess[1]` off -- time() is a per-bar read of the
+    feed's clock -- but the definition holds on every bar, so the previous
+    value is the same expression read one bar back."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'inSess = not na(time(timeframe.period, "0930-1600"))\n'
+        "var int opens = 0\n"
+        "if inSess and not inSess[1]\n    opens := opens + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.opens == 2  # the session opens once on each of 2 days
+
+
+def test_a_shifted_read_moves_every_read_in_the_definition_together():
+    """A definition mixing a price read with the session check still shifts
+    whole: `hot[1]` is yesterday's close against yesterday's clock, so the
+    count is of in-session predecessors, and the price read costs the first
+    bar to the lookback guard."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'hot = close >= low and not na(time(timeframe.period, "0000-1200"))\n'
+        "var int count = 0\n"
+        "if hot[1]\n    count := count + 1\n"
+    )
+    strategy = _instance(source, frame=_intraday_frame(bars=48, minutes=60))
+    assert strategy.count == 24  # 12 in-session predecessors on each of 2 days
+
+
+def test_history_of_a_value_built_on_state_is_still_refused():
+    """A var holds only its current value, so a definition reading one cannot
+    be re-read a bar back; refusing beats answering with today's state."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var float anchor = 0.0\n"
+        "anchor := close\n"
+        "gap = close - anchor\n"
+        "if gap[1] > 0\n    strategy.close()\n"
+    )
+    result = convert(source)
     assert not result.ok
-    assert any("exchange calendar" in item for item in result.unsupported)
+    assert any("needs a Backtrader line" in item for item in result.unsupported)
+
+
+def test_input_session_becomes_a_tunable_string_param():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'sess = input.session("0930-1600", "Session window")\n'
+        "var int seen = 0\n"
+        "if not na(time(timeframe.period, sess))\n    seen := seen + 1\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert ("sess", "0930-1600") in result.params
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_intraday_frame(bars=48, minutes=60)))
+    cerebro.addstrategy(namespace[result.class_name], sess="1300-1500")
+    cerebro.broker.setcash(10_000.0)
+    strategy = cerebro.run()[0]
+    assert strategy.seen == 4  # 13:00 and 14:00, on each of 2 days
+
+
+def test_a_malformed_session_string_raises_a_named_error():
+    """`930-1600` is missing a digit. Pine rejects it at compile time; here it
+    is a param, so the first bar that reads it says which string is wrong."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'x = time(timeframe.period, "930-1600")\n'
+        "if not na(x)\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_intraday_frame(bars=4, minutes=60)))
+    cerebro.addstrategy(namespace[result.class_name])
+    with pytest.raises(ValueError, match="930-1600"):
+        cerebro.run()
 
 
 def test_a_weekly_resolution_for_time_is_reported():
@@ -3854,9 +4032,39 @@ def test_a_higher_timeframe_series_composes_before_it_is_used():
     assert "bt.indicators.SMA(self._line_spread_2, period=5)" in result.code
 
 
+#: Reads a composed expression off the weekly feed as this bar's number.
+COMPOSED_SECURITY = (
+    '//@version=6\nstrategy("S")\n'
+    'wkRange = request.security(syminfo.tickerid, "W", high - low)\n'
+    "if wkRange > 0 and strategy.position_size == 0\n"
+    '    strategy.entry("L", strategy.long)\n'
+    "if strategy.position_size > 0 and close < open\n"
+    "    strategy.close()\n"
+)
+
+
+def test_a_composed_security_expression_reads_through_a_hoisted_line():
+    """Regression. `request.security(..., high - low)` lowered to
+    `(self.datas[1].high - self.datas[1].low)[0]` inline in next() -- but
+    line arithmetic inside next() runs on this bar's floats, so the read
+    subscripted a float and the first bar raised TypeError. The composition
+    has to be built once in __init__ and read through its handle."""
+    result = convert(COMPOSED_SECURITY)
+    assert result.ok, result.unsupported
+    assert "(self.datas[1].high - self.datas[1].low)[0]" not in result.code
+    assert "self._line_1 = (self.datas[1].high - self.datas[1].low)" in result.code
+
+
+def test_a_composed_security_expression_survives_a_run():
+    """The weekly range is positive on every bar it exists for, so the long
+    keeps re-opening after every down-day close: round trips, not a crash."""
+    value, closed = _run_htf(COMPOSED_SECURITY)
+    assert closed > 0
+
+
 def test_the_line_path_still_records_the_feed_to_supply():
     result = convert(HTF_INDICATOR_STRATEGY)
-    assert "resample_spec" in result.code
+    assert "feed_spec" in result.code
     assert "needs 2 data feeds" in result.code
 
 
@@ -3872,10 +4080,6 @@ def test_the_line_path_still_records_the_feed_to_supply():
             'request.security(syminfo.tickerid, "240", high,'
             " lookahead=barmerge.lookahead_on)",
             "lookahead_on reads a bar before it closes",
-        ),
-        (
-            'request.security("SPY", "240", close)',
-            "needs a second instrument",
         ),
         (
             'request.security(syminfo.tickerid, "zz", close)',
@@ -3912,7 +4116,7 @@ def test_generated_htf_indicator_strategy_runs_and_trades():
     cerebro = bt.Cerebro()
     frame = _price_frame(bars=600)
     cerebro.adddata(bt.feeds.PandasData(dataname=frame))
-    for timeframe, compression in strategy.resample_spec:
+    for _symbol, timeframe, compression in strategy.feed_spec:
         cerebro.resampledata(
             bt.feeds.PandasData(dataname=frame),
             timeframe=timeframe,
@@ -3925,4 +4129,865 @@ def test_generated_htf_indicator_strategy_runs_and_trades():
     closed = (
         result_strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
     )
+    assert closed > 0
+
+
+# --- priced entries: strategy.entry with limit/stop, from_entry, cancel ------
+#
+# A priced `strategy.entry` is a standing order in Pine: it works until it
+# fills, until the same id is re-issued -- which moves it -- or until
+# `strategy.cancel` withdraws it, and the `strategy.exit` that names it via
+# `from_entry` only becomes live orders when it fills. The generated class
+# says that with a Backtrader bracket, and these tests fill, move, and cancel
+# one against bars spelled out by hand, because "the order was submitted" says
+# nothing about what it does to a position.
+
+
+def _explicit_frame(rows):
+    """Daily bars spelled out as (open, high, low, close), for fill scenarios."""
+    start = datetime.datetime(2022, 3, 7)  # a Monday
+    out = []
+    for i, (o, h, l, c) in enumerate(rows):
+        out.append(
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": 1000,
+            }
+        )
+    return pd.DataFrame(out).set_index("datetime")
+
+
+def _fill_run(source, rows, **params):
+    """Run a conversion over explicit bars and hand back the strategy."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_explicit_frame(rows)))
+    cerebro.addstrategy(namespace[result.class_name], **params)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0]
+
+
+#: Arms once on the first bar and rests a limit buy below the market.
+LIMIT_ENTRY = (
+    '//@version=6\nstrategy("S")\n'
+    "var bool armed = true\n"
+    "if armed\n"
+    "    armed := false\n"
+    '    strategy.entry("L", strategy.long, limit=99.0)\n'
+)
+
+
+def test_a_limit_entry_waits_on_the_book_for_its_price():
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms: limit buy at 99 goes out at the close
+        (100, 100.5, 99.8, 100),  # never trades down to it
+        (100, 100.5, 98.5, 100),  # touches 99: fills at the limit, not at market
+        (100, 100.5, 99.5, 100),
+    ]
+    strategy = _fill_run(LIMIT_ENTRY, rows)
+    assert strategy.position.size == 1
+    assert strategy.position.price == 99.0
+
+
+def test_an_untouched_limit_entry_never_opens_a_position():
+    rows = [(100, 101, 99.5, 100.5)] + [(100, 100.5, 99.2, 100)] * 4
+    strategy = _fill_run(LIMIT_ENTRY, rows)
+    assert strategy.position.size == 0
+
+
+BRACKET_ENTRY = (
+    '//@version=6\nstrategy("S")\n'
+    "var bool armed = true\n"
+    "if armed\n"
+    "    armed := false\n"
+    '    strategy.entry("L", strategy.long, limit=99.0)\n'
+    '    strategy.exit("Lx", "L", stop=95.0, limit=105.0)\n'
+)
+
+
+def test_exit_levels_arm_with_the_pending_entry_and_fire_on_its_fill():
+    """The script issues its exit on the bar that issues the entry, while the
+    position is still size 0. Translating that call against the *position*
+    would place nothing, the entry would later fill unprotected, and the
+    target would never be hit -- which is exactly what the first cut of this
+    translation did. The levels have to ride with the entry."""
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms the bracket
+        (100, 100.5, 98.5, 100),  # entry fills at 99
+        (100.5, 106, 100, 105.5),  # target leg fills at 105
+        (105, 105.5, 104, 105),
+    ]
+    strategy = _fill_run(BRACKET_ENTRY, rows)
+    assert strategy.position.size == 0  # the stop leg cancelled with the fill
+    assert strategy.broker.getvalue() == pytest.approx(10_006.0)
+
+
+def test_the_stop_leg_of_a_filled_bracket_protects_the_position():
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms the bracket
+        (100, 100.5, 98.5, 100),  # entry fills at 99
+        (98, 98.5, 94, 94.5),  # stop leg fills at 95
+        (95, 95.5, 94, 95),
+    ]
+    strategy = _fill_run(BRACKET_ENTRY, rows)
+    assert strategy.position.size == 0
+    assert strategy.broker.getvalue() == pytest.approx(9_996.0)
+
+
+def test_reissuing_an_entry_tag_moves_the_order_rather_than_stacking():
+    """Pine keeps one order per id. Five bars of re-arming must still open a
+    one-unit position, and at the last level asked for, not the first."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if strategy.position_size == 0\n"
+        '    strategy.entry("L", strategy.long, limit=close - 1.0)\n'
+    )
+    rows = [
+        (100, 101, 99.5, 100.5),  # limit rests at 99.5
+        (101, 102, 100.5, 101.5),  # moved to 100.5
+        (102, 103, 101.6, 102.5),  # moved to 101.5
+        (102, 103, 101.0, 102.5),  # fills at 101.5 -- one unit, latest level
+        (102, 103, 101.2, 102.5),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 1
+    assert strategy.position.price == pytest.approx(101.5)
+
+
+def test_cancel_withdraws_a_pending_entry_before_it_can_fill():
+    """The control run proves the dip would have filled the order; the cancel
+    run proves `strategy.cancel` is why it did not."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var bool armed = true\n"
+        "if armed\n"
+        "    armed := false\n"
+        '    strategy.entry("L", strategy.long, limit=99.0)\n'
+        "if bar_index == 3\n"
+        '    strategy.cancel("L")\n'
+    )
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms
+        (100, 100.5, 99.8, 100),  # resting, untouched
+        (100, 100.5, 99.6, 100),  # bar_index 3: cancelled
+        (100, 100.5, 98.0, 100),  # the dip that would have filled it
+        (100, 100.5, 99.5, 100),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 0
+
+    control = source.replace('    strategy.cancel("L")\n', "    strategy.close()\n")
+    strategy = _fill_run(control, rows)
+    assert strategy.position.size == 1
+
+
+def test_cancel_all_withdraws_a_resting_entry_without_naming_it():
+    source = LIMIT_ENTRY + "if bar_index == 3\n    strategy.cancel_all()\n"
+    rows = [
+        (100, 101, 99.5, 100.5),  # arms
+        (100, 100.5, 99.8, 100),  # resting, untouched
+        (100, 100.5, 99.6, 100),  # bar_index 3: everything cancelled
+        (100, 100.5, 98.0, 100),  # the dip that would have filled it
+        (100, 100.5, 99.5, 100),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 0
+    assert _fill_run(LIMIT_ENTRY, rows).position.size == 1  # the control
+
+
+def test_cancel_all_takes_the_standing_exits_off_an_open_position():
+    """strategy.cancel leaves a filled entry's exits protecting the position;
+    strategy.cancel_all withdraws those too, as Pine's does. The tape dips
+    through where the stop rested: a surviving stop would fill and flatten,
+    so the position still being open is the proof it was cancelled."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if bar_index == 1\n"
+        '    strategy.entry("L", strategy.long)\n'
+        "if strategy.position_size > 0 and bar_index < 4\n"
+        '    strategy.exit("Lx", stop=98.0)\n'
+        "if bar_index == 4\n"
+        "    strategy.cancel_all()\n"
+    )
+    rows = [
+        (100, 100.5, 99.5, 100),  # bar 1: market entry placed
+        (100, 100.6, 99.6, 100.2),  # fills at the open; stop 98 goes out
+        (100.2, 100.6, 99.0, 100),  # above the stop, nothing fills
+        (100, 100.4, 99.2, 100.1),  # bar 4: cancel_all takes the stop away
+        (100, 100.2, 97.0, 99.0),  # through 98, which must fill nothing
+        (99, 99.5, 98.5, 99.2),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 1
+
+    control = source.replace("if bar_index == 4\n    strategy.cancel_all()\n", "")
+    strategy = _fill_run(control, rows)
+    assert strategy.position.size == 0
+
+
+def test_exit_reissued_after_the_fill_moves_the_bracket_legs():
+    """A `strategy.exit` that keeps running once the position is open has to
+    move the bracket's legs, not stack a second pair beside them: two pairs
+    would fill twice and flip the strategy short."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "var bool armed = true\n"
+        "if armed\n"
+        "    armed := false\n"
+        '    strategy.entry("L", strategy.long, limit=99.0)\n'
+        'strategy.exit("Lx", "L", stop=95.0, limit=close + 6.0)\n'
+    )
+    rows = [
+        (100, 101, 99.5, 100),  # arms: bracket target rests at 106
+        (100, 100.5, 98.5, 100),  # entry fills at 99; levels unchanged, kept
+        (101, 102, 100.5, 101.5),  # target moves to 107.5: legs resubmitted
+        (102, 108, 101.5, 107),  # fills at 107.5, and only once
+        (107, 107.5, 106, 107),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 0
+    assert strategy.broker.getvalue() == pytest.approx(10_008.5)
+
+
+def test_a_dynamic_cancel_id_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'id = close > open ? "L" : "S"\n'
+        "strategy.cancel(id)\n"
+    )
+    assert not result.ok
+    assert any("strategy.cancel" in item for item in result.unsupported)
+
+
+# --- syminfo.mintick ----------------------------------------------------------
+
+
+def test_syminfo_mintick_becomes_a_param_with_a_note():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "buf = 2 * syminfo.mintick\n"
+        "if close > open + buf\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert ("mintick", 0.01) in result.params
+    assert any("property of the instrument" in item for item in result.ignored)
+
+
+def test_the_mintick_param_is_live_rather_than_baked_in():
+    """Set to something absurd it must change behavior, or it is not a param."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "gap = 4 * syminfo.mintick\n"
+        "if close - open > gap and strategy.position_size == 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [(100, 102, 99.5, 101.5)] * 5  # every bar closes 1.5 above its open
+    assert _fill_run(source, rows).position.size == 1
+    assert _fill_run(source, rows, mintick=10.0).position.size == 0
+
+
+# --- the ICT order-block strategy, end to end ---------------------------------
+#
+# The script that drove priced entries, sessions and syminfo.mintick into the
+# converter, kept whole: a fair-value-gap detector that rests a limit at the
+# gap's top, brackets it behind the order block and at an R multiple, and
+# withdraws it after `zoneLife` bars untouched.
+
+ICT_OB_FVG = """//@version=6
+strategy("ICT OB + FVG", shorttitle="OB_FVG", overlay=true,
+     initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1,
+     margin_long=0, margin_short=0, pyramiding=0,
+     commission_type=strategy.commission.cash_per_order, commission_value=0)
+
+grpS = "Setup"
+useLong     = input.bool(true,  "Trade longs",            group=grpS)
+useShort    = input.bool(true,  "Trade shorts",           group=grpS)
+minGapTicks = input.float(4,    "Min FVG size (ticks)",   minval=0, group=grpS)
+zoneLife    = input.int(20,     "Entry valid for N bars", minval=1, group=grpS)
+
+grpR = "Risk / Reward"
+rr           = input.float(2.0, "Target R multiple",   minval=0.5, step=0.5, group=grpR)
+stopBufTicks = input.float(4,   "Stop buffer (ticks)", minval=0, group=grpR)
+
+grpT = "Session"
+useSession = input.bool(false, "Limit entries to session", group=grpT)
+sess       = input.session("0930-1600", "Session window (chart tz)", group=grpT)
+
+grpV = "Visuals"
+showZones = input.bool(true, "Draw FVG zones", group=grpV)
+
+inSess = not useSession or not na(time(timeframe.period, sess))
+buf    = stopBufTicks * syminfo.mintick
+minGap = minGapTicks * syminfo.mintick
+
+bullFVG = (low > high[2]) and (low - high[2] >= minGap) and close[1] > open[1]
+bearFVG = (high < low[2]) and (low[2] - high >= minGap) and close[1] < open[1]
+
+var int longArmBar  = na
+var int shortArmBar = na
+
+if bullFVG and useLong and inSess and strategy.position_size == 0
+    entryP = low
+    stopP  = high[2] - buf
+    risk   = entryP - stopP
+    tgtP   = entryP + rr * risk
+    if risk > 0
+        strategy.entry("L", strategy.long, limit=entryP)
+        strategy.exit("Lx", "L", stop=stopP, limit=tgtP)
+        longArmBar := bar_index
+        if showZones
+            box.new(bar_index, low, bar_index + zoneLife, high[2], border_color=color.new(color.teal,40), bgcolor=color.new(color.teal,85))
+
+if not na(longArmBar) and strategy.position_size == 0 and bar_index - longArmBar >= zoneLife
+    strategy.cancel("L")
+    longArmBar := na
+
+if bearFVG and useShort and inSess and strategy.position_size == 0
+    entryP = high
+    stopP  = low[2] + buf
+    risk   = stopP - entryP
+    tgtP   = entryP - rr * risk
+    if risk > 0
+        strategy.entry("S", strategy.short, limit=entryP)
+        strategy.exit("Sx", "S", stop=stopP, limit=tgtP)
+        shortArmBar := bar_index
+        if showZones
+            box.new(bar_index, low[2], bar_index + zoneLife, high, border_color=color.new(color.maroon,40), bgcolor=color.new(color.maroon,85))
+
+if not na(shortArmBar) and strategy.position_size == 0 and bar_index - shortArmBar >= zoneLife
+    strategy.cancel("S")
+    shortArmBar := na
+"""
+
+
+def test_ict_ob_fvg_converts_clean():
+    result = convert(ICT_OB_FVG)
+    assert result.ok, result.unsupported
+    assert ("mintick", 0.01) in result.params
+    assert ("sess", "0930-1600") in result.params
+    assert any("box.new" in item for item in result.ignored)
+
+
+def test_ict_ob_fvg_trades_a_bullish_gap_to_its_target():
+    """A three-bar fair value gap, a retrace into it, and a run to the target.
+
+    The gap bar's low is 102 over a two-bars-ago high of 100.5, so the limit
+    rests at 102, the stop at 100.46 (the order block less four ticks), and
+    the 2R target at 105.08. The retrace fills the limit; the rally fills the
+    target; the profit is exactly the 3.08 the geometry promises.
+    """
+    rows = [
+        (100, 100.5, 99.5, 100),  # the order block: high[2] for the gap bar
+        (100, 103, 100, 102.9),  # displacement up (close > open)
+        (103, 104, 102, 103.5),  # gap bar: low 102 > 100.5, entry goes out
+        (103.5, 104, 102.5, 103),  # no retrace yet
+        (103, 103.2, 101.8, 102.5),  # trades through 102: entry fills
+        (103, 105.5, 102.8, 105.2),  # trades through 105.08: target fills
+        (105.2, 105.4, 103.0, 105.0),
+        (105, 105.3, 103.1, 105.1),
+    ]
+    strategy = _fill_run(ICT_OB_FVG, rows)
+    assert strategy.position.size == 0
+    assert strategy.broker.getvalue() == pytest.approx(10_003.08)
+
+
+def test_ict_ob_fvg_trades_a_bearish_gap_to_its_target():
+    rows = [
+        (100, 100.5, 99.5, 100),  # low[2] = 99.5 for the gap bar
+        (100, 100.2, 97, 97.1),  # displacement down (close < open)
+        (97, 98.5, 96.5, 98),  # gap bar: high 98.5 < 99.5, short rests at 98.5
+        (97.5, 98.0, 96.8, 97.2),  # no retrace yet
+        (98, 98.6, 97.5, 98.2),  # trades through 98.5: short fills
+        (97.5, 97.8, 96.3, 96.5),  # trades through the 96.42 target
+        (96.5, 97.6, 96, 96.6),
+        (96.6, 97.2, 96.2, 96.8),
+    ]
+    strategy = _fill_run(ICT_OB_FVG, rows)
+    assert strategy.position.size == 0
+    # entry 98.5, stop 99.54, risk 1.04, 2R target 96.42: profit 2.08.
+    assert strategy.broker.getvalue() == pytest.approx(10_002.08)
+
+
+def test_ict_ob_fvg_withdraws_an_entry_the_market_never_retraces_to():
+    """zoneLife bars without a retrace and the resting order must be gone: the
+    later dip through the limit price proves it, by filling nothing."""
+    rows = [
+        (100, 100.5, 99.5, 100),
+        (100, 103, 100, 102.9),
+        (103, 104, 102, 103.5),  # gap bar: limit rests at 102
+        (103.5, 104, 102.6, 103.2),
+        (103.2, 103.8, 102.7, 103.5),
+        (103.5, 104.2, 102.9, 104),  # three bars armed: zoneLife=3 cancels here
+        (104, 104.5, 103.0, 104.2),
+        (104.2, 104.8, 101.5, 104.5),  # through 102, which must fill nothing
+        (104.5, 105, 103.4, 104.8),
+    ]
+    strategy = _fill_run(ICT_OB_FVG, rows, zoneLife=3)
+    assert strategy.position.size == 0
+    assert strategy.broker.getvalue() == 10_000.0
+
+
+def test_ict_ob_fvg_session_filter_gates_entries():
+    """With the session turned on and a window nothing trades in, the same
+    tape that produced the winning long must produce no trade at all."""
+    rows = [
+        (100, 100.5, 99.5, 100),
+        (100, 103, 100, 102.9),
+        (103, 104, 102, 103.5),
+        (103.5, 104, 102.5, 103),
+        (103, 103.2, 101.8, 102.5),
+        (103, 105.5, 102.8, 105.2),
+        (105.2, 105.4, 103.0, 105.0),
+        (105, 105.3, 103.1, 105.1),
+    ]
+    strategy = _fill_run(ICT_OB_FVG, rows, useSession=True, sess="0930-1600")
+    # Daily bars are stamped midnight, which 0930-1600 never contains.
+    assert strategy.position.size == 0
+    assert strategy.broker.getvalue() == 10_000.0
+
+
+# --- the ICT AM continuation strategy, end to end ------------------------------
+#
+# The script that drove time()'s timezone argument, history of a computed
+# session check and strategy.cancel_all into the converter, kept whole: an
+# opening-drive FVG detector that only trades the New York morning, rests a
+# limit at the gap's midpoint bracketed at an R multiple, and goes flat into
+# the close.
+
+ICT_AM_OB = """//@version=6
+strategy("ICT AM OB Continuation", shorttitle="AM_OB", overlay=true,
+     initial_capital=25000, default_qty_type=strategy.fixed, default_qty_value=1,
+     margin_long=0, margin_short=0, pyramiding=0,
+     commission_type=strategy.commission.cash_per_order, commission_value=1.0, slippage=1)
+
+// ===== Session (ET) =====
+grpS = "Session (ET)"
+entrySess = input.session("0930-1130", "AM entry window", group=grpS)
+flatSess  = input.session("1555-1600", "Force-flat window", group=grpS)
+tz = "America/New_York"
+
+// ===== Direction / bias =====
+grpD = "Direction / bias"
+useLong  = input.bool(true, "Longs (above the open)",     group=grpD)
+useShort = input.bool(true, "Shorts (below the open)",    group=grpD)
+useBias  = input.bool(true, "Require opening-drive bias", group=grpD)
+
+// ===== Setup quality =====
+grpF = "Setup quality"
+useDisp     = input.bool(true, "Require strong displacement", group=grpF)
+dispMult    = input.float(1.5, "Displacement x avg range(10)", minval=0.1, step=0.1, group=grpF)
+minGapTicks = input.float(8,   "Min FVG size (ticks)", minval=0, group=grpF)
+zoneLife    = input.int(12,    "Entry valid for N bars", minval=1, group=grpF)
+
+// ===== Risk / Reward =====
+grpR = "Risk / Reward"
+rr           = input.float(2.0, "Target R multiple", minval=0.5, step=0.5, group=grpR)
+stopBufTicks = input.float(2,   "Stop buffer (ticks)", minval=0, group=grpR)
+
+grpV = "Visuals"
+showZones = input.bool(true, "Draw FVG zones", group=grpV)
+
+// ===== Helpers =====
+inEntry = not na(time(timeframe.period, entrySess, tz))
+inFlat  = not na(time(timeframe.period, flatSess, tz))
+buf     = stopBufTicks * syminfo.mintick
+minGap  = minGapTicks * syminfo.mintick
+
+var float amOpen = na
+if inEntry and not inEntry[1]
+    amOpen := open
+plot(amOpen, "AM open", color=color.blue, style=plot.style_stepline)
+
+longBias  = not useBias or (not na(amOpen) and close > amOpen)
+shortBias = not useBias or (not na(amOpen) and close < amOpen)
+
+avgRange   = ta.sma(high - low, 10)
+dispRange  = high[1] - low[1]
+strongDisp = not useDisp or dispRange >= dispMult * avgRange[2]
+
+bullFVG = (low > high[2]) and (low - high[2] >= minGap) and close[1] > open[1] and strongDisp
+bearFVG = (high < low[2]) and (low[2] - high >= minGap) and close[1] < open[1] and strongDisp
+
+var int longArm  = na
+var int shortArm = na
+
+// ---- LONG: buy the FVG 50% in an up-drive ----
+if bullFVG and useLong and longBias and inEntry and strategy.position_size == 0
+    gTop = low
+    gBot = high[2]
+    ce   = (gTop + gBot) / 2
+    stopP = gBot - buf
+    risk  = ce - stopP
+    if risk > 0
+        strategy.entry("L", strategy.long, limit=ce)
+        strategy.exit("Lx", "L", stop=stopP, limit=ce + rr * risk)
+        longArm := bar_index
+        if showZones
+            box.new(bar_index, gTop, bar_index + zoneLife, gBot, border_color=color.new(color.teal,40), bgcolor=color.new(color.teal,88))
+
+// ---- SHORT: sell the FVG 50% in a down-drive ----
+if bearFVG and useShort and shortBias and inEntry and strategy.position_size == 0
+    gBot = high
+    gTop = low[2]
+    ce   = (gTop + gBot) / 2
+    stopP = gTop + buf
+    risk  = stopP - ce
+    if risk > 0
+        strategy.entry("S", strategy.short, limit=ce)
+        strategy.exit("Sx", "S", stop=stopP, limit=ce - rr * risk)
+        shortArm := bar_index
+        if showZones
+            box.new(bar_index, gTop, bar_index + zoneLife, gBot, border_color=color.new(color.maroon,40), bgcolor=color.new(color.maroon,88))
+
+// ---- cancel stale pending entries ----
+if not na(longArm) and strategy.position_size == 0 and (bar_index - longArm >= zoneLife or not inEntry)
+    strategy.cancel("L")
+    longArm := na
+if not na(shortArm) and strategy.position_size == 0 and (bar_index - shortArm >= zoneLife or not inEntry)
+    strategy.cancel("S")
+    shortArm := na
+
+// ---- force flat at end of day ----
+if inFlat
+    strategy.cancel_all()
+    strategy.close_all()
+"""
+
+
+def _minute_frame(rows, start, minutes=15):
+    """Intraday bars spelled out as (open, high, low, close), stamped from
+    ``start`` (UTC) every ``minutes``, for session-gated fill scenarios."""
+    out = []
+    for i, (o, h, l, c) in enumerate(rows):
+        out.append(
+            {
+                "datetime": start + datetime.timedelta(minutes=minutes * i),
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": 1000,
+            }
+        )
+    return pd.DataFrame(out).set_index("datetime")
+
+
+def _minute_fill_run(source, rows, start, minutes=15, **params):
+    """_fill_run over intraday bars, for scripts whose sessions gate entries."""
+    result = convert(source)
+    assert result.ok, f"conversion reported: {result.unsupported}"
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    cerebro = bt.Cerebro()
+    cerebro.adddata(
+        bt.feeds.PandasData(
+            dataname=_minute_frame(rows, start, minutes),
+            timeframe=bt.TimeFrame.Minutes,
+            compression=minutes,
+        )
+    )
+    cerebro.addstrategy(namespace[result.class_name], **params)
+    cerebro.broker.setcash(10_000.0)
+    return cerebro.run()[0]
+
+
+def test_ict_am_ob_converts_clean():
+    result = convert(ICT_AM_OB)
+    assert result.ok, result.unsupported
+    assert ("entrySess", "0930-1130") in result.params
+    assert ("flatSess", "1555-1600") in result.params
+    assert ("mintick", 0.01) in result.params
+    assert any("box.new" in item for item in result.ignored)
+
+
+#: A New York morning of 15-minute bars, stamped in UTC on 2022-03-07 -- EST,
+#: so 09:30 ET is 14:30 UTC. Ten quiet premarket bars from 12:00 warm the
+#: displacement SMA, the opening bar captures amOpen at 100, a displacement
+#: bar drives up, and the gap bar leaves a bullish FVG whose midpoint 101.25
+#: the entry rests at -- stop 100.48 behind the order block, 2R target 102.79.
+_AM_START = datetime.datetime(2022, 3, 7, 12, 0)
+_AM_MORNING = [(100, 100.5, 99.5, 100)] * 10 + [  # premarket, 12:00-14:15 UTC
+    (100, 100.5, 99.5, 100.2),  # 14:30, 09:30 ET: amOpen captured at 100
+    (100.2, 103, 100, 102.9),  # 14:45: the opening drive (close > open)
+    (103, 104, 102, 103.5),  # 15:00: gap bar, low 102 > 100.5: entry rests
+    (103.5, 104, 102.5, 103),  # 15:15: no retrace yet
+    (102.6, 102.7, 100.9, 101.5),  # 15:30: trades through 101.25, entry fills
+]
+
+
+def test_ict_am_ob_trades_a_bullish_am_gap_to_its_target():
+    rows = _AM_MORNING + [
+        (101.5, 103.5, 101.4, 103.2),  # trades through the 102.79 target
+        (103, 103.1, 102.4, 102.8),
+    ]
+    strategy = _minute_fill_run(ICT_AM_OB, rows, start=_AM_START)
+    assert strategy.position.size == 0
+    # entry 101.25, stop 100.48, risk 0.77, 2R target 102.79: profit 1.54.
+    assert strategy.broker.getvalue() == pytest.approx(10_001.54)
+
+
+def test_ict_am_ob_goes_flat_into_its_window_with_nothing_left_resting():
+    """The flat window cancels the bracket and closes at market. The bar after
+    it dips through where the stop rested; a surviving stop would sell a
+    second time and flip the book short, so flat is the proof."""
+    rows = _AM_MORNING + [
+        (101.5, 101.8, 101.0, 101.3),  # 15:45: drifting inside the bracket
+        (101.3, 101.6, 100.9, 101.2),  # 16:00, 11:00 ET: force-flat fires
+        (101.0, 101.4, 100.0, 100.8),  # closed at the open; the dip fills nothing
+        (100.8, 101.0, 100.4, 100.6),
+    ]
+    strategy = _minute_fill_run(ICT_AM_OB, rows, start=_AM_START, flatSess="1100-1130")
+    assert strategy.position.size == 0
+    # entry 101.25, market close at the 101.0 open: a 0.25 loss, once.
+    assert strategy.broker.getvalue() == pytest.approx(9_999.75)
+
+
+def test_history_reads_on_the_first_bars_cannot_see_the_future():
+    """Regression. Backtrader preloads the feed into flat arrays, and a read
+    past the start -- `high[2]` on the first bar -- wraps around to the *end*
+    of the feed: bars from the future. Pine answers na there, and a condition
+    on na never fires. The tape below is built so only the wraparound can
+    satisfy the condition: the cheap final bars are visible to the first bar's
+    `high[2]` only through the wrap, and no honest read ever qualifies."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if low > high[2] and strategy.position_size == 0\n"
+        '    strategy.entry("L", strategy.long)\n'
+    )
+    rows = [
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (100, 101, 99, 100),
+        (10, 11, 9, 10),
+        (10, 11, 9, 10),
+    ]
+    strategy = _fill_run(source, rows)
+    assert strategy.position.size == 0
+
+
+# --- history at an offset only known per bar ---------------------------------
+
+
+def test_a_computed_offset_reads_history():
+    """`close[rsPeriod]` where rsPeriod is a param, not a constant."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(10, "N")\n'
+        "v = close[n]\n"
+        "if v > close\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "v = self._pine_back(self.data.close, self.p.n)" in result.code
+
+
+def test_a_computed_offset_reads_an_indicators_history():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(3, "N")\n'
+        "m = ta.sma(close, 20)\n"
+        "v = m[n]\n"
+        "if v > close\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "v = self._pine_back(self._sma_1, self.p.n)" in result.code
+
+
+def test_reading_back_past_the_start_answers_na_not_the_future():
+    """Backtrader's `line[-step]` past the start returns a bar from the *end*.
+
+    The series is preloaded, so Python's negative indexing wraps: on bar 1 of
+    a thirty-bar feed, `close[5]` hands back bar 26. Not an error, not `na` --
+    a price the strategy could not have seen. A constant offset is handled by
+    sitting the early bars out; a computed one has to be checked where it is
+    read, and this is that check.
+    """
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(5, "N")\n'
+        "var float seen = 0.0\n"
+        "var int leaks = 0\n"
+        "seen := close[n]\n"
+        "if na(close[n])\n"
+        "    leaks := leaks\n"
+        "else\n"
+        "    leaks := leaks + 1\n"
+        "if close > open\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    base = namespace[result.class_name]
+
+    closes = [100.0 + i for i in range(30)]
+    start = datetime.datetime(2022, 1, 1)
+    frame = pd.DataFrame(
+        [
+            {
+                "datetime": start + datetime.timedelta(days=i),
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": 1000,
+            }
+            for i, close in enumerate(closes)
+        ]
+    ).set_index("datetime")
+
+    readings = {}
+
+    class Watched(base):
+        def next(self):
+            super().next()
+            readings[len(self)] = self.seen
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=frame))
+    cerebro.addstrategy(Watched)
+    cerebro.run()
+
+    # The first five bars cannot reach five back, and must say so.
+    for bar in range(1, 6):
+        assert readings[bar] != readings[bar], f"bar {bar} answered {readings[bar]}"
+    # From the sixth they are ordinary reads, and never a future price.
+    for bar in range(6, len(closes) + 1):
+        assert readings[bar] == closes[bar - 1 - 5]
+    assert max(v for v in readings.values() if v == v) < closes[-1]
+
+
+def test_a_computed_offset_on_something_that_is_not_a_series_is_reported():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'n = input.int(5, "N")\n'
+        "var float acc = 0.0\n"
+        "acc := acc + close\n"
+        "v = acc[n]\n"
+        "if v > 0\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("needs a series to read back over" in i for i in result.unsupported)
+
+
+def test_the_back_helper_is_only_emitted_when_it_is_used():
+    assert "_pine_back" not in convert(DUAL_MA).code
+
+
+# --- a second instrument -----------------------------------------------------
+
+RELATIVE_STRENGTH = """//@version=6
+strategy("RS")
+peerSymbol = input.symbol("SPY", "Comparative Symbol")
+lookback = input.int(20, "Lookback")
+base = request.security(syminfo.tickerid, timeframe.period, close)
+peer = request.security(peerSymbol, timeframe.period, close)
+rs = (base / base[lookback]) / (peer / peer[lookback]) - 1
+if rs > 0
+    strategy.entry("l", strategy.long)
+if rs < 0
+    strategy.close()
+"""
+
+
+def test_a_named_symbol_becomes_a_feed_to_load():
+    result = convert(RELATIVE_STRENGTH)
+    assert result.ok, result.unsupported
+    assert "('SPY', None, None)," in result.code
+    assert "peer = self.datas[1].close[0]" in result.code
+
+
+def test_input_symbol_is_a_param_that_cannot_move_the_feed():
+    """Same reasoning as a timeframe: the feed is chosen before the strategy.
+
+    The param stays, because the script may read it elsewhere, and the
+    conversion says plainly that it is no longer wired to the data.
+    """
+    result = convert(RELATIVE_STRENGTH)
+    assert "('peerSymbol', 'SPY')," in result.code
+    assert any("peerSymbol" in item and "feed_spec" in item for item in result.ignored)
+
+
+def test_a_symbol_and_a_timeframe_are_separate_feeds():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "peer = request.security('SPY', timeframe.period, close)\n"
+        "htf = request.security(syminfo.tickerid, '1D', close)\n"
+        "both = request.security('SPY', '1D', close)\n"
+        "if peer > htf and both > 0\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "('SPY', None, None)," in result.code
+    assert "(None, bt.TimeFrame.Days, 1)," in result.code
+    assert "('SPY', bt.TimeFrame.Days, 1)," in result.code
+    assert "needs 4 data feeds" in result.code
+
+
+def test_two_reads_of_one_symbol_share_a_feed():
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "a = request.security('SPY', 'D', close)\n"
+        "b = request.security('SPY', 'D', high)\n"
+        "if a > b\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert result.code.count("('SPY', bt.TimeFrame.Days, 1),") == 1
+    assert "self.datas[2]" not in result.code
+
+
+def test_a_symbol_that_is_not_a_constant_is_reported():
+    """The feed is loaded before the strategy, so the name has to be known."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "sym = close > open ? 'SPY' : 'QQQ'\n"
+        "peer = request.security(sym, 'D', close)\n"
+        "if peer > close\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("must be a literal string" in i for i in result.unsupported)
+
+
+def test_a_second_instrument_still_refuses_lookahead():
+    """Naming another symbol must not become a way around the lookahead guard."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        "peer = request.security('SPY', '240', close, barmerge.gaps_off,"
+        " barmerge.lookahead_on)\n"
+        "if peer > close\n    strategy.close()\n"
+    )
+    assert not result.ok
+    assert any("lookahead_on reads a bar" in i for i in result.unsupported)
+
+
+def test_generated_relative_strength_strategy_runs_on_two_instruments():
+    """The whole point: a strategy that compares one symbol against another."""
+    result = convert(RELATIVE_STRENGTH)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+    strategy_cls = namespace[result.class_name]
+    assert strategy_cls.feed_spec == (("SPY", None, None),)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame(seed=1)))
+    for _symbol, timeframe, compression in strategy_cls.feed_spec:
+        peer = bt.feeds.PandasData(dataname=_price_frame(seed=99))
+        if timeframe is None:
+            cerebro.adddata(peer)
+        else:
+            cerebro.resampledata(peer, timeframe=timeframe, compression=compression)
+    cerebro.addstrategy(strategy_cls)
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+
+    closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
     assert closed > 0

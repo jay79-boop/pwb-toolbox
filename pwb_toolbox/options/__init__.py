@@ -9,6 +9,7 @@ from .decay import (
     drop_dead,
     hurdle_ratio,
     recovery,
+    shot_clock,
 )
 from .checks import (
     FAIL,
@@ -39,6 +40,7 @@ __all__ = [
     "recovery",
     "drop_dead",
     "decay_schedule",
+    "shot_clock",
     "Check",
     "PASS",
     "FAIL",
