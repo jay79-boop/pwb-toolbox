@@ -138,6 +138,48 @@
                 "duration": {
                   "type": "string",
                   "description": "Typical duration (e.g., '5 minutes', '1 day')"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["task", "decision", "delay", "end", "goto"],
+                  "default": "task",
+                  "description": "What the step is. 'decision' forks the flow and carries branches; 'delay' is an explicit wait the business actually described; 'end' is a terminator, so a branch that stops says so instead of trailing off; 'goto' jumps back to an earlier step and ends its branch there. Everything else is a task"
+                },
+                "executor": {
+                  "type": "string",
+                  "enum": ["person", "automation", "ai"],
+                  "default": "person",
+                  "description": "Who or what runs the step. Person steps are the labour bill and need both duration and frequency"
+                },
+                "frequency": {
+                  "type": "number",
+                  "description": "Times this step runs per month. Duration times frequency is what turns the map into a cost"
+                },
+                "branches": {
+                  "type": "array",
+                  "description": "Where a decision step's outcomes go. Without branches the flow falls through to the next step number, which is what a linear process does",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "description": "The outcome in one to three words (e.g. 'Approved', 'Over $10k')"
+                      },
+                      "to": {
+                        "description": "Destination step number, or 'end' for a branch that terminates here",
+                        "oneOf": [{ "type": "integer" }, { "type": "string", "enum": ["end"] }]
+                      }
+                    },
+                    "required": ["label", "to"]
+                  }
+                },
+                "goto": {
+                  "type": "integer",
+                  "description": "Step number this go-to step jumps back to. Required when kind is 'goto'"
+                },
+                "notes": {
+                  "type": "string",
+                  "description": "Mini-SOP for the step: purpose, inputs, procedure, output"
                 }
               },
               "required": ["number", "title"]
