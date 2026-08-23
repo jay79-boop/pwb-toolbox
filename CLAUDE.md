@@ -172,6 +172,10 @@ A worked example, for this repo's 21st MCP key:
   directory (never duplicates its math), saves inputs to localStorage.
   Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
+- `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
+  rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
+  gets checked against; it emulates TradingView's intrabar path assumption so a low
+  printed before the entry filled cannot retroactively stop the trade out
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
 - `static/flow-canvas.html` — single-file process-mapping tool (a clean-room
   redesign of puzzleapp.io's workflow canvas): drag-and-connect step cards,
@@ -195,6 +199,8 @@ A worked example, for this repo's 21st MCP key:
   `attribution` — splits a repriced premium change into delta/gamma/theta/vega
   dollars with the unexplained part reported as residual — which the spicy lab
   leans on
+- `pine/` — TradingView strategies kept as reviewable source; `README.md` there covers
+  the chart setup they need. Nothing under `pwb_toolbox/` imports them
 - `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
   machine-enforceable risk rules with their originating traders/papers, the
   retail base-rate studies that justify paper-first, the evidence review
@@ -266,6 +272,7 @@ pytest tests/test_optimal_limit_order.py -v
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
+python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
