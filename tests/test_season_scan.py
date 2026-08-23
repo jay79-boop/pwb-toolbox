@@ -332,3 +332,44 @@ def test_average_year_path_shows_the_planted_run():
 def test_render_report_inlines_the_data():
     html = render_report(scan_fixture())
     assert "XLE" in html and "__DATA__" not in html
+
+
+# ---------------------------------------------------------------------------
+# The resolution trap the first full-universe scan hit: with 204 cells the
+# rank-1 BH bar (q/n = 0.00049) sits BELOW the smallest p that 2,000
+# permutations can produce (1/2001 = 0.0005), so a lone true pattern was
+# mathematically blocked from conviction. B must scale with the family.
+# ---------------------------------------------------------------------------
+
+from tools.season_scan import FDR_Q, PERMUTATIONS, needed_permutations
+
+
+def test_the_floor_clears_the_rank_one_bar_at_any_family_size():
+    for n_cells in (12, 204, 480, 1200):
+        b = needed_permutations(n_cells)
+        assert 1 / (b + 1) < FDR_Q / n_cells
+
+
+def test_small_families_keep_the_default():
+    assert needed_permutations(12) == PERMUTATIONS
+
+
+def test_the_documented_trap_two_thousand_at_204_cells():
+    # Pinned so the numbers in the docstring stay true: the old fixed B
+    # really was blocked, and the scaled B really is not.
+    floor_old = 1 / (PERMUTATIONS + 1)
+    assert floor_old > FDR_Q / 204  # the trap existed
+    floor_new = 1 / (needed_permutations(204) + 1)
+    assert floor_new < FDR_Q / 204  # and is gone
+
+
+def test_bh_blocks_a_floor_p_alone_at_204_but_admits_a_scaled_one():
+    noise = [0.5] * 203
+    assert not any(bh_fdr([1 / 2001] + noise, q=FDR_Q))  # old floor: blocked
+    assert bh_fdr([1 / 4081] + noise, q=FDR_Q)[0]  # scaled floor: convicts
+
+
+def test_compute_reports_the_scaled_permutation_count(tmp_path):
+    closes = {"AAA": synthetic_closes(strong_month=3, seed=1)}
+    scan = compute(closes, date(2026, 3, 10))
+    assert scan["gates"]["permutations"] == needed_permutations(12)

@@ -78,6 +78,23 @@ DEFAULT_UNIVERSE = SECTORS + INDEXES + CRYPTO
 MIN_YEARS = 15  # below this a cell can be CANDIDATE at best
 PERMUTATIONS = 2000
 FDR_Q = 0.10
+
+
+def needed_permutations(n_cells: int, q: float = FDR_Q) -> int:
+    """Permutations must outrun the FDR bar, or a lone true pattern is
+    mathematically blocked.
+
+    BH admits the single best of n cells only at p <= q/n. A permutation
+    test's smallest possible p is 1/(B+1). At 204 cells and q=0.10 the bar
+    is 0.00049 while 2,000 permutations bottom out at 0.0005 -- the
+    strongest cell in the grid could not convict alone no matter how real
+    it was, and the first full-universe scan ran into exactly that. So B
+    scales with the family: floor at half the rank-1 bar, never below the
+    default.
+    """
+    return max(PERMUTATIONS, math.ceil(2 * n_cells / q))
+
+
 ENTER_LEAVE_DAYS = 14  # "entering/leaving" horizon for the now-window screener
 
 CONVICTED, CANDIDATE, NOISE = "convicted", "candidate", "noise"
@@ -273,7 +290,9 @@ def bh_fdr(pvalues: list[float], q: float = FDR_Q) -> list[bool]:
 # ---------------------------------------------------------------------------
 
 
-def cell_stats(closes: dict[date, float], symbol: str) -> list[dict]:
+def cell_stats(
+    closes: dict[date, float], symbol: str, permutations: int = PERMUTATIONS
+) -> list[dict]:
     """Every month's raw evidence for one ticker. Tiers are assigned later,
     after FDR has seen the whole grid."""
     monthly = monthly_log_returns(closes)
@@ -282,7 +301,7 @@ def cell_stats(closes: dict[date, float], symbol: str) -> list[dict]:
         series = month_series(monthly, month)
         if not series:
             continue
-        mean, p = perm_pvalue(monthly, [month])
+        mean, p = perm_pvalue(monthly, [month], permutations=permutations)
         halves = split_half(monthly, [month])
         out.append(
             {
@@ -494,9 +513,12 @@ def load_all_closes(base: Path, symbols: list[str]) -> dict[str, dict[date, floa
 
 def compute(all_closes: dict[str, dict[date, float]], today: date) -> dict:
     """The whole scan: cells, tiers, folklore, now-windows, paths."""
+    # The family is (up to) 12 cells per ticker; B is chosen before any
+    # cell is tested so the floor clears the rank-1 FDR bar.
+    permutations = needed_permutations(12 * len(all_closes))
     cells: list[dict] = []
     for sym in sorted(all_closes):
-        cells.extend(cell_stats(all_closes[sym], sym))
+        cells.extend(cell_stats(all_closes[sym], sym, permutations=permutations))
     assign_tiers(cells)
     return {
         "generated": today.isoformat(),
@@ -508,7 +530,7 @@ def compute(all_closes: dict[str, dict[date, float]], today: date) -> dict:
             sym: average_year_path(all_closes[sym]) for sym in sorted(all_closes)
         },
         "gates": {
-            "permutations": PERMUTATIONS,
+            "permutations": permutations,
             "fdr_q": FDR_Q,
             "min_years": MIN_YEARS,
         },
