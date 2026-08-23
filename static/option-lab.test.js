@@ -397,6 +397,47 @@ test("a short-dated contract rents time more expensively", () => {
   assert.ok(near7 > far45, near7 + " should exceed " + far45);
 });
 
+
+/* ---------------------------------------------------- attribution */
+
+test("attribution's total is exact and its parts reconcile", () => {
+  const pos = { spot: 640, strike: 640, days: 1, vol: 0.18, rate: 0.045, kind: "call", contracts: 1 };
+  const a = T.attribution(pos, { movePct: 0.5, minutes: 30, ivChange: -1 });
+  const g0 = T.blackScholes(640, 640, 1, 0.18, 0.045, "call");
+  const g1 = T.blackScholes(640 * 1.005, 640, 1 - 30 / 1440, 0.17, 0.045, "call");
+  near(a.total, (g1.price - g0.price) * 100, 1e-9);
+  near(a.total, a.delta + a.gamma + a.theta + a.vega + a.residual, 1e-9);
+});
+
+test("small scenarios leave only a small residual", () => {
+  const pos = { spot: 640, strike: 640, days: 2, vol: 0.18, rate: 0.045, kind: "call", contracts: 1 };
+  const a = T.attribution(pos, { movePct: 0.25, minutes: 15, ivChange: 0 });
+  assert.ok(Math.abs(a.residual) < Math.abs(a.total) * 0.05 + 0.01,
+    "residual " + a.residual + " vs total " + a.total);
+});
+
+test("each greek's sign tells its story for a long call", () => {
+  const pos = { spot: 640, strike: 640, days: 1, vol: 0.18, rate: 0.045, kind: "call", contracts: 1 };
+  const a = T.attribution(pos, { movePct: 1, minutes: 60, ivChange: -2 });
+  assert.ok(a.delta > 0, "up-move pays delta");
+  assert.ok(a.gamma > 0, "gamma always adds on a move");
+  assert.ok(a.theta < 0, "time always costs a long");
+  assert.ok(a.vega < 0, "an IV drop costs a long");
+});
+
+test("attribution scales with position size", () => {
+  const pos = { spot: 640, strike: 640, days: 1, vol: 0.18, rate: 0.045, kind: "call", contracts: 1 };
+  const one = T.attribution(pos, { movePct: 0.5, minutes: 30, ivChange: 0 });
+  const five = T.attribution({ ...pos, contracts: 5 }, { movePct: 0.5, minutes: 30, ivChange: 0 });
+  near(five.total, one.total * 5, 1e-9);
+});
+
+test("a scenario past expiry settles to intrinsic instead of erroring", () => {
+  const pos = { spot: 640, strike: 630, days: 0.2, vol: 0.18, rate: 0.045, kind: "call", contracts: 1 };
+  const a = T.attribution(pos, { movePct: 0, minutes: 600, ivChange: 0 });
+  near(a.endPremium, 10, 1e-9);
+});
+
 failures.forEach(f => console.error("FAIL  " + f));
 console.log(passed + " passed, " + failures.length + " failed");
 process.exit(failures.length ? 1 : 0);

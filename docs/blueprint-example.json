@@ -49,28 +49,36 @@
           "title": "Define strategy rules and parameters",
           "owner": "Quant Researcher",
           "tools": ["tool-jupyter"],
-          "duration": "2-8 hours"
+          "duration": "2-8 hours",
+          "executor": "person",
+          "frequency": 12
         },
         {
           "number": 2,
           "title": "Load historical price data",
           "owner": "Quant Researcher",
           "tools": ["tool-backtrader", "tool-bloomberg"],
-          "duration": "30 minutes"
+          "duration": "30 minutes",
+          "executor": "automation",
+          "frequency": 12
         },
         {
           "number": 3,
           "title": "Run backtest and analyze results",
           "owner": "Quant Researcher",
           "tools": ["tool-backtrader"],
-          "duration": "1-4 hours"
+          "duration": "1-4 hours",
+          "executor": "person",
+          "frequency": 12
         },
         {
           "number": 4,
           "title": "Document findings and decision",
           "owner": "Quant Researcher",
           "tools": ["tool-github"],
-          "duration": "1 hour"
+          "duration": "1 hour",
+          "executor": "person",
+          "frequency": 12
         }
       ],
       "frequency": "multiple times per week",
@@ -92,21 +100,27 @@
           "title": "Collect and validate overnight market data",
           "owner": "Signal Processor",
           "tools": ["tool-backtrader"],
-          "duration": "15 minutes"
+          "duration": "15 minutes",
+          "executor": "automation",
+          "frequency": 21
         },
         {
           "number": 2,
           "title": "Run strategy models",
           "owner": "Signal Processor",
           "tools": ["tool-backtrader"],
-          "duration": "30 minutes"
+          "duration": "30 minutes",
+          "executor": "automation",
+          "frequency": 21
         },
         {
           "number": 3,
           "title": "Generate signal summary for execution team",
           "owner": "Signal Processor",
           "tools": ["tool-slack"],
-          "duration": "15 minutes"
+          "duration": "15 minutes",
+          "executor": "automation",
+          "frequency": 21
         }
       ],
       "frequency": "daily before market open",
@@ -125,31 +139,119 @@
       "steps": [
         {
           "number": 1,
-          "title": "Review and approve trade signals",
-          "owner": "Execution Lead",
-          "tools": ["tool-slack", "tool-trade-journal"],
-          "duration": "10 minutes"
+          "title": "Receive strategy signal from scheduler",
+          "kind": "task",
+          "executor": "automation",
+          "owner": "Signal Processor",
+          "tools": ["tool-slack"],
+          "duration": "instant",
+          "frequency": 40,
+          "notes": "Purpose: the trigger — nothing in this process starts without a signal. Inputs: the morning model run. Procedure: the scheduler posts the signal into the execution channel. Output: a signal waiting for review."
         },
         {
           "number": 2,
-          "title": "Calculate position size and risk allocation",
-          "owner": "Risk Manager",
-          "tools": ["tool-trade-journal"],
-          "duration": "5 minutes"
+          "title": "Review and approve trade signals",
+          "kind": "task",
+          "executor": "person",
+          "owner": "Execution Lead",
+          "tools": ["tool-slack", "tool-trade-journal"],
+          "duration": "10 minutes",
+          "frequency": 40,
+          "notes": "Purpose: a human reads the signal against current exposure before any money moves. Inputs: the posted signal and the open book. Procedure: the Execution Lead checks the thesis, the correlation to what is already on, and the news. Output: an approve or reject call."
         },
         {
           "number": 3,
-          "title": "Submit order to Interactive Brokers",
-          "owner": "Execution Operator",
-          "tools": ["tool-ib"],
-          "duration": "2 minutes"
+          "title": "Did the signal pass review?",
+          "kind": "decision",
+          "executor": "person",
+          "owner": "Execution Lead",
+          "duration": "2 minutes",
+          "frequency": 40,
+          "branches": [
+            {
+              "label": "Approved",
+              "to": 4
+            },
+            {
+              "label": "Rejected",
+              "to": "end"
+            }
+          ],
+          "notes": "Purpose: the fork the whole process turns on. A rejected signal ends here and is logged; it does not sit in a queue."
         },
         {
           "number": 4,
+          "title": "Calculate position size and risk allocation",
+          "kind": "task",
+          "executor": "person",
+          "owner": "Risk Manager",
+          "tools": ["tool-trade-journal"],
+          "duration": "5 minutes",
+          "frequency": 30,
+          "notes": "Purpose: fix the size before the order exists, so the size is never chosen in a hurry. Inputs: account equity, the stop level, open exposure. Procedure: risk per trade against the stop distance, capped by the per-strategy limit. Output: a share or contract count."
+        },
+        {
+          "number": 5,
+          "title": "Submit order to Interactive Brokers",
+          "kind": "task",
+          "executor": "person",
+          "owner": "Execution Operator",
+          "tools": ["tool-ib"],
+          "duration": "2 minutes",
+          "frequency": 30,
+          "notes": "Purpose: place the order that was just sized. Inputs: the sized order and the limit price. Procedure: the Operator enters it in IB and reads the confirmation back. Output: a working order."
+        },
+        {
+          "number": 6,
+          "title": "Wait for the fill or the session close",
+          "kind": "delay",
+          "executor": "automation",
+          "owner": "Execution Operator",
+          "duration": "up to 1 trading day",
+          "frequency": 30,
+          "notes": "Purpose: an explicit wait, because this is where the elapsed time in this process actually goes. A limit order either fills or expires at the close."
+        },
+        {
+          "number": 7,
+          "title": "Did the order fill?",
+          "kind": "decision",
+          "executor": "automation",
+          "owner": "Execution Operator",
+          "tools": ["tool-ib"],
+          "duration": "instant",
+          "frequency": 30,
+          "branches": [
+            {
+              "label": "Filled",
+              "to": 8
+            },
+            {
+              "label": "Unfilled",
+              "to": 9
+            }
+          ],
+          "notes": "Purpose: split a live position from a signal that never got on. Inputs: the IB order status at the close."
+        },
+        {
+          "number": 8,
           "title": "Monitor position and adjust if needed",
+          "kind": "task",
+          "executor": "person",
           "owner": "Execution Operator",
           "tools": ["tool-ib", "tool-datadog"],
-          "duration": "ongoing"
+          "duration": "15 minutes",
+          "frequency": 25,
+          "notes": "Purpose: manage the position that exists now. Inputs: the fill and the thesis it was opened on. Procedure: the Operator watches the stop and the target and moves neither without a reason written down. Output: a closed trade and a journal entry."
+        },
+        {
+          "number": 9,
+          "title": "Go to: Review and approve trade signals",
+          "kind": "goto",
+          "executor": "person",
+          "owner": "Execution Lead",
+          "goto": 2,
+          "frequency": 5,
+          "notes": "An unfilled signal goes back to review the next session rather than being re-entered blind — the market has moved and the thesis may not survive it. Seven steps upstream, so it is a go-to step rather than a line drawn back across the map."
         }
       ],
       "frequency": "per trade signal",
@@ -171,21 +273,27 @@
           "title": "Stream live P&L and position data",
           "owner": "Monitoring System",
           "tools": ["tool-datadog"],
-          "duration": "continuous"
+          "duration": "continuous",
+          "executor": "automation",
+          "frequency": 21
         },
         {
           "number": 2,
           "title": "Check against risk limits",
           "owner": "Monitoring System",
           "tools": ["tool-datadog"],
-          "duration": "continuous"
+          "duration": "continuous",
+          "executor": "automation",
+          "frequency": 21
         },
         {
           "number": 3,
           "title": "Alert execution team on threshold breach",
           "owner": "Monitoring System",
           "tools": ["tool-slack"],
-          "duration": "instant"
+          "duration": "instant",
+          "executor": "automation",
+          "frequency": 21
         }
       ],
       "frequency": "real-time",
@@ -207,28 +315,36 @@
           "title": "Pull end-of-day positions from broker",
           "owner": "Finance Analyst",
           "tools": ["tool-ib", "tool-quickbooks"],
-          "duration": "30 minutes"
+          "duration": "30 minutes",
+          "executor": "automation",
+          "frequency": 21
         },
         {
           "number": 2,
           "title": "Calculate P&L and reconcile to internal records",
           "owner": "Finance Analyst",
           "tools": ["tool-quickbooks"],
-          "duration": "1 hour"
+          "duration": "1 hour",
+          "executor": "person",
+          "frequency": 21
         },
         {
           "number": 3,
           "title": "Generate daily report for stakeholders",
           "owner": "Finance Analyst",
           "tools": ["tool-google-workspace"],
-          "duration": "1 hour"
+          "duration": "1 hour",
+          "executor": "person",
+          "frequency": 21
         },
         {
           "number": 4,
           "title": "Monthly performance review and attribution",
           "owner": "Finance Manager",
           "tools": ["tool-quickbooks"],
-          "duration": "4 hours"
+          "duration": "4 hours",
+          "executor": "person",
+          "frequency": 1
         }
       ],
       "frequency": "daily (summary), monthly (detailed)",
@@ -250,21 +366,27 @@
           "title": "Track all tool subscriptions and renewal dates",
           "owner": "Tech Manager",
           "tools": ["tool-google-workspace"],
-          "duration": "1 hour per month"
+          "duration": "1 hour",
+          "executor": "person",
+          "frequency": 1
         },
         {
           "number": 2,
           "title": "Review tool usage and cost optimization",
           "owner": "CFO",
           "tools": ["tool-datadog"],
-          "duration": "2 hours per month"
+          "duration": "2 hours",
+          "executor": "person",
+          "frequency": 1
         },
         {
           "number": 3,
           "title": "Evaluate new tools or replacement candidates",
           "owner": "Tech Manager",
           "tools": ["tool-github"],
-          "duration": "varies"
+          "duration": "3 hours",
+          "executor": "person",
+          "frequency": 1
         }
       ],
       "frequency": "monthly review, ad-hoc evaluations",
