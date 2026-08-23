@@ -73,7 +73,15 @@ THESIS      Broke 182 resistance on 2x volume with sector tailwind;
 LOG IT      python tools/spec_desk.py open --lane swing-buy --symbol NVDA
             --instrument "NVDA 02OCT26 190C" --qty 2 --entry 4.20
             --stop 176 --target 198 --thesis "breakout over 182 on 2x volume"
+LAB         static/spicy-lab.html with these inputs (or:
+            python tools/spicy_lab.py excel --spot 184 --strike 190 ... )
 ```
+
+Short-dated plans additionally state the shot clock and hourly hurdle, and
+point the owner at the lab preloaded with the contract — the ladder shows
+what each move pays now versus later, the attribution bars show which greek
+is paying or charging, and the velocity panel is the exit tell: when the
+15-minute slices stop growing, the easy premium is in.
 
 The owner's only jobs: say yes/no/resize, place it, and report fills. The
 agent logs, watches, and nags when a level hits.
