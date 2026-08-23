@@ -10,8 +10,12 @@ pattern, or is it memory?
 Scan 15 tickers by 12 months and ~9 "patterns" appear by pure luck. So a
 cell is **CONVICTED** only when it clears all three:
 
-1. **Permutation** — its mean beats 2,000 within-year reshuffles of the
-   ticker's own monthly history. The shuffle stays inside each year, so
+1. **Permutation** — its mean beats within-year reshuffles of the
+   ticker's own monthly history (2,000 minimum, scaled up with the size of
+   the grid: BH admits the single best of n cells only at p <= q/n, and the
+   test's floor of 1/(B+1) must sit below that bar or a lone true pattern
+   is blocked by resolution — the first full-universe run hit exactly
+   this). The shuffle stays inside each year, so
    2008 remains a terrible year with its damage spread across its own
    months; only the calendar alignment is destroyed. (A circular shift of
    the whole series — the obvious null — is wrong twice over: shifts by

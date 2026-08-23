@@ -735,7 +735,11 @@ collapses the null to eleven distinct values (and shifts by multiples of 12
 realign the calendar entirely), so a merely top-ranked month read as
 p=0.0005. The shipped null shuffles months within each year — volatility
 regimes survive, alignment dies, and pure noise convicts at the expected
-~5%/0% rates (checked in tests).
+~5%/0% rates (checked in tests). A second resolution trap surfaced on the
+first real run: at 204 cells the rank-1 BH bar (q/n=0.00049) sits below the
+smallest p 2,000 permutations can produce (0.0005), mathematically blocking
+a lone true pattern — so the permutation count now scales with the grid
+(`needed_permutations`, also pinned by tests).
 
 ### [2026-08-23] Overnight stress lab on a local model ("good night")
 **Decision:** Add `tools/night_lab.py` — a 1am-8am unattended stress lab
