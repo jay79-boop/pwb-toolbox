@@ -74,6 +74,11 @@ DEFAULT_DIR = Path(__file__).resolve().parent.parent / "night_lab"
 QUEUE_NAME = "queue.jsonl"
 VERDICT_NAME = "verdict.json"
 PROPOSALS_NAME = "proposals.jsonl"
+# The closed record `plan` snapshotted for tonight. `run` reads this rather
+# than re-deriving the record at 1am, so the night computes on exactly the
+# state that was armed -- including sim trades merged in via --sim, which the
+# desk ledger alone would not carry.
+RECORD_NAME = "record.json"
 
 # The window. Defaults match the ask: start at 1am, hard stop at 8am.
 START_HOUR = 1
@@ -1091,6 +1096,30 @@ def closed_trades(ledger: dict) -> list[dict]:
     return [t for t in ledger.get("trades", []) if t.get("status") == "closed"]
 
 
+def load_sim_trades(path: Path) -> list[dict]:
+    """Closed trades exported by a simulator (reversal_15m_sim --trades-out).
+
+    Accepts {"trades": [...]} or a bare list. Anything that is not a closed
+    trade with the fields the arithmetic needs is dropped here, at the door,
+    so a malformed export cannot poison the night's record.
+    """
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    trades = obj.get("trades", obj) if isinstance(obj, dict) else obj
+    if not isinstance(trades, list):
+        return []
+    kept = []
+    for t in trades:
+        if not isinstance(t, dict) or t.get("status") != "closed":
+            continue
+        if trade_r(t) is None:
+            continue
+        kept.append(t)
+    return kept
+
+
 def build_queue(ledger: dict, *, shocks: int = 6, attacks_per: int = 8) -> list[dict]:
     """Tonight's work: attack what is open, shock what is closed, mine the record."""
     jobs, n = [], 0
@@ -1133,17 +1162,40 @@ def lab_dir(arg: str | None) -> Path:
 def cmd_plan(args):
     out = lab_dir(args.dir)
     ledger = load_desk(Path(args.ledger) if args.ledger else _default_ledger())
+
+    sim_trades: list[dict] = []
+    for sim_path in args.sim or []:
+        found = load_sim_trades(Path(sim_path).expanduser())
+        if not found:
+            print(f"No usable closed trades in {sim_path}; skipping it.")
+        sim_trades.extend(found)
+    if sim_trades:
+        # Sim trades join the closed record only. They carry no thesis, so
+        # they can be shocked, resampled and mined -- but never red-teamed.
+        ledger = dict(ledger)
+        ledger["trades"] = list(ledger.get("trades", [])) + sim_trades
+
     jobs = build_queue(ledger, shocks=args.shocks, attacks_per=args.attacks)
     if not jobs:
         print("Nothing to queue: the desk has no open positions and no closed record.")
-        print("Open a trade or run some paper history first.")
+        print("Open a trade, or feed a backtest in with --sim (see")
+        print("  python tools/reversal_15m_sim.py --help, --trades-out).")
         return 1
+
+    record = closed_trades(ledger)
+    (out / RECORD_NAME).parent.mkdir(parents=True, exist_ok=True)
+    (out / RECORD_NAME).write_text(
+        json.dumps({"snapshotted": now_iso(), "trades": record}, indent=2),
+        encoding="utf-8",
+    )
     write_queue(out / QUEUE_NAME, jobs)
     kinds = {}
     for j in jobs:
         kinds[j["kind"]] = kinds.get(j["kind"], 0) + 1
     summary = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items()))
     print(f"Queued {len(jobs)} job(s): {summary}")
+    if sim_trades:
+        print(f"Record: {len(record)} closed trade(s), {len(sim_trades)} from sims.")
     print(f"  {out / QUEUE_NAME}")
     return 0
 
@@ -1159,8 +1211,12 @@ def cmd_run(args):
     if not jobs:
         print(f"No queue at {queue_path}. Run `night_lab.py plan` first.")
         return 1
-    ledger = load_desk(Path(args.ledger) if args.ledger else _default_ledger())
-    trades = closed_trades(ledger)
+    record_path = out / RECORD_NAME
+    if record_path.exists():
+        trades = load_sim_trades(record_path)
+    else:
+        ledger = load_desk(Path(args.ledger) if args.ledger else _default_ledger())
+        trades = closed_trades(ledger)
     llm = Ollama(model=args.model, host=args.host)
 
     stats = run_night(
@@ -1255,6 +1311,13 @@ def main(argv=None):
 
     p = sub.add_parser("plan", help="build tonight's queue from the desk")
     shared(p)
+    p.add_argument(
+        "--sim",
+        action="append",
+        metavar="PATH",
+        help="closed-trade JSON from a simulator (reversal_15m_sim --trades-out); "
+        "repeatable; joins the record for shocks and leak-mining",
+    )
     p.add_argument("--shocks", type=int, default=6, help="scenario jobs to queue")
     p.add_argument("--attacks", type=int, default=8, help="attacks per open thesis")
     p.set_defaults(func=cmd_plan)

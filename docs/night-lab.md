@@ -86,6 +86,32 @@ supplies the verdict: the group's mean R against everything else, the sample
 size, and whether the claimed direction holds. Anything under five trades is
 dropped — with four trades you can find any pattern you like.
 
+## Feeding it backtests, not just the desk
+
+The lab was pointed at the paper desk, but a new desk is empty and stays
+thin for weeks. Backtests are the other record worth stressing — arguably
+the more important one, since stress-testing a strategy *before* it risks
+paper money is the whole point of the paper-first gate.
+
+`reversal_15m_sim.py --trades-out trades.json` exports its closed trades in
+the lab's shape, and `night_lab.py plan --sim trades.json` merges them into
+the night's record (repeat `--sim` for several files). Sim trades join the
+closed record only: they can be shocked, resampled and mined, but they carry
+no thesis, so they are never red-teamed. They arrive tagged `lane: sim-15m`,
+which keeps leak-mining honest about what is a sim result and what is a real
+paper trade.
+
+`plan` snapshots the merged record to `night_lab/record.json`, and `run`
+computes from that snapshot — so the 1am grind works on exactly the state
+that was armed at "good night", not on whatever the ledger looks like by
+morning.
+
+Getting bars for the sim: `reversal_15m_sim.py bars.csv --fetch "ES=F"`
+pulls up to ~59 days of 15-minute bars from Yahoo into the CSV first (needs
+`yfinance`, runs on your machine — the cloud proxy blocks Yahoo). ES=F
+matters: the default 09:15 ET candle exists only in the electronic session,
+which regular-hours SPY bars do not carry.
+
 ## The window, and yielding to you
 
 Jobs are small and the queue is checkpointed after every one, so being

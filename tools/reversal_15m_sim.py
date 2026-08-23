@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import statistics
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import date, datetime, time
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
@@ -350,6 +352,75 @@ def summarize(results: Iterable[DayResult]) -> dict[str, float | int]:
     }
 
 
+def trades_as_records(trades: list[Trade], symbol: str) -> list[dict]:
+    """Closed-trade records in the shape the night lab's arithmetic reads.
+
+    This is the bridge that lets the overnight stress lab chew on a backtest
+    before a strategy ever risks paper money: entry/stop/exit/direction are
+    the exact fields `night_lab.trade_r` computes R from, `lane` keeps the
+    sim's trades distinguishable from the desk's in leak-mining, and `opened`
+    carries the timestamp patterns (weekday, month) leaks are mined over.
+    """
+    records = []
+    for i, t in enumerate(trades):
+        records.append(
+            {
+                "id": f"sim-{t.day.isoformat()}-{i}",
+                "lane": "sim-15m",
+                "symbol": symbol,
+                "direction": "long" if t.direction > 0 else "short",
+                "status": "closed",
+                "entry": t.entry,
+                "stop": t.stop,
+                "exit": t.exit,
+                "opened": t.entry_ts.isoformat(),
+                "closed": t.exit_ts.isoformat(),
+                "reason": t.reason,
+            }
+        )
+    return records
+
+
+def fetch_bars(symbol: str, days: int, out_path: str) -> int:
+    """Fetch 15-minute bars from Yahoo into the CSV shape `read_csv` reads.
+
+    Import is deferred and failure is a message, not a traceback: this is the
+    one network-touching path in the file, it runs only on the owner's
+    machine (the cloud proxy blocks Yahoo), and the tests never call it.
+    Yahoo serves at most 60 days of 15m bars, so `days` is clamped.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("yfinance is not installed: python -m pip install yfinance")
+        return 1
+    days = min(days, 59)
+    frame = yf.download(
+        symbol, period=f"{days}d", interval="15m", progress=False, auto_adjust=False
+    )
+    if frame is None or frame.empty:
+        print(f"Yahoo returned no 15m bars for {symbol}.")
+        return 1
+    if hasattr(frame.columns, "levels"):  # yfinance MultiIndex when one ticker
+        frame.columns = frame.columns.get_level_values(0)
+    frame = frame.tz_convert("America/New_York")
+    with open(out_path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["timestamp", "open", "high", "low", "close"])
+        for ts, row in frame.iterrows():
+            writer.writerow(
+                [
+                    ts.strftime("%Y-%m-%dT%H:%M:%S"),
+                    float(row["Open"]),
+                    float(row["High"]),
+                    float(row["Low"]),
+                    float(row["Close"]),
+                ]
+            )
+    print(f"Wrote {len(frame)} bars to {out_path}")
+    return 0
+
+
 def read_csv(path: str) -> list[Bar]:
     bars: list[Bar] = []
     with open(path, newline="") as fh:
@@ -383,7 +454,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--no-sma", action="store_true", help="disable the trend filter")
     ap.add_argument("--trade-fridays", action="store_true")
     ap.add_argument("--rr", type=float, default=2.4, help="reward-to-risk")
+    ap.add_argument(
+        "--fetch",
+        metavar="SYMBOL",
+        help="fetch 15m bars for SYMBOL from Yahoo into CSV first (needs yfinance; "
+        "use ES=F for the electronic session the default 09:15 candle needs)",
+    )
+    ap.add_argument(
+        "--days", type=int, default=55, help="days to fetch (Yahoo caps 15m at 60)"
+    )
+    ap.add_argument("--symbol", default=None, help="symbol label on exported trades")
+    ap.add_argument(
+        "--trades-out",
+        metavar="PATH",
+        help="write closed trades as JSON for the night lab (see night_lab.py plan --sim)",
+    )
     args = ap.parse_args(argv)
+
+    if args.fetch:
+        rc = fetch_bars(args.fetch, args.days, args.csv)
+        if rc:
+            return rc
 
     bars = read_csv(args.csv)
     cfg = Config(
@@ -394,7 +485,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         skip_friday=not args.trade_fridays,
         reward_risk=args.rr,
     )
-    stats = summarize(simulate(bars, cfg))
+    results = simulate(bars, cfg)
+    stats = summarize(results)
+
+    if args.trades_out:
+        trades = [r.trade for r in results if r.trade]
+        symbol = args.symbol or args.fetch or "SIM"
+        Path(args.trades_out).write_text(
+            json.dumps({"trades": trades_as_records(trades, symbol)}, indent=2),
+            encoding="utf-8",
+        )
+        print(f"{len(trades)} closed trade(s) -> {args.trades_out}")
+
     width = max(len(k) for k in stats)
     for key, value in stats.items():
         print(f"{key.replace('_', ' '):<{width}}  {value}")

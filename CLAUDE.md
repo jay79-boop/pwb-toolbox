@@ -171,7 +171,10 @@ A worked example, for this repo's 21st MCP key:
   number from the real record. Anything unparseable or uncheckable is dropped
   rather than repaired. Yields the machine the moment you touch the keyboard
   and checkpoints after every job, so an interruption costs one job, not the
-  night. Protocol in `docs/night-lab.md`; data in `night_lab/` (gitignored —
+  night. Backtests feed it too: `reversal_15m_sim.py --trades-out` exports
+  closed trades that `plan --sim` merges into the night's record, so a
+  strategy is stressed before it ever risks paper money. Protocol in
+  `docs/night-lab.md`; data in `night_lab/` (gitignored —
   this fork is public). Policy and arithmetic are pure and tested
   (`tests/test_night_lab.py`)
 - `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:

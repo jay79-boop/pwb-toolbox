@@ -340,3 +340,77 @@ def test_disabling_the_filter_takes_the_first_swing_in_either_direction():
     unfiltered = only(run(day, use_sma=False, trend=150.0), MONDAY)
     assert unfiltered.committed_direction == LONG
     assert unfiltered.trade.reason == "target"
+
+
+# ---------------------------------------------------------------------------
+# The night-lab bridge: exported trades must carry exactly what its
+# arithmetic computes R from, in the shape it reads
+# ---------------------------------------------------------------------------
+
+import json
+
+from tools.reversal_15m_sim import main, trades_as_records
+
+
+def winning_long_day():
+    """The proven fixture from test_long_failure_swing_fills_and_reaches_target."""
+    return bars(
+        MONDAY,
+        CANDLE1,
+        ("09:30", 92.0, 95.0, 88.0, 94.0),
+        ("09:45", 93.5, 96.0, 93.0, 95.0),
+        ("10:00", 95.0, 101.0, 95.0, 100.5),
+    )
+
+
+def test_exported_records_carry_the_arithmetic_fields():
+    results = run(winning_long_day())
+    trades = [r.trade for r in results if r.trade]
+    assert trades, "the fixture should produce one closed trade"
+    (record,) = trades_as_records(trades, "ES=F")
+    assert record["lane"] == "sim-15m"
+    assert record["symbol"] == "ES=F"
+    assert record["status"] == "closed"
+    assert record["direction"] == "long"
+    # The three numbers night_lab.trade_r computes from, exactly as traded.
+    assert record["entry"] == trades[0].entry
+    assert record["stop"] == trades[0].stop
+    assert record["exit"] == trades[0].exit
+    # And the shape is what night_lab.load_sim_trades keeps.
+    from tools.night_lab import trade_r
+
+    assert trade_r(record) is not None
+
+
+def test_short_trades_export_as_short():
+    # The mirror fixture from test_short_is_the_mirror_image.
+    day_bars = bars(
+        MONDAY,
+        CANDLE1,
+        ("09:30", 99.0, 103.0, 97.0, 98.0),
+        ("09:45", 98.5, 98.5, 96.0, 96.5),
+        ("10:00", 96.0, 96.0, 89.0, 89.5),
+    )
+    results = run(day_bars, trend=150.0)
+    trades = [r.trade for r in results if r.trade]
+    assert trades
+    (record,) = trades_as_records(trades, "ES=F")
+    assert record["direction"] == "short"
+
+
+def test_the_cli_writes_the_export_end_to_end(tmp_path):
+    csv_path = tmp_path / "bars.csv"
+    rows = ["timestamp,open,high,low,close"]
+    for bar in winning_long_day():
+        rows.append(
+            f"{bar.ts.strftime('%Y-%m-%dT%H:%M:%S')},"
+            f"{bar.open},{bar.high},{bar.low},{bar.close}"
+        )
+    csv_path.write_text("\n".join(rows) + "\n")
+
+    out = tmp_path / "trades.json"
+    rc = main([str(csv_path), "--no-sma", "--symbol", "ES=F", "--trades-out", str(out)])
+    assert rc == 0
+    exported = json.loads(out.read_text())
+    assert len(exported["trades"]) == 1
+    assert exported["trades"][0]["symbol"] == "ES=F"

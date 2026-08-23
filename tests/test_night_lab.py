@@ -898,3 +898,113 @@ def test_a_night_of_broken_scenarios_stages_one_sizing_proposal():
     assert len(proposals) == 1
     assert "b" in proposals[0]["proposal"]
     assert "3 scenarios broke" in proposals[0]["proposal"]
+
+
+# ---------------------------------------------------------------------------
+# The sim bridge: backtests feed the record, so a strategy is stressed
+# before it ever risks paper money
+# ---------------------------------------------------------------------------
+
+from tools.night_lab import RECORD_NAME, cmd_plan, load_sim_trades
+
+
+def sim_record(n=6, lane="sim-15m"):
+    return {
+        "trades": [
+            dict(
+                closed(),
+                id=f"sim-{i}",
+                lane=lane,
+                exit=118.0 if i % 2 else 89.0,
+            )
+            for i in range(n)
+        ]
+    }
+
+
+def test_sim_trades_load_from_the_exported_shape(tmp_path):
+    path = tmp_path / "sim.json"
+    path.write_text(json.dumps(sim_record(4)))
+    assert len(load_sim_trades(path)) == 4
+
+
+def test_a_bare_list_loads_too(tmp_path):
+    path = tmp_path / "sim.json"
+    path.write_text(json.dumps(sim_record(3)["trades"]))
+    assert len(load_sim_trades(path)) == 3
+
+
+def test_malformed_sim_trades_are_dropped_at_the_door(tmp_path):
+    path = tmp_path / "sim.json"
+    path.write_text(
+        json.dumps(
+            {
+                "trades": [
+                    dict(closed(), id="good"),
+                    dict(closed(), id="open-one", status="open"),
+                    dict(closed(), id="no-risk", stop=100.0),  # entry == stop
+                    "not a dict",
+                ]
+            }
+        )
+    )
+    kept = load_sim_trades(path)
+    assert [t["id"] for t in kept] == ["good"]
+
+
+def test_unreadable_or_garbage_files_load_as_empty(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert load_sim_trades(bad) == []
+    assert load_sim_trades(tmp_path / "missing.json") == []
+
+
+class PlanArgs:
+    def __init__(self, **over):
+        self.dir = over.get("dir")
+        self.ledger = over.get("ledger")
+        self.sim = over.get("sim")
+        self.shocks = over.get("shocks", 3)
+        self.attacks = over.get("attacks", 4)
+
+
+def test_plan_with_only_sim_trades_queues_shocks_and_leaks(tmp_path):
+    sim = tmp_path / "sim.json"
+    sim.write_text(json.dumps(sim_record(8)))
+    empty_desk = tmp_path / "desk.json"
+    empty_desk.write_text(
+        json.dumps({"pot": 1000, "trades": [], "reviews": [], "refills": []})
+    )
+    rc = cmd_plan(
+        PlanArgs(dir=str(tmp_path / "lab"), ledger=str(empty_desk), sim=[str(sim)])
+    )
+    assert rc == 0
+    kinds = [j["kind"] for j in read_queue(tmp_path / "lab" / "queue.jsonl")]
+    assert kinds.count("shock") == 3
+    assert kinds.count("leaks") == 1
+    assert kinds.count("redteam") == 0  # sim trades carry no thesis to attack
+
+
+def test_plan_snapshots_the_merged_record_for_the_night(tmp_path):
+    sim = tmp_path / "sim.json"
+    sim.write_text(json.dumps(sim_record(5)))
+    desk = tmp_path / "desk.json"
+    desk.write_text(
+        json.dumps(
+            {"pot": 1000, "trades": [closed(id="D1")], "reviews": [], "refills": []}
+        )
+    )
+    cmd_plan(PlanArgs(dir=str(tmp_path / "lab"), ledger=str(desk), sim=[str(sim)]))
+    snapshot = load_sim_trades(tmp_path / "lab" / RECORD_NAME)
+    ids = {t["id"] for t in snapshot}
+    assert "D1" in ids
+    assert len(snapshot) == 6  # 1 desk + 5 sim
+
+
+def test_an_empty_desk_and_no_sim_still_queues_nothing(tmp_path):
+    empty_desk = tmp_path / "desk.json"
+    empty_desk.write_text(
+        json.dumps({"pot": 1000, "trades": [], "reviews": [], "refills": []})
+    )
+    rc = cmd_plan(PlanArgs(dir=str(tmp_path / "lab"), ledger=str(empty_desk)))
+    assert rc == 1
