@@ -130,11 +130,46 @@ def daily_sma(bars: Sequence[Bar], length: int) -> dict[date, float]:
     closes: dict[date, float] = {}
     for bar in bars:
         closes[bar.ts.date()] = bar.close
+    return _window_sma(closes, length)
 
+
+def _window_sma(closes: dict[date, float], length: int) -> dict[date, float]:
     days = sorted(closes)
     out: dict[date, float] = {}
     for i, day in enumerate(days):
         prior = [closes[d] for d in days[max(0, i - length) : i]]
+        if len(prior) == length:
+            out[day] = sum(prior) / length
+    return out
+
+
+def sma_from_daily_csv(
+    path: str, length: int, days: Iterable[date]
+) -> dict[date, float]:
+    """The trend filter fed from a daily-closes file instead of intraday bars.
+
+    An SMA(60) of DAILY closes needs sixty closed days of history before its
+    first value -- more history than Yahoo will serve at 15 minutes (~59
+    calendar days). Deriving the SMA from the intraday file therefore
+    guarantees zero warmed-up days on a fresh fetch, and the filter silently
+    skips every session. Daily closes go back years, so `--fetch` writes
+    them beside the bars and this reads them.
+    """
+    closes: dict[date, float] = {}
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            raw = row.get("timestamp") or row.get("date")
+            closes[datetime.fromisoformat(str(raw)).date()] = float(row["close"])
+
+    # Serve the SESSION days, not the daily file's own days: the value live
+    # during a session is the SMA of the last `length` daily closes strictly
+    # before it. Keying off the file's days instead would starve any session
+    # the daily file does not happen to contain -- the same silent skip this
+    # function exists to fix, one file over.
+    ordered = sorted(closes)
+    out: dict[date, float] = {}
+    for day in days:
+        prior = [closes[d] for d in ordered if d < day][-length:]
         if len(prior) == length:
             out[day] = sum(prior) / length
     return out
@@ -418,7 +453,30 @@ def fetch_bars(symbol: str, days: int, out_path: str) -> int:
                 ]
             )
     print(f"Wrote {len(frame)} bars to {out_path}")
+
+    # The daily closes the SMA(60) filter actually needs. A year of them
+    # costs one request, and without them a fresh 15m fetch can never warm
+    # the filter up (see sma_from_daily_csv).
+    daily = yf.download(
+        symbol, period="1y", interval="1d", progress=False, auto_adjust=False
+    )
+    if daily is not None and not daily.empty:
+        if hasattr(daily.columns, "levels"):
+            daily.columns = daily.columns.get_level_values(0)
+        daily_path = daily_path_for(out_path)
+        with open(daily_path, "w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["timestamp", "close"])
+            for ts, row in daily.iterrows():
+                writer.writerow([ts.strftime("%Y-%m-%d"), float(row["Close"])])
+        print(f"Wrote {len(daily)} daily closes to {daily_path}")
     return 0
+
+
+def daily_path_for(csv_path: str) -> str:
+    """es15.csv -> es15.daily.csv, beside the bars it feeds."""
+    path = Path(csv_path)
+    return str(path.with_name(path.stem + ".daily.csv"))
 
 
 def read_csv(path: str) -> list[Bar]:
@@ -465,6 +523,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ap.add_argument("--symbol", default=None, help="symbol label on exported trades")
     ap.add_argument(
+        "--daily",
+        metavar="PATH",
+        help="daily closes CSV (timestamp,close) feeding the SMA filter; "
+        "defaults to <csv>.daily.csv when that file exists (--fetch writes it)",
+    )
+    ap.add_argument(
         "--trades-out",
         metavar="PATH",
         help="write closed trades as JSON for the night lab (see night_lab.py plan --sim)",
@@ -477,6 +541,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return rc
 
     bars = read_csv(args.csv)
+    sma = None
+    daily_csv = args.daily or (
+        daily_path_for(args.csv) if Path(daily_path_for(args.csv)).exists() else None
+    )
     cfg = Config(
         candle1=_parse_hm(args.candle1),
         flatten=_parse_hm(args.flatten),
@@ -485,7 +553,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         skip_friday=not args.trade_fridays,
         reward_risk=args.rr,
     )
-    results = simulate(bars, cfg)
+    if cfg.use_sma and daily_csv:
+        session_days = sorted({b.ts.date() for b in bars})
+        sma = sma_from_daily_csv(daily_csv, cfg.sma_length, session_days)
+    results = simulate(bars, cfg, sma=sma)
     stats = summarize(results)
 
     if args.trades_out:
@@ -500,6 +571,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     width = max(len(k) for k in stats)
     for key, value in stats.items():
         print(f"{key.replace('_', ' '):<{width}}  {value}")
+    starved = sum(1 for r in results if r.skipped_reason == "sma warming up")
+    if starved and starved == stats["days_with_candle_1"]:
+        print(
+            f"\nEvery tradable day was skipped as 'sma warming up': the "
+            f"SMA({cfg.sma_length}) of DAILY closes needs {cfg.sma_length} "
+            "closed days of history first, and this data does not carry them. "
+            "Re-run with --fetch (which now writes <csv>.daily.csv), pass "
+            "--daily, or --no-sma to drop the filter."
+        )
     if stats["days_with_candle_1"] == 0:
         print(
             f"\nNo {args.candle1} ET bar in {stats['days']} days — these are "

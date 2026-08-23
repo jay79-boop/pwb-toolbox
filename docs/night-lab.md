@@ -112,6 +112,15 @@ pulls up to ~59 days of 15-minute bars from Yahoo into the CSV first (needs
 matters: the default 09:15 ET candle exists only in the electronic session,
 which regular-hours SPY bars do not carry.
 
+The fetch also writes `<csv>.daily.csv` — a year of daily closes — and the
+sim picks it up by that sibling name. This is load-bearing, not a nicety:
+the trend filter is an SMA(60) of *daily* closes, which needs more history
+than Yahoo will ever serve at 15 minutes, so without the daily file the
+filter skips every session as "sma warming up" and the backtest reports
+zero trades. The sim now says so out loud instead of printing a silent
+zero; `--daily` points it at your own closes file, `--no-sma` drops the
+filter entirely (a different strategy — stress that knowingly).
+
 ## The window, and yielding to you
 
 Jobs are small and the queue is checkpointed after every one, so being
