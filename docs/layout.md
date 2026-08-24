@@ -207,6 +207,12 @@ top-level directories and points here for the detail.
   behind `crypto_scan`'s signals, iron condor venue/construction facts, and
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
+- `docs/brokers.md` — which broker to execute through, scored against what the
+  desk actually trades rather than against a rate card. Ten-broker shortlist
+  with sourced fees and API terms, the incumbent setup (IB, Schwab, TradingView,
+  CCXT) it has to beat, and the finding that decides it: Schwab's Trader API is
+  live-only and cannot drive paperMoney, so the one account already holding the
+  options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
   `index.html` (the published landing page; see "Design tooling" below),
