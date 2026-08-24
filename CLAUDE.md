@@ -674,16 +674,15 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (5).** (#99–#101 merged; the night-lab/season-scan series #103–#108, the
-field-notes #110, and the agent-fleet #109/#113/#115 all merged on 2026-08-23/24.)
+**Open (2).** (#99–#101 merged; the night-lab/season-scan series #103–#108, the
+field-notes #110, and the agent-fleet #109/#113/#115 all merged on 2026-08-23/24.
+#117 merged on 2026-08-24. #102, #112 and #114 were closed as superseded on
+2026-08-24 during the usage-reduction pass below.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | base still at `410f6b5`, ~2,460 lines over 18 files, far behind `main`, conflicts on `CLAUDE.md`. **Owned** by Routine `trig_01VHpiW6NQGMTYpfZDf8iV3v`, which checks it in daily at 13:25 UTC bound to the session that built it — do not merge-resolve it from another session, the two would fight for the branch |
-| #102 | State-block update for the rest of the merge drain | conflicts on `CLAUDE.md`. Its facts are now wrong (it claims `main` is `fe12415` and one PR is open). Superseded **except** for its honesty lesson, folded in below. Recommended: close |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | CI green at `396ae53`, draft, its session idle — waiting on the owner, not on an agent. **Merges clean and silently reverts this block; see below** |
-| #112 | Ledger correction by fleet lead A | superseded — its findings are folded in here. Recommended: close |
-| #114 | Ledger correction by fleet lead B | superseded — its findings are folded in here. Recommended: close |
+| #78 | Desk agent and the risk model that sets its limits | base still at `410f6b5`, ~2,460 lines over 18 files, far behind `main`, conflicts on `CLAUDE.md`. Its daily check-in Routine `trig_01VHpiW6NQGMTYpfZDf8iV3v` was **disabled** on 2026-08-24 — the PR is no longer watched by anything, by design. Pick it up deliberately or not at all |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | CI green at `082f1b6`, draft, waiting on the owner. Its hourly watcher was disabled 2026-08-24. **Merges clean and silently reverts this block; see below** |
 
 **Four of the five open branches conflict with `main`, and every one of them
 conflicts on this file and nothing else.** Verified 2026-08-24 by test-merging
@@ -829,6 +828,39 @@ When the count here disagrees with GitHub, believe GitHub and fix this.
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-24] A $290 session that did no work, and the cap that follows
+**What happened:** The session "Ollama trade stress testing" was archived after
+19 hours at **$290.64 billed — 68,334,097 cache-read tokens against 180,373
+output tokens**, a 379:1 read-to-write ratio. A second session doing the same
+added $18.44. Across the account ~56 scheduled wakes/day were servicing five
+open pull requests.
+**The mechanism:** the session finished its real work (the night lab), pushed
+it, opened PR #117 — and was then captured by the default PR-steward protocol,
+which has a session subscribe to its own PR and schedule a self-re-arming
+hourly check-in until the PR merges or closes. Each wake reloaded the whole
+19-hour context to perform a small PR check. **The owner set none of this up;
+it is default behaviour, and it is correct for a repo with human reviewers who
+arrive on their own schedule. This is a single-owner fork where the only
+reviewer merges by saying "merge it", so the watcher always outlives the work.**
+**Compounding it:** every branch edits this Operating System block, so four of
+five branches conflicted on this file and nothing else — giving each watcher a
+conflict to re-resolve that regenerates on the very next merge.
+**The cap:** `.claude/skills/steward/SKILL.md` is now read before any session
+acts on a CI or review event here. It forbids self-re-arming check-ins outright,
+forbids binding a scheduled wake to a long-lived session (the context reload was
+the entire cost), and states that a green PR blocked on the owner is finished
+work to be reported once, not polled. The orientation hook already shows open
+PRs and their CI at session start, so nothing needs to stay awake to report state.
+**Also found:** the monthly credit-check Routine watches ElevenLabs, Voice.ai and
+Blotato — but not Claude usage itself, and not Alpha Vantage. It was watching the
+cheap things. Claude usage has no spend cap and no approval gate available to a
+session; the only real controls are the plan's own limits and not leaving
+sessions running.
+**Unresolved, and the owner's call:** Routines created from a session cannot
+carry MCP connector grants on this org, so a fresh-session watch runs blind with
+no market data. A scheduled watch that needs a connector has to be created from
+the claude.ai Routines UI.
 
 ### [2026-08-24] The ledger's shape is the defect, and a clean merge proved it
 **Decision:** Fold the two competing lead-agent ledger corrections (#112, #114)
