@@ -315,6 +315,9 @@ A worked example, for this repo's 21st MCP key:
   actually verified about the open-source bridge by reading its source),
   `agent-fleet.md` (critique and design of the owner's multi-agent fleet — the
   operating procedure itself is the `agent-fleet` skill under `.claude/skills/`)
+  `skills.md` (the bar for turning a repeated job into a skill, the two homes a
+  skill can live in, and when to retire one) with `prompts/` as its staging
+  area for long prompts not yet worth packaging,
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that
@@ -393,6 +396,7 @@ python tools/calibration_audit.py --symbols SPY   # is our option math calibrate
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
+pytest tests/test_skills.py -q     # skills: live paths, description budget
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
@@ -438,26 +442,13 @@ From this container: `raw.githubusercontent.com` and plain `git clone` both
 work. `api.github.com` and `codeload.github.com` return **403** (proxy policy),
 so `GitHubSource` cannot be exercised live here — clone instead.
 
-Build a corpus and sweep it:
-
-```bash
-mkdir -p /tmp/corpus && cd /tmp/corpus
-for r in kohld/tradingview-scripts Tim1l/PineCryptoStrategies \
-         casoon/pine-scripts LouisLetcher/quant-pine mihakralj/pinescript; do
-  git clone --depth 1 -q "https://github.com/$r.git" &
-done; wait
-cd - && python -m tools.pine_sweep /tmp/corpus --strategies-only
-```
-
-`tools/pine_sweep.py` converts every `.pine` under a directory and ranks the
-failure reasons by how many scripts each costs, so the next thing to fix is a
-measurement rather than a guess. Always pass `--strategies-only` for a
-meaningful number: one indicator library (`mihakralj/pinescript`, 410 files)
-outnumbers the actual strategies in that corpus twenty to one and drags the
-headline figure somewhere useless.
-
-A non-zero crash count is a bug in the converter, not a fact about the corpus.
-`convert` is contracted never to raise.
+The loop itself — build a corpus, sweep it with `tools/pine_sweep.py`, rank the
+failures by scripts blocked, fix the top sole-blocker, re-sweep to prove the
+number moved — is the **`pine-converter` skill**. Two facts from it are worth
+knowing even if you never load it: always pass `--strategies-only` (one
+indicator library outnumbers the real strategies twenty to one and drags the
+headline figure somewhere useless), and a non-zero crash count is a bug in the
+converter, not a fact about the corpus — `convert` is contracted never to raise.
 
 ## The desk agent runs itself, and reports on itself
 
@@ -489,41 +480,28 @@ wrong twice over. Both failures are cheap to repeat and neither announces
 itself, so both are pinned by tests in `tests/test_backtest_lab.py`.
 
 **A feed's timestamps are in whatever zone the vendor chose, and the file does
-not say.** histdata's ASCII M1 exports are stamped **New York local time with
-DST**, not the fixed EST they are usually assumed to be. Read with one flat
-offset they are right in January and an hour out in July, and since a strategy
-converts back to an exchange timezone to test its session, that hour moves the
-whole trading window for eight months of every year. The symptom is a result
-that looks plausible: an ICT session strategy measured +39 points over eight
-years that way, and +7 once the stamps were read correctly.
-
-Do not take a vendor's word for the zone, and do not infer it from a volume
-profile — that was ambiguous here. Compare *returns* against a feed whose zone
-is known (`verify_timezone`), separately for a winter month and a summer one.
-Levels are useless for this: two vendors quoting one index differ by a basis
-that swamps the comparison, while their minute returns align at 0.99 and only
-at the right offset. **An offset that changes between the two months is DST**,
-and the feed is local time. oanda's exports, checked the same way, are UTC.
+not say.** histdata's ASCII M1 exports are New York local time *with DST*, not
+the fixed EST usually assumed. The symptom is a result that looks plausible: an
+ICT session strategy measured +39 points over eight years read that way, and +7
+once the stamps were read correctly.
 
 **A backtest result means nothing until it clears the disagreement between two
-vendors of the same instrument.** Running one strategy on the S&P from two
-feeds gave +50bp and −234bp over the same eight years — while correlating 0.93
-year over year, so both agreed about the shape of every year and disagreed
-about the sign of the total. The gap averaged ~35bp/year against a measured
-edge of ~6bp/year.
+vendors of the same instrument.** One strategy on the S&P from two feeds gave
++50bp and −234bp over the same eight years — while correlating 0.93 year over
+year. A high correlation with a large mean gap is the dangerous case: the feeds
+look like they agree.
 
-So `noise_floor()` is the check to run before believing any number here: it
-takes the same strategy's per-year results from two feeds and reports whether
-the edge exceeds the vendor gap. Clearing it is necessary and nowhere near
-sufficient. A high correlation with a large mean gap is the dangerous case and
-the one actually seen — the feeds look like they agree.
+How to actually run both checks — `verify_timezone` across a winter *and* a
+summer month, `noise_floor()` against a second vendor, and how to read what
+each prints — is the **`backtest-trust` skill**. Load it before quoting any
+backtest figure.
 
-Two habits follow. Compare instruments in **basis points of price**, never raw
-points: ten points on \$70 oil and ten on a 20,000 index are not the same
-trade, and summing points across instruments produces a number dominated by
-whichever quote is largest. And **charge costs always** — the strategy above is
-gross-positive and net-negative, so a frictionless run measures nothing
-tradeable.
+Two habits follow, and they are cheap enough to state here. Compare instruments
+in **basis points of price**, never raw points: ten points on \$70 oil and ten
+on a 20,000 index are not the same trade, and summing points across instruments
+produces a number dominated by whichever quote is largest. And **charge costs
+always** — the strategy above is gross-positive and net-negative, so a
+frictionless run measures nothing tradeable.
 
 ## The trade journal is not in this repository
 
@@ -760,6 +738,10 @@ so keep it durable and keep it short.
 - **`docs/decisions/`** — one file per decision, newest first in
   `docs/decisions/README.md`. Append a new file for a new decision; never
   rewrite an old one. A correction is a new entry that supersedes.
+- **`docs/skills.md`** — what belongs in a skill rather than here, the bar for
+  adding one, which of the two homes it goes in, and the rule for retiring one
+  that stopped firing. Read it before writing a skill; `tests/test_skills.py`
+  enforces the mechanical half.
 - **Nowhere at all** — open pull requests, their CI, what `main` points at, and
   any count of them. **Derive those from git and the GitHub tools at read
   time.** They were written down for months and were wrong within hours every
