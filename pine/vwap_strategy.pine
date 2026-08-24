@@ -1,0 +1,151 @@
+//@version=6
+// The VWAP desk's three setups in one strategy, mirroring
+// pwb_toolbox/backtesting/vwap.py (VwapStrategy). Change a rule there, change
+// it here; tests hold the Python side, TradingView holds this one.
+//
+// VWAP and its bands are accumulated by hand from an anchor TIME rather than
+// taken from ta.vwap: ta.vwap resets at the instrument's session boundary
+// (18:00 ET on CME futures), while the fade numbers this implements are
+// quoted off a 09:30 anchor. Hand accumulation keeps the two readings of the
+// strategy computing the same line.
+//
+// Setups: "fade" (close outside +/-k sigma enters toward VWAP -- the one with
+// empirical support), "pullback" (touch of VWAP from the prior close's side,
+// close back across, ride toward the far band), "cross" (close crosses VWAP,
+// stop-and-reverse -- the retail favorite, kept as a CONTROL because the
+// published sweeps found it worthless; if it wins here, distrust the harness
+// or the data before the conclusion).
+strategy("VWAP Setups", overlay = true, initial_capital = 100000,
+     default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 2.50, slippage = 1)
+
+setup       = input.string("fade", "Setup", options = ["fade", "pullback", "cross"])
+bandK       = input.float(2.0, "Band width (sigma)", minval = 0.1)
+stopK       = input.float(1.0, "Stop distance (sigma past signal)", minval = 0.1)
+anchorStart = input.session("0930-1555", "Session (anchor + trading window)")
+warmupMin   = input.int(30, "Warmup minutes before entries", minval = 0)
+useRvol     = input.bool(false, "Relative-volume gate")
+rvolLen     = input.int(50, "  rvol SMA length", minval = 1)
+rvolMin     = input.float(1.5, "  rvol minimum", minval = 0.0)
+useDayType  = input.bool(false, "Day-type gate (first 30 min)")
+dayTypeBp   = input.float(30.0, "  trend-day threshold (bp)", minval = 0.0)
+useMa       = input.bool(false, "MA side gate")
+maLen       = input.int(200, "  MA length", minval = 1)
+useRsi      = input.bool(false, "RSI control gate (fades only)")
+rsiLen      = input.int(14, "  RSI length", minval = 2)
+
+inSession   = not na(time(timeframe.period, anchorStart, "America/New_York"))
+newSession  = inSession and not inSession[1]
+
+// --- VWAP + volume-weighted sigma bands, anchored at the session open -------
+var float sumV   = 0.0
+var float sumPV  = 0.0
+var float sumPV2 = 0.0
+var float sumP   = 0.0
+var float sumP2  = 0.0
+var int   nBars  = 0
+var float sessionOpen = na
+var int   sessionT0   = na
+if newSession
+    sumV := 0.0, sumPV := 0.0, sumPV2 := 0.0, sumP := 0.0, sumP2 := 0.0
+    nBars := 0
+    sessionOpen := open
+    sessionT0 := time
+if inSession
+    sumV := sumV + volume
+    sumPV := sumPV + hlc3 * volume
+    sumPV2 := sumPV2 + hlc3 * hlc3 * volume
+    sumP := sumP + hlc3
+    sumP2 := sumP2 + hlc3 * hlc3
+    nBars := nBars + 1
+
+// Zero-volume feeds degrade to TWAP instead of dividing by zero -- same rule
+// as the Python side, and the same warning applies to the result.
+float vwapVal = sumV > 0 ? sumPV / sumV : nBars > 0 ? sumP / nBars : na
+float variance = sumV > 0 ? sumPV2 / sumV - vwapVal * vwapVal :
+     nBars > 0 ? sumP2 / nBars - vwapVal * vwapVal : na
+float sigma = na(variance) ? na : math.sqrt(math.max(variance, 0.0))
+float upper = vwapVal + bandK * sigma
+float lower = vwapVal - bandK * sigma
+
+plot(inSession ? vwapVal : na, "VWAP", color.orange, 2)
+plot(inSession ? upper : na, "Upper", color.new(color.orange, 60))
+plot(inSession ? lower : na, "Lower", color.new(color.orange, 60))
+
+// --- confirms ----------------------------------------------------------------
+float rvolAvg = ta.sma(volume, rvolLen)
+bool rvolOk = not useRvol or (rvolAvg > 0 and volume / rvolAvg >= rvolMin)
+float maVal = ta.sma(close, maLen)
+maOkLong  = not useMa or close > maVal
+maOkShort = not useMa or close < maVal
+float rsiVal = ta.rsi(close, rsiLen)
+rsiOkLong  = not useRsi or rsiVal < 30
+rsiOkShort = not useRsi or rsiVal > 70
+
+elapsedMin = na(sessionT0) ? 0 : (time - sessionT0) / 60000
+warm = inSession and elapsedMin >= warmupMin and sigma > 0
+
+// Day type from the first 30 session minutes (market intraday momentum,
+// Gao/Han/Li/Zhou JFE 2018): a trend day blocks counter-trend fades and
+// off-trend pullbacks. 0 = undecided, 1/-1 = trend, 2 = range.
+var int dayType = 0
+if newSession
+    dayType := 0
+if useDayType and dayType == 0 and elapsedMin >= 30 and not na(sessionOpen)
+    retBp = 10000 * (close[1] / sessionOpen - 1)
+    dayType := retBp >= dayTypeBp ? 1 : retBp <= -dayTypeBp ? -1 : 2
+classified = not useDayType or dayType != 0
+allowLong  = not useDayType or dayType == 2 or dayType == 1
+allowShort = not useDayType or dayType == 2 or dayType == -1
+
+// --- setups ------------------------------------------------------------------
+var float stopLevel = na
+flat = strategy.position_size == 0
+
+if warm and classified and flat
+    if setup == "fade"
+        if close > upper and allowShort and rvolOk and maOkShort and rsiOkShort
+            stopLevel := close + stopK * sigma
+            strategy.entry("S", strategy.short)
+        else if close < lower and allowLong and rvolOk and maOkLong and rsiOkLong
+            stopLevel := close - stopK * sigma
+            strategy.entry("L", strategy.long)
+    else if setup == "pullback"
+        if close[1] > vwapVal[1] and low <= vwapVal and close > vwapVal and allowLong and rvolOk and maOkLong
+            stopLevel := vwapVal - stopK * sigma
+            strategy.entry("L", strategy.long)
+        else if close[1] < vwapVal[1] and high >= vwapVal and close < vwapVal and allowShort and rvolOk and maOkShort
+            stopLevel := vwapVal + stopK * sigma
+            strategy.entry("S", strategy.short)
+    else
+        if close > vwapVal and close[1] <= vwapVal[1]
+            strategy.entry("L", strategy.long)
+        else if close < vwapVal and close[1] >= vwapVal[1]
+            strategy.entry("S", strategy.short)
+
+// Exits are decided on closes and fill at the next open, matching the Python
+// side's honest reading of how a market order actually fills.
+if not flat
+    if setup == "fade"
+        if strategy.position_size > 0 and (close >= vwapVal or close <= stopLevel)
+            strategy.close_all(close <= stopLevel ? "stop" : "target")
+        else if strategy.position_size < 0 and (close <= vwapVal or close >= stopLevel)
+            strategy.close_all(close >= stopLevel ? "stop" : "target")
+    else if setup == "pullback"
+        if strategy.position_size > 0 and (close >= upper or close <= stopLevel)
+            strategy.close_all(close <= stopLevel ? "stop" : "target")
+        else if strategy.position_size < 0 and (close <= lower or close >= stopLevel)
+            strategy.close_all(close >= stopLevel ? "stop" : "target")
+    else
+        if strategy.position_size > 0 and close < vwapVal and close[1] >= vwapVal[1]
+            strategy.close_all("reverse")
+            strategy.entry("S", strategy.short)
+        else if strategy.position_size < 0 and close > vwapVal and close[1] <= vwapVal[1]
+            strategy.close_all("reverse")
+            strategy.entry("L", strategy.long)
+
+// Flat outside the window: cancel anything unfilled, close anything open.
+if not inSession and inSession[1]
+    strategy.cancel_all()
+    strategy.close_all("flatten")
