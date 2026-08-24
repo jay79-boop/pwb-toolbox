@@ -664,8 +664,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
-charged by default, prop-eval pricer). Last updated 2026-08-24.
+**Main Branch:** `42313c3` — the merge of #109 (agent-fleet critique, design
+and operating protocol). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -674,15 +674,14 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
-the field-notes #110 merged straight through on 2026-08-23/24.)
+**Open (3).** (#99–#101 merged; the night-lab/season-scan series #103–#108, the
+field-notes #110 and the agent-fleet #109 merged straight through on 2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
-| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
-| #109 | Agent-fleet critique, design, and operating protocol | merged `main` in and resolved the decision-log collision |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
+| #78 | Desk agent and the risk model that sets its limits | base still at `410f6b5`, ~2,460 lines over 18 files, far behind `main`. **Owned** — Routine `trig_01VHpiW6NQGMTYpfZDf8iV3v` checks it in daily at 13:25 UTC, bound to the session that built it. Do not merge-resolve it from another session; the two would fight for the branch |
+| #102 | State-block update for the rest of the merge drain | green, but its facts are now wrong (it claims `main` is `fe12415` and one PR is open). Superseded by this block **except** for its third honesty lesson, which is folded in below. Recommended: close |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | green on both jobs at `396ae53`, draft, level with `main`. Its session finished and is idle awaiting review — this one is waiting on the owner, not on an agent |
 
 **This block collided twice in one hour.** #108 and #110 both landed while
 #109 was open, and both added a decision-log entry at the same insertion
@@ -698,19 +697,45 @@ metrics. They came to look like one job because #90 filed its decision-log entry
 and its roadmap checkboxes under "(PR #87)". If you find yourself about to
 rebuild something, check the decision log first.
 
+**Fleet armed 2026-08-24 01:28 UTC.** Two lead sessions, each woken hourly at
+:28 by its own Routine — liveness by scheduler, judgment by model, state here.
+
+| Role | Session | Routine |
+| --- | --- | --- |
+| Fleet lead A | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` (`fleet-heartbeat-a`) |
+| Fleet lead B | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` (`fleet-heartbeat-b`) |
+
+No project leads or ICs are provisioned — the skill spawns them only against
+scoped work. Four unrelated Routines already burn on this account (spec-desk
+watch, the #78 check-in, the desk-agent weekly review, the daily Grok merge),
+and the account hit its usage limit twice on 2026-08-23/24, so the standing
+posture is read-heavy fan-out and one validated push over three speculative
+ones. Two long-running sessions are the visible burn: the Ollama/night-lab
+session (~$266) and the Kronos/spec-desk watcher (~$154), both still running.
+
 **Live/Backtesting Strategies:**
 - **ICT AM OB** (PR #77, #76, merged) — Session timezones, history tracking, order cancellation. Live for testing.
 - **ICT OB+FVG** (PR #75, merged) — Priced entries, session management, mintick conversion. Backtest baseline.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
 **Keeping this honest:** this block is machine-read, so a stale copy actively
-misleads. Two lessons paid for already. Update it when a pull request opens,
-merges or closes — not on a schedule; the version this replaced said "3 drafts
-in flight" while ten were open, and that is how two sessions built adjacent
-things without noticing each other. And file a decision-log entry under the
-pull request that actually carries the work: #90's entry, filed under #87, is
-the whole reason two different tools looked like one. When the count here
-disagrees with GitHub, believe GitHub and fix this.
+misleads. Three lessons paid for already.
+
+1. **Update it when a pull request opens, merges or closes — not on a
+   schedule.** The version this replaced said "3 drafts in flight" while ten
+   were open, and that is how two sessions built adjacent things without
+   noticing each other. This block went stale three times in one afternoon
+   while the backlog drained; that is the cost of the rule, and it is smaller
+   than the cost of skipping it.
+2. **File a decision-log entry under the pull request that actually carries
+   the work.** #90's entry, filed under #87, is the whole reason two different
+   tools looked like one built twice.
+3. **A branch left alone does not hold still.** #78 went from seventeen commits
+   behind and merging cleanly to conflicting and far behind in a single
+   afternoon, without anybody touching it, purely because everything around it
+   landed. (Salvaged from #102, which is otherwise superseded.)
+
+When the count here disagrees with GitHub, believe GitHub and fix this.
 
 ## Tech Stack & Dependencies
 
