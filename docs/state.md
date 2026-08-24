@@ -80,12 +80,24 @@ free, because reading the ledger and listing PRs is most of the tokens. If the
 fleet needs tighter liveness than 4 hours, the cheap fix is a smaller check
 (one `list_sessions` call, no repo read) rather than a more frequent full wake.
 
-**Connector inheritance: confirmed working.** Both leads were fired manually at
-01:32 UTC and came back having read GitHub PRs and session state, so a Routine
-firing into a *persistent* session does inherit that session's MCP tools even
-though the Routine itself stores no connector grants. The warning at creation
-time is real but does not bite in mode 2. It would bite a
-`create_new_session_on_fire` Routine.
+**Connector inheritance: confirmed working, and it cuts both ways.** Both leads
+were fired manually at 01:32 UTC and came back having read GitHub PRs and
+session state, so a Routine firing into a *persistent* session does inherit that
+session's MCP tools even though the Routine itself stores no connector grants.
+The warning at creation time is real but does not bite in mode 2.
+
+**It does bite `create_new_session_on_fire`, and that is a live trade-off, not a
+footnote.** The fix for the token drain was to stop binding scheduled jobs to
+long-lived sessions — correct, because the context reload was the entire cost.
+But a fresh session inherits no connectors, so a fresh-session job that needs
+market data, mail, or a calendar runs blind. You cannot have cheap wakes and
+inherited connectors from a Routine created in-session; pick per job:
+
+| Need | Create it as |
+| --- | --- |
+| No external data (git, GitHub, repo files) | Fresh-session Routine from a session. Cheap, and GitHub tooling is separate from connectors |
+| External data via a connector | **claude.ai → Settings → Routines**, which is the only place a scheduled job can be given connector access |
+| Neither fits | Persistent session, knowing each wake reloads its whole context |
 
 **The two heartbeats are staggered on purpose.** Both were created
 at `0 * * * *`, which the server anchors to the creation minute — so both
@@ -102,10 +114,21 @@ heartbeat that cannot reach GitHub or `list_sessions` fails silently and looks
 identical to "nothing changed" — so the first thing to check if the fleet
 seems quiet is whether the leads still have their tools.
 
-**Other Routines already on this account** (they are not fleet, do not restart
-them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
-review, the daily Grok merge, the monthly credit check. The fleet's wakes are
-additive to those — see the budget note in the skill.
+**Other Routines on this account** (not fleet — do not restart them). Enabled
+state changes, so confirm with `list_triggers` rather than trusting this list;
+what is recorded here is intent, which the API cannot tell you.
+
+| Routine | Intent |
+| --- | --- |
+| Daily Grok merge | Enabled. Ends silently on most days, which is the normal outcome |
+| Desk agent weekly review | Enabled, Sundays |
+| Monthly credit check | Enabled. Watches ElevenLabs, Voice.ai and Blotato — **not** Claude usage, which has no spend cap a session can set |
+| PR #78 check-in | Rebuilt 2026-08-24 as a *fresh-session* job with an explicit do-not-re-arm instruction, replacing the self-re-arming version that drove the drain |
+| Spec-desk stop/target watch | **Disabled**, and the XRP/DOGE paper positions are therefore unwatched. Left off deliberately: as a fresh-session job it has no Alpha Vantage connector and would run blind. The owner is re-creating it from the claude.ai Routines UI, which is the only route that carries connector access |
+
+**A watch that cannot see prices must fail loudly, never quietly.** The
+spec-desk prompt already encodes this — it alerts rather than ending silently
+when the price feed is unreachable — and any replacement needs the same rule.
 
 **The big burn is long-running sessions, not Routines — and both named here
 have since stopped.** When the fleet was armed, the Ollama/night-lab session
