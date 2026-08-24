@@ -681,24 +681,32 @@ field-notes #110, and the agent-fleet #109/#113/#115 all merged on 2026-08-23/24
 | --- | --- | --- |
 | #78 | Desk agent and the risk model that sets its limits | base still at `410f6b5`, ~2,460 lines over 18 files, far behind `main`, conflicts on `CLAUDE.md`. **Owned** by Routine `trig_01VHpiW6NQGMTYpfZDf8iV3v`, which checks it in daily at 13:25 UTC bound to the session that built it — do not merge-resolve it from another session, the two would fight for the branch |
 | #102 | State-block update for the rest of the merge drain | conflicts on `CLAUDE.md`. Its facts are now wrong (it claims `main` is `fe12415` and one PR is open). Superseded **except** for its honesty lesson, folded in below. Recommended: close |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | CI green at `396ae53`, draft, its session idle — waiting on the owner, not on an agent. **Merges clean and silently reverts this block; see below** |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | draft; head moved to `082f1b6` and now **conflicts** on `CLAUDE.md` against `74c5be1`. Its own session is watching it (Routine `trig_017WzSaSwdaSUVtiEiZWyFeh`). At `396ae53` it merged clean while silently reverting this block — see below; that window has closed, but the lesson has not |
 | #112 | Ledger correction by fleet lead A | superseded — its findings are folded in here. Recommended: close |
 | #114 | Ledger correction by fleet lead B | superseded — its findings are folded in here. Recommended: close |
 
-**Four of the five open branches conflict with `main`, and every one of them
-conflicts on this file and nothing else.** Verified 2026-08-24 by test-merging
-each head against `main` at `52c04a9`. An earlier version of this note called
+**Every open branch that touches this block conflicts with `main`, and on this
+file and nothing else.** Verified 2026-08-24 by test-merging each head; four of
+five conflicted against `main` at `52c04a9`, and the fifth (#111) joined them
+once both moved. An earlier version of this note called
 that bad luck on a busy day. It is not luck, and it is not the fleet: every
 branch that does real work also edits this block, the block is one dense region
 of prose, and git cannot merge two rewrites of the same paragraph.
 
-**The clean merge is the dangerous one, not the conflict.** #111 is the fifth
-branch, and it merges into current `main` with **zero conflicts** — then leaves
-this block claiming `main` is `1b11dca` (three merges stale) with four PRs open.
-Nothing warns anybody. A conflict stops you and demands a decision; a clean
-merge of two contradictory statements of fact just quietly picks one. So
-"merge `main` before pushing" is a real rule and still worth following, but it
-would not have caught this: there was nothing to notice.
+**The clean merge is the dangerous one, not the conflict.** Observed on #111 at
+head `396ae53` against `main` at `52c04a9`: it merged with **zero conflicts** and
+left this block claiming `main` was `1b11dca` — three merges stale — with four
+PRs open. Nothing warned anybody. A conflict stops you and demands a decision;
+a clean merge of two contradictory statements of fact just quietly picks one.
+So "merge `main` before pushing" is a real rule and still worth following, but
+it would not have caught that: there was nothing to notice.
+
+Both branches have since moved and #111 now conflicts, which is the safe
+outcome — but that is luck, not a fix. The window was open for about twenty
+minutes and nothing in the process would have closed it. Two consequences
+worth keeping: **a clean merge is not evidence the facts survived**, and a
+"green, mergeable" PR touching this block still needs its ledger hunk read
+before it lands.
 
 That makes the shape of this block the actual defect. A machine-read record of
 volatile facts should not live as free prose in the one file every branch edits
