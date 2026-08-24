@@ -258,7 +258,9 @@ A worked example, for this repo's 21st MCP key:
   `index.html` (the published landing page; see "Design tooling" below) and
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
-  traps that otherwise get rediscovered every time)
+  traps that otherwise get rediscovered every time) and `agent-fleet.md` (critique
+  and design of the owner's multi-agent fleet — the operating procedure itself is
+  the `agent-fleet` skill under `.claude/skills/`)
 
 ## Environment
 
@@ -654,8 +656,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `8698ecf` — the merge of #98 (blueprint builder step editor,
-autosave, editable lists). Last updated 2026-08-23.
+**Main Branch:** `b54e99c` — the merge of #107 (season-scan permutations scaled
+to the FDR family size). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -664,14 +666,15 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).**
+**Open (4).** (#99, #100 and #101 merged; the night-lab/season-scan series
+#103–#107 merged straight through on 2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and 46 commits behind; another session was working it |
-| #99 | One shared `static/process-grammar.js`, plus process flows on the dashboard | level with `main`, green |
-| #100 | The night lab: unattended overnight stress testing on a local model | level with `main` |
-| #101 | This block | level with `main` |
+| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
+| #102 | State-block update for the rest of the merge drain | overlaps this block — whichever merges second must reconcile |
+| #108 | Route held folklore windows into the season screener | level with `main` |
+| #109 | Agent-fleet critique, design, and operating protocol | level with `main` |
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -715,7 +718,21 @@ disagrees with GitHub, believe GitHub and fix this.
 
 ## Decision Log
 
-### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
+### [2026-08-24] Agent fleet: liveness by scheduler, judgment by model (PR #109)
+**Decision:** Write the owner's multi-agent daily driver down and fix its
+architecture on paper before arming anything: `docs/agent-fleet.md` (critique
+and design) plus the `agent-fleet` skill (the operating procedure). The two
+lead agents stop being each other's watchdog — mutual restart cannot catch
+correlated failures, proven twice in one day when usage-limit outages stopped
+both leads and the task they were carrying at once. Liveness moves to hourly
+Routines with restart hysteresis; the leads keep cross-checking *decisions*.
+Durable state moves from SendMessage threads to the ledger (each repo's state
+block + PR state), so any restarted agent rehydrates from files. IC autonomy
+is gated by checkpoint artifacts — draft PR by the end of the first work
+block, CI green as the only "done" — not by time.
+**Deliberately not armed:** standing Routines burn tokens around the clock;
+arming is an explicit "arm the fleet" command, and the skill carries the
+steps.
 **Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the
 sector ETFs, index baselines, crypto and the owner's own names, with a
 three-gate evidence standard: within-year permutation test (2,000
