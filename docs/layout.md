@@ -72,7 +72,10 @@ top-level directories and points here for the detail.
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
   spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
   pot is spent until `review` runs, scores every close in R-multiples, and
-  `check` alerts when an open trade's stop or target level trades. Protocol
+  `check` alerts when an open trade's stop or target level trades. `open
+  --place` sends an option plan to the IB **paper** account after the caps have
+  accepted it — the ordering is what makes "no log, no trade" a property rather
+  than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
 - `tools/night_lab.py` — the "good night" command: unattended trade stress

@@ -83,6 +83,14 @@ instrument had no programmatic path to *any* venue. `place_option_order` plus
 `pwb_toolbox/execution/option_contract.py` close it against the incumbent, at
 no new cost and with the existing brake still in force.
 
+`spec_desk.py open --place` is the end of that wire: it logs the plan, lets the
+ledger's caps refuse it or accept it, and only then sends it. The ordering is
+the safety property rather than a convention — "no log, no trade" from
+`docs/spec-desk.md` is now enforced by which line runs first, and a trade the
+caps reject never reaches a broker at all. `--place` additionally refuses any
+port that is not a known paper port, so the pot that is *allowed to die* cannot
+be the thing that reaches a funded account even if `PWB_IB_PORT` is wrong.
+
 ---
 
 ## The ten, scored against that
