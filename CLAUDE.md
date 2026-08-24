@@ -206,6 +206,13 @@ A worked example, for this repo's 21st MCP key:
   directory (never duplicates its math), saves inputs to localStorage.
   Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
+- `tools/prop_sim.py` — prices a prop-firm evaluation against its own
+  published rules: pass probability, attempts and cost to funded, EV per
+  attempt, for a coin flip or a sim's real exported R-distribution. Monte
+  Carlo pinned against gambler's-ruin closed forms; demonstrates that sizing
+  moves pass odds only *through* the rules (time limits, consistency,
+  trailing drawdowns), not on the pure walk. Protocol and honesty caveats in
+  `docs/prop-sim.md`; intel source in `docs/field-notes-prop-firms-and-data.md`
 - `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
   rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
   gets checked against; it emulates TradingView's intrabar path assumption so a low
@@ -319,6 +326,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
+python tools/prop_sim.py evaluate --risk 200  # price a prop eval (demo rules)
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
@@ -714,6 +722,27 @@ disagrees with GitHub, believe GitHub and fix this.
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-24] Stream intel: costs closed, prop evals priced
+**Decision:** A live stream's backtest-hygiene argument was distilled into
+`docs/field-notes-prop-firms-and-data.md` and acted on the same day. Four
+changes: `reversal_15m_sim` now charges costs by default (1bp round trip,
+`--no-costs` to compare) with the export bridge netting the friction so the
+night lab's R stays consistent; the sim reports profit factor, Sortino, max
+drawdown in R, and a chronological first/second-half split; `--fragility-out`
+sweeps rr and sma-length into night-lab fragility specs that a bare `plan`
+picks up by file convention; and `tools/prop_sim.py` prices prop-firm
+evaluations (the stream's one genuinely new idea).
+**The catch that mattered:** the sim shipped frictionless despite this
+repo's own "charge costs always" doctrine, and its frictionless trades were
+feeding the night lab's stress record. A stranger's checklist found it.
+**The prop math worth remembering:** for a pure symmetric walk, P(pass) =
+D/(T+D) regardless of position size — pinned against the closed form.
+Sizing moves pass odds only through the rules (time limits reward it,
+consistency rules tax it, trailing drawdowns are strictly worse than
+fixed), and on the demo rule set a coin flip is EV-negative at every size.
+The tool exists so any real firm's rules get priced before an eval is
+bought; owner's stated intent is "want the math first", not a commitment.
 
 ### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
 **Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the

@@ -966,6 +966,7 @@ class PlanArgs:
         self.sim = over.get("sim")
         self.shocks = over.get("shocks", 3)
         self.attacks = over.get("attacks", 4)
+        self.fragility = over.get("fragility")
 
 
 def test_plan_with_only_sim_trades_queues_shocks_and_leaks(tmp_path):
@@ -1046,3 +1047,82 @@ def test_an_explicit_sim_overrides_the_conventional_file(tmp_path):
 
     lanes = {t["lane"] for t in load_sim_trades(lab / _RN)}
     assert lanes == {"sim-fresh"}
+
+
+# ---------------------------------------------------------------------------
+# Fragility specs flow from the sim's sweep into the queue by file convention
+# ---------------------------------------------------------------------------
+
+
+from tools.night_lab import run_fragility
+
+
+def desk_with_closed(tmp_path):
+    path = tmp_path / "desk.json"
+    path.write_text(
+        json.dumps(
+            {"pot": 1000, "trades": [closed(id="T1")], "reviews": [], "refills": []}
+        )
+    )
+    return path
+
+
+def frag_spec(param="rr"):
+    return [
+        {"param": param, "chosen": 2.4, "sweep": {"2.0": 1.0, "2.4": 5.0, "2.8": 0.5}}
+    ]
+
+
+def test_a_bare_plan_sweeps_in_every_fragility_file(tmp_path):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "fragility_es.json").write_text(json.dumps(frag_spec("rr")))
+    (lab / "fragility_nq.json").write_text(json.dumps(frag_spec("sma_length")))
+    cmd_plan(PlanArgs(dir=str(lab), ledger=str(desk_with_closed(tmp_path))))
+    kinds = [j["kind"] for j in read_queue(lab / "queue.jsonl")]
+    assert kinds.count("fragility") == 2
+
+
+def test_fragility_job_params_carry_their_instrument():
+    # fragility_es.json -> "es:rr", so two instruments' sweeps of the same
+    # knob stay distinguishable in the morning verdict.
+    pass  # covered by the id/param assertions below
+
+
+def test_fragility_jobs_are_runnable_and_name_their_source(tmp_path):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "fragility_es.json").write_text(json.dumps(frag_spec("rr")))
+    cmd_plan(PlanArgs(dir=str(lab), ledger=str(desk_with_closed(tmp_path))))
+    job = next(j for j in read_queue(lab / "queue.jsonl") if j["kind"] == "fragility")
+    assert job["payload"]["param"] == "es:rr"
+    got = run_fragility(job)
+    assert got["param"] == "es:rr"
+    assert "verdict" in got
+
+
+def test_unreadable_fragility_files_are_skipped_not_fatal(tmp_path, capsys):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "fragility_bad.json").write_text("{not json")
+    rc = cmd_plan(PlanArgs(dir=str(lab), ledger=str(desk_with_closed(tmp_path))))
+    assert rc == 0
+    assert "skipping" in capsys.readouterr().out
+
+
+def test_explicit_fragility_flag_overrides_the_glob(tmp_path):
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    (lab / "fragility_ignored.json").write_text(json.dumps(frag_spec("rr")))
+    chosen = tmp_path / "mine.json"
+    chosen.write_text(json.dumps(frag_spec("sma_length")))
+    cmd_plan(
+        PlanArgs(
+            dir=str(lab),
+            ledger=str(desk_with_closed(tmp_path)),
+            fragility=[str(chosen)],
+        )
+    )
+    frag = [j for j in read_queue(lab / "queue.jsonl") if j["kind"] == "fragility"]
+    assert len(frag) == 1
+    assert frag[0]["payload"]["param"] == "mine:sma_length"
