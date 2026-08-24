@@ -96,7 +96,7 @@ inherited connectors from a Routine created in-session; pick per job:
 | Need | Create it as |
 | --- | --- |
 | No external data (git, GitHub, repo files) | Fresh-session Routine from a session. Cheap, and GitHub tooling is separate from connectors |
-| External data via a connector | **claude.ai → Settings → Routines**, which is the only place a scheduled job can be given connector access |
+| External data via a connector | A Routine bound to a **small purpose-built persistent session**, which inherits that session's connectors. Create the session for the job alone so its context stays small — that is what makes this cheap rather than the pattern that caused the drain. claude.ai → Settings → Routines also works and is the route to use if in-session creation is ever refused |
 | Neither fits | Persistent session, knowing each wake reloads its whole context |
 
 **The two heartbeats are staggered on purpose.** Both were created
@@ -124,11 +124,20 @@ what is recorded here is intent, which the API cannot tell you.
 | Desk agent weekly review | Enabled, Sundays |
 | Monthly credit check | Enabled. Watches ElevenLabs, Voice.ai and Blotato — **not** Claude usage, which has no spend cap a session can set |
 | PR #78 check-in | Rebuilt 2026-08-24 as a *fresh-session* job with an explicit do-not-re-arm instruction, replacing the self-re-arming version that drove the drain |
-| Spec-desk stop/target watch | **Disabled**, and the XRP/DOGE paper positions are therefore unwatched. Left off deliberately: as a fresh-session job it has no Alpha Vantage connector and would run blind. The owner is re-creating it from the claude.ai Routines UI, which is the only route that carries connector access |
+| Spec-desk stop/target watch | **Re-armed 2026-08-24** as `trig_016GGgDWU6A2WEkp2WhJv6P9`, 02:00/14:00 UTC, bound to `session_01BLdr9zd2GEnDsAYemVZvCB` ("Spec-desk stop watch") — a session created for this and nothing else, so its context stays small. Verified end to end by a manual firing: it read live XRP/DOGE/BTC prices and reported all within range. ~0.44M cache-read tokens per wake. The superseded `trig_01RmpxVMrwRBd8QkeW1oaR9Z` stays disabled |
 
 **A watch that cannot see prices must fail loudly, never quietly.** The
-spec-desk prompt already encodes this — it alerts rather than ending silently
-when the price feed is unreachable — and any replacement needs the same rule.
+spec-desk prompt encodes this — it alerts rather than ending silently when the
+feed is unreachable — and any replacement needs the same rule.
+
+**Fire a new scheduled watch once by hand before believing it.** `fire_trigger`
+does this. Two things that look like failure and are not: a bound session takes
+up to ~12 minutes to cold-start its container, so an immediate `get_session`
+shows no new turn; and `list_triggers` records no `last_run` for a Routine that
+wakes a bound session, so an absent `last_run` is not evidence either. Read the
+session's `post_turn_summary` and its `usage` blob instead — those move only if
+the wake actually happened. An unverified watch and a broken one are
+indistinguishable, because both are silent.
 
 **The big burn is long-running sessions, not Routines — and both named here
 have since stopped.** When the fleet was armed, the Ollama/night-lab session
