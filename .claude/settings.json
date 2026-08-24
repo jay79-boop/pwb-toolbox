@@ -2,6 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py:*)"
+    ],
+    "deny": [
+      "mcp__Blotato__blotato_buy_credits",
+      "mcp__Windsor_ai__execute_action"
     ]
   },
   "hooks": {
