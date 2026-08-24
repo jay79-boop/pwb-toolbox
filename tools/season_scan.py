@@ -29,11 +29,20 @@ Tiers, so nothing is hidden and nothing is oversold:
     CANDIDATE   raw p < .05 but failed a gate — watch, do not trade
     NOISE       everything else, shown faintly so the eye calibrates
 
+There is a second calendar inside the day, and it gets the same treatment:
+every ticker's return is split into the part that arrived overnight (close
+to next open) and the part that arrived in session (open to close). The
+published claim is that nearly all of the index's long-run return accrued
+overnight while the session paid nothing — so it is measured here, on this
+universe, gated the same way, and charged the round trip an overnight-only
+position pays *every day*.
+
 Outputs: a self-contained visual report (heatmap, average-year paths, the
-now-window screener, folklore verdicts) at season/season-report.html; a
-sectioned TradingView watchlist at season/tradingview-watchlist.txt; and
-season/season.json for other tools (the pre-trade pack, the night lab) to
-read. `context SYMBOL` answers "where does today sit in this ticker's year?"
+now-window screener, the overnight split, folklore verdicts) at
+season/season-report.html; a sectioned TradingView watchlist at
+season/tradingview-watchlist.txt; and season/season.json for other tools
+(the pre-trade pack, the night lab) to read. `context SYMBOL` answers
+"where does today sit in this ticker's year?"
 
 All statistics are pure functions over dicts of daily closes and are tested
 on synthetic data with planted effects (tests/test_season_scan.py). Only
@@ -45,6 +54,7 @@ Examples::
     python tools/season_scan.py fetch                  # default universe, ~max history
     python tools/season_scan.py report                 # compute + render everything
     python tools/season_scan.py watchlist              # TradingView import file
+    python tools/season_scan.py overnight              # overnight vs intraday split
     python tools/season_scan.py context XLE            # today's seasonal position
 """
 
@@ -54,6 +64,7 @@ import argparse
 import csv
 import json
 import math
+import operator
 import random
 import sys
 from datetime import date, datetime, timedelta
@@ -378,6 +389,173 @@ def judge_folklore(all_closes: dict[str, dict[date, float]]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Overnight vs intraday — the other calendar, the one inside the day
+# ---------------------------------------------------------------------------
+
+MIN_SESSIONS = 500  # ~2 years of pairs before a split may be convicted
+MAX_GAP_DAYS = 5  # a longer hole is a data gap, not a weekend
+ROUND_TRIP_BPS = 1.0  # what an overnight-only strategy pays, every single day
+
+
+def overnight_pairs(
+    bars: dict[date, tuple[float, float]],
+) -> list[tuple[date, float, float]]:
+    """(day, overnight, intraday) log returns for consecutive sessions.
+
+    Overnight is close-to-open, intraday is open-to-close, and the two sum
+    exactly to the day's close-to-close return — which is what makes this a
+    decomposition rather than two separate studies. Weekends count as
+    overnight (they are time the position is held and untradeable); a gap
+    longer than a few days is a hole in the data and is dropped, so a
+    six-month hole cannot be booked as one enormous night.
+    """
+    days = sorted(bars)
+    out = []
+    for prev, day in zip(days, days[1:]):
+        if (day - prev).days > MAX_GAP_DAYS:
+            continue
+        prev_close = bars[prev][1]
+        open_, close = bars[day]
+        if prev_close <= 0 or open_ <= 0 or close <= 0:
+            continue
+        out.append((day, math.log(open_ / prev_close), math.log(close / open_)))
+    return out
+
+
+def sign_flip_pvalue(
+    diffs: list[float], seed: int = 11, permutations: int = PERMUTATIONS
+) -> float:
+    """Two-sided p for the mean of paired differences, by label exchange.
+
+    The two halves of a day are a matched pair, so the null is that their
+    labels are interchangeable: flip the sign of each day's difference at
+    random and the mean should look like this one. Flipping signs rather
+    than shuffling values keeps each day's own magnitude attached to that
+    day, so volatility clustering survives into the null and only the
+    overnight/intraday labelling is destroyed.
+    """
+    n = len(diffs)
+    if n == 0:
+        return 1.0
+    observed = abs(sum(diffs))
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(permutations):
+        signs = rng.choices((1.0, -1.0), k=n)
+        if abs(sum(map(operator.mul, diffs, signs))) >= observed:
+            hits += 1
+    return (hits + 1) / (permutations + 1)
+
+
+def overnight_split(
+    bars: dict[date, tuple[float, float]],
+    symbol: str,
+    permutations: int = PERMUTATIONS,
+) -> dict | None:
+    """Where one ticker's return actually accrued: overnight or in session.
+
+    The claim under test is the well-published one — that most of the index's
+    long-run return arrived between the close and the next open, while the
+    session itself paid little or nothing. It is measured here rather than
+    repeated, on this universe, with the same three gates the monthly grid
+    uses: a permutation test, agreement between the first and second halves
+    of the record, and FDR across the tickers scanned.
+
+    Two numbers exist to stop the finding being oversold. `top_share` is how
+    much of the whole overnight total came from its best handful of days: an
+    effect delivered by five gaps is a lottery ticket, not a strategy. And
+    `net_bps` charges the round trip an overnight-only position pays *every
+    day* — the edge has to clear the spread it crosses twice daily, which is
+    a far higher bar than the gross number suggests.
+    """
+    pairs = overnight_pairs(bars)
+    if len(pairs) < 4:
+        return None
+    on = [p[1] for p in pairs]
+    intra = [p[2] for p in pairs]
+    diffs = [a - b for a, b in zip(on, intra)]
+    n = len(pairs)
+    sum_on, sum_intra = sum(on), sum(intra)
+    total = sum_on + sum_intra
+
+    cut = n // 2
+    first = sum(diffs[:cut]) / cut
+    second = sum(diffs[cut:]) / (n - cut)
+
+    # The best 1% of nights (at least five), and what they alone contributed.
+    top_k = max(5, round(n * 0.01))
+    top_share = (
+        round(sum(sorted(on, reverse=True)[:top_k]) / sum_on, 3) if sum_on > 0 else None
+    )
+    on_bps = 10_000 * sum_on / n
+    return {
+        "symbol": symbol,
+        "n_days": n,
+        "from": pairs[0][0].isoformat(),
+        "to": pairs[-1][0].isoformat(),
+        "overnight_pct": round(100 * (math.exp(sum_on) - 1), 1),
+        "intraday_pct": round(100 * (math.exp(sum_intra) - 1), 1),
+        "total_pct": round(100 * (math.exp(total) - 1), 1),
+        "overnight_bps": round(on_bps, 2),
+        "intraday_bps": round(10_000 * sum_intra / n, 2),
+        # Share of the gain that arrived overnight. A ratio only reads as a
+        # share when both halves actually contributed: if one of them lost
+        # money the fraction goes negative or over 100% and means nothing,
+        # so it is withheld and the two columns beside it tell the story.
+        "share": (
+            round(sum_on / total, 3)
+            if total > 0 and sum_on >= 0 and sum_intra >= 0
+            else None
+        ),
+        "hit_overnight": round(sum(1 for r in on if r > 0) / n, 3),
+        "hit_intraday": round(sum(1 for r in intra if r > 0) / n, 3),
+        "p": round(sign_flip_pvalue(diffs, permutations=permutations), 4),
+        "half_first_bps": round(10_000 * first, 2),
+        "half_second_bps": round(10_000 * second, 2),
+        "halves_agree": first != 0 and second != 0 and (first > 0) == (second > 0),
+        "top_days": top_k,
+        "top_share": top_share,
+        "net_bps": round(on_bps - ROUND_TRIP_BPS, 2),
+        "winner": "overnight" if sum_on > sum_intra else "intraday",
+    }
+
+
+def overnight_scan(
+    all_bars: dict[str, dict[date, tuple[float, float]]],
+    permutations: int = PERMUTATIONS,
+) -> list[dict]:
+    """Every ticker's split, tiered the same way the monthly grid is."""
+    rows = [
+        row
+        for row in (
+            overnight_split(all_bars[sym], sym, permutations)
+            for sym in sorted(all_bars)
+        )
+        if row
+    ]
+    for row, passed in zip(rows, bh_fdr([r["p"] for r in rows])):
+        row["fdr_pass"] = passed
+        enough = row["n_days"] >= MIN_SESSIONS
+        if passed and row["halves_agree"] and enough:
+            row["tier"] = CONVICTED
+        elif row["p"] < 0.05:
+            row["tier"] = CANDIDATE
+            row["tier_note"] = (
+                f"only {row['n_days']} sessions"
+                if not enough
+                else (
+                    "halves disagree — the split moved"
+                    if not row["halves_agree"]
+                    else "did not survive FDR across the tickers"
+                )
+            )
+        else:
+            row["tier"] = NOISE
+    rows.sort(key=lambda r: r["p"])
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # The now-window screener — what is actionable this week
 # ---------------------------------------------------------------------------
 
@@ -540,6 +718,28 @@ def read_closes(path: Path) -> dict[date, float]:
     return closes
 
 
+def read_bars(path: Path) -> dict[date, tuple[float, float]]:
+    """(open, close) per day, for the days that carry a usable open.
+
+    Older data files hold only `timestamp,close`, which is everything the
+    monthly grid needs and not enough for the overnight split. Those return
+    an empty mapping rather than an error: the report simply says the split
+    is unavailable until the next fetch rewrites the files.
+    """
+    bars: dict[date, tuple[float, float]] = {}
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            raw = row.get("timestamp") or row.get("date")
+            try:
+                day = datetime.fromisoformat(str(raw)).date()
+                open_, close = float(row["open"]), float(row["close"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if open_ > 0 and close > 0:
+                bars[day] = (open_, close)
+    return bars
+
+
 def load_universe(base: Path, extra: list[str] | None) -> list[str]:
     """Default universe, plus season/universe.txt (one ticker a line, # for
     comments) — which is where the owner's own watchlist names live."""
@@ -569,8 +769,27 @@ def load_all_closes(base: Path, symbols: list[str]) -> dict[str, dict[date, floa
     return out
 
 
-def compute(all_closes: dict[str, dict[date, float]], today: date) -> dict:
-    """The whole scan: cells, tiers, folklore, now-windows, paths."""
+def load_all_bars(
+    base: Path, symbols: list[str]
+) -> dict[str, dict[date, tuple[float, float]]]:
+    out = {}
+    data_dir = base / DATA_DIR_NAME
+    for sym in symbols:
+        path = data_dir / f"{sym}.csv"
+        if path.exists():
+            bars = read_bars(path)
+            if bars:
+                out[sym] = bars
+    return out
+
+
+def compute(
+    all_closes: dict[str, dict[date, float]],
+    today: date,
+    all_bars: dict[str, dict[date, tuple[float, float]]] | None = None,
+) -> dict:
+    """The whole scan: cells, tiers, folklore, now-windows, paths, and — when
+    the data files carry opens — the overnight/intraday split."""
     # The family is (up to) 12 cells per ticker; B is chosen before any
     # cell is tested so the floor clears the rank-1 FDR bar.
     permutations = needed_permutations(12 * len(all_closes))
@@ -583,11 +802,15 @@ def compute(all_closes: dict[str, dict[date, float]], today: date) -> dict:
     for bucket, entries in folklore_now(folklore, today).items():
         now[bucket].extend(entries)
         now[bucket].sort(key=lambda e: -abs(e.get("mean_pct") or 0))
+    bars = all_bars or {}
     return {
         "generated": today.isoformat(),
         "symbols": sorted(all_closes),
         "cells": cells,
         "folklore": folklore,
+        "overnight": (
+            overnight_scan(bars, needed_permutations(len(bars))) if bars else []
+        ),
         "now": now,
         "paths": {
             sym: average_year_path(all_closes[sym]) for sym in sorted(all_closes)
@@ -668,9 +891,23 @@ def fetch_all(symbols: list[str], base: Path) -> int:
         path = data_dir / f"{sym}.csv"
         with open(path, "w", newline="") as fh:
             writer = csv.writer(fh)
-            writer.writerow(["timestamp", "close"])
+            # The open is what separates the overnight move from the session
+            # one; adjusted the same way as the close, so close-to-open is a
+            # clean ratio across splits and dividends. High and low cost
+            # nothing to carry and are what lets `calibration_audit.py` judge
+            # a barrier on whether price actually reached it, rather than on
+            # whether it happened to close beyond it.
+            writer.writerow(["timestamp", "open", "high", "low", "close"])
             for ts, row in frame.iterrows():
-                writer.writerow([ts.strftime("%Y-%m-%d"), float(row["Close"])])
+                writer.writerow(
+                    [
+                        ts.strftime("%Y-%m-%d"),
+                        float(row["Open"]),
+                        float(row["High"]),
+                        float(row["Low"]),
+                        float(row["Close"]),
+                    ]
+                )
         print(f"  {sym}: {len(frame)} daily closes")
     print(f"{len(symbols) - failures}/{len(symbols)} fetched into {data_dir}")
     return 0 if failures < len(symbols) else 1
@@ -695,7 +932,7 @@ def cmd_report(args):
             f"No data under {base / DATA_DIR_NAME}. Run `season_scan.py fetch` first."
         )
         return 1
-    scan = compute(all_closes, date.today())
+    scan = compute(all_closes, date.today(), load_all_bars(base, symbols))
     (base / JSON_NAME).write_text(
         json.dumps(scan, ensure_ascii=False), encoding="utf-8"
     )
@@ -710,8 +947,80 @@ def cmd_report(args):
         f"{convicted} convicted; folklore {held} held / "
         f"{sum(1 for f in scan['folklore'] if f['verdict'] == 'FAILED')} failed."
     )
+    print(overnight_summary_line(scan))
     print(f"Report:    {report}")
     print(f"Watchlist: {watchlist}")
+    return 0
+
+
+def overnight_summary_line(scan: dict) -> str:
+    rows = scan.get("overnight") or []
+    if not rows:
+        return (
+            "Overnight split: unavailable — the data files carry no open column. "
+            "Re-run `season_scan.py fetch` to rewrite them."
+        )
+    convicted = [r for r in rows if r["tier"] == CONVICTED]
+    if not convicted:
+        return f"Overnight split: {len(rows)} tickers, none convicted."
+    night = sum(1 for r in convicted if r["winner"] == "overnight")
+    return (
+        f"Overnight split: {len(convicted)}/{len(rows)} convicted "
+        f"({night} overnight, {len(convicted) - night} intraday)."
+    )
+
+
+def render_overnight_table(scan: dict) -> str:
+    rows = scan.get("overnight") or []
+    if not rows:
+        return (
+            "No overnight/intraday split: the data files under season/data carry\n"
+            "only a close column. Re-run `season_scan.py fetch` — it now writes the\n"
+            "open beside it — and the split appears here and in the report."
+        )
+    head = (
+        f"{'sym':<8}{'sessions':>9}{'overnight':>11}{'intraday':>10}"
+        f"{'share':>7}{'bps/day':>9}{'net':>7}{'p':>8}  verdict"
+    )
+    lines = [head, "-" * len(head)]
+    for r in rows:
+        share = f"{100 * r['share']:.0f}%" if r["share"] is not None else "-"
+        note = r["tier"] if r["tier"] != CANDIDATE else f"candidate ({r['tier_note']})"
+        lines.append(
+            f"{r['symbol']:<8}{r['n_days']:>9}{r['overnight_pct']:>10.0f}%"
+            f"{r['intraday_pct']:>9.0f}%{share:>7}{r['overnight_bps']:>9.2f}"
+            f"{r['net_bps']:>7.2f}{r['p']:>8.4f}  {note} — {r['winner']}"
+        )
+    convicted = [r for r in rows if r["tier"] == CONVICTED]
+    if convicted:
+        worst = max(
+            (r for r in convicted if r["top_share"] is not None),
+            key=lambda r: r["top_share"],
+            default=None,
+        )
+        if worst:
+            lines.append("")
+            lines.append(
+                f"Concentration: {worst['symbol']}'s best {worst['top_days']} nights "
+                f"carried {100 * worst['top_share']:.0f}% of its whole overnight total."
+            )
+    lines.append("")
+    lines.append(
+        f"net = bps/day after the {ROUND_TRIP_BPS:.1f}bp round trip an "
+        "overnight-only position pays every single day."
+    )
+    return "\n".join(lines)
+
+
+def cmd_overnight(args):
+    base = season_dir(args.dir)
+    symbols = load_universe(base, args.symbols)
+    all_bars = load_all_bars(base, symbols)
+    if not all_bars:
+        print(render_overnight_table({"overnight": []}))
+        return 1
+    scan = {"overnight": overnight_scan(all_bars, needed_permutations(len(all_bars)))}
+    print(render_overnight_table(scan))
     return 0
 
 
@@ -792,6 +1101,12 @@ def main(argv=None):
     )
     shared(p)
     p.set_defaults(func=cmd_watchlist)
+
+    p = sub.add_parser(
+        "overnight", help="where the return accrued: overnight vs in session"
+    )
+    shared(p)
+    p.set_defaults(func=cmd_overnight)
 
     p = sub.add_parser("context", help="where today sits in one ticker's seasonal year")
     p.add_argument("symbol")
@@ -898,6 +1213,17 @@ _REPORT_TEMPLATE = """<!doctype html>
   <span class="muted">two lines that disagree = a pattern that died</span>
 </div>
 <div class="grid" id="paths"></div>
+
+<h2>Overnight vs intraday &mdash; where the return actually accrued</h2>
+<div class="legend">
+  <span>top bar = close &rarr; next open &nbsp;|&nbsp; bottom bar = open &rarr; close</span>
+  <span><span class="swatch" style="background:#0d9488"></span>gained</span>
+  <span><span class="swatch" style="background:#ef4444"></span>lost</span>
+  <span><b>bold + outline</b> = convicted (all three gates)</span>
+  <span class="muted">hover a row for hit rates, halves and concentration</span>
+</div>
+<div class="scroll"><table class="folk" id="night"></table></div>
+<p class="foot" id="nightfoot"></p>
 
 <h2>Folklore on trial</h2>
 <div class="scroll"><table class="folk" id="folk"></table></div>
@@ -1015,6 +1341,67 @@ document.getElementById("sub").textContent =
     panel.appendChild(svg);
     holder.appendChild(panel);
   }
+})();
+
+/* Overnight vs intraday */
+(function () {
+  const night = document.getElementById("night");
+  const foot = document.getElementById("nightfoot");
+  const rows = DATA.overnight || [];
+  if (!rows.length) {
+    night.innerHTML = '<tr><td class="muted">No open prices in the data files yet. ' +
+      'Re-run <b>season_scan.py fetch</b> \\u2014 it writes the open beside the close ' +
+      '\\u2014 and this fills itself in.</td></tr>';
+    return;
+  }
+  night.innerHTML = "<tr><th>Ticker</th><th>Sessions</th><th>Overnight</th>" +
+    "<th>In session</th><th>Split</th><th>bps/night</th><th>net of costs</th>" +
+    "<th>p</th><th>Verdict</th></tr>";
+  const scale = Math.max(1, ...rows.map((r) =>
+    Math.max(Math.abs(r.overnight_pct), Math.abs(r.intraday_pct))));
+  const bar = (pct) => {
+    const w = Math.max(2, Math.round(80 * Math.abs(pct) / scale));
+    return '<div style="height:7px;margin:2px 0;width:' + w + 'px;background:' +
+      (pct >= 0 ? "#0d9488" : "#ef4444") + '"></div>';
+  };
+  const signed = (v, unit) => (v >= 0 ? "+" : "") + v + (unit || "");
+  for (const r of rows) {
+    const tr = el("tr");
+    if (r.tier === "convicted") tr.style.fontWeight = "700";
+    tr.appendChild(el("td", "", r.symbol));
+    tr.appendChild(el("td", "muted", String(r.n_days)));
+    tr.appendChild(el("td", "", signed(r.overnight_pct, "%")));
+    tr.appendChild(el("td", "", signed(r.intraday_pct, "%")));
+    const split = el("td");
+    split.innerHTML = bar(r.overnight_pct) + bar(r.intraday_pct);
+    tr.appendChild(split);
+    tr.appendChild(el("td", "", signed(r.overnight_bps)));
+    const net = el("td", r.net_bps > 0 ? "" : "muted", signed(r.net_bps));
+    tr.appendChild(net);
+    tr.appendChild(el("td", "", String(r.p)));
+    const v = el("td");
+    const label = r.tier === "convicted" ? "\\u2713 " + r.winner.toUpperCase()
+      : r.tier === "candidate" ? "candidate" : "not proven";
+    v.appendChild(el("span", "verdict " + (r.tier === "convicted" ? "held" : ""), label));
+    tr.appendChild(v);
+    tr.dataset.tip = r.symbol + ": " + r.n_days + " sessions " + r.from + " to " + r.to +
+      " | up " + Math.round(r.hit_overnight * 100) + "% of nights vs " +
+      Math.round(r.hit_intraday * 100) + "% of sessions" +
+      " | halves " + signed(r.half_first_bps) + " / " + signed(r.half_second_bps) + " bps" +
+      (r.top_share !== null ? " | best " + r.top_days + " nights carried " +
+        Math.round(r.top_share * 100) + "% of the overnight total" : "") +
+      (r.tier_note ? " | " + r.tier_note : "");
+    night.appendChild(tr);
+  }
+  const convicted = rows.filter((r) => r.tier === "convicted");
+  const clears = convicted.filter((r) => r.net_bps > 0).length;
+  foot.textContent =
+    convicted.length + " of " + rows.length + " tickers convicted, of which " + clears +
+    " still clear a 1bp round trip \\u2014 which is the number that matters, because " +
+    "an overnight-only position pays that spread every single day, not once a season. " +
+    "The split is tested by flipping each day's two halves at random " + DATA.gates.permutations +
+    " times: the labels are what the null destroys, so each day keeps its own size and " +
+    "volatility clustering survives into the null.";
 })();
 
 /* Folklore + candidates */

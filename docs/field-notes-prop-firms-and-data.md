@@ -126,9 +126,42 @@ enforces or visibly lacks:
       sma-length swept, cliff-scored overnight
 - [x] **Sim summary metrics** — profit factor, Sortino, max drawdown in R,
       from the existing `pwb_toolbox.performance` functions
+- [x] **Overnight vs intraday, measured** — the "holy grail" the room
+      laughed about is a published anomaly: most of the US index's long-run
+      return accrued between the close and the next open. `season_scan
+      report` now splits every ticker that way, gates it the same three
+      ways, and charges the round trip an overnight-only position pays
+      *every day* — which is what turns a famous chart into a decision
+- [x] **Timeframe fragility** — the stream demonstrated it live when a
+      strategy moved from 15m to 5m and died. `fragility_sweep` now sweeps
+      bar size (15/30/45/60) alongside rr and sma-length, so the night lab
+      cliff-scores the timeframe too. 15m is the finest Yahoo serves at
+      this depth, so only the coarse side is reachable and the sweep says so
+- [x] **Calibration audit of our own option math** —
+      `tools/calibration_audit.py`: when Black-Scholes said 30% touch, how
+      often did it actually touch? Barriers in sigma units so every row is
+      an exact binomial test, non-overlapping windows, trailing vs static
+      volatility, and the continuous-monitoring caveat stated up front
+- [ ] **BOS + VWAP as a gauntlet candidate** — the room's actual setup
+      (break of structure, then a VWAP retest). Recorded, not built: it is
+      a candidate to put through the same gates as anything else, and it
+      earns a sim only if it survives them
 - [ ] **Wisdom-doc proposal** — a sourced section on prop-firm economics
       and the L2/L3 conclusion, staged under the propose-then-approve
       contract, not silently edited
+
+### Considered and declined
+
+- **A proper Fokker-Planck / stochastic-volatility treatment.** The stream
+  gestured at it; the honest version is a research project, and the
+  calibration audit answers the question it was reaching for — where does
+  the simple model actually miss — for a hundredth of the effort.
+- **Level 2 / Level 3 order-flow data.** Priced out in section 2 above:
+  never chase it.
+- **Asian-session strategies.** No data, no edge case for them here, and
+  the owner does not trade those hours.
+- **An "optimize" button.** Still deliberately absent. Fragility scoring is
+  the answer; parameter search is the disease.
 
 ## For any strategy tool built here (the generalizable checklist)
 

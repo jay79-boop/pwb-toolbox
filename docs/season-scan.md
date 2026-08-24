@@ -66,15 +66,45 @@ alongside convicted cells, labeled as folklore. The first real scan's only
 finding — the XLE spring run — taught this lesson: a discovery that lives
 only in a verdict table is a discovery nobody acts on.
 
-`fetch` pulls max-history daily closes (owner's machine; the cloud proxy
+`fetch` pulls max-history daily bars (owner's machine; the cloud proxy
 blocks Yahoo). Add your own names in `season/universe.txt`, one per line.
+
+## The other calendar: overnight vs intraday
+
+There is a second seasonality inside the day, and it is a bigger one. The
+published finding is that nearly all of the US index's long-run return
+accrued **between the close and the next open**, while the session itself
+paid little or nothing. `report` now splits every ticker's record that way
+and puts it through the same gates.
+
+The split is exact — close→open plus open→close is the day's whole return —
+so the two columns always reconcile. What earns a verdict is the difference:
+
+- **the null** flips each day's two halves at random, thousands of times.
+  The labels are what the null destroys, so every day keeps its own size and
+  volatility clustering survives into the null. Shuffling the *values*
+  instead would break that and convict far too easily.
+- **split-half** across the sessions, and **FDR** across the tickers, as
+  everywhere else here.
+- **`top_share`** reports how much of the whole overnight total came from
+  its best handful of nights. An effect delivered by five gaps is a lottery
+  ticket with a good average, not a strategy.
+- **costs are charged per day, not per season.** An overnight-only position
+  crosses the spread every single session, so the report prints the edge net
+  of a 1bp round trip. That is the number that decides whether a real
+  finding is a tradeable one, and it is usually the number that kills it.
+
+`overnight` prints the table on its own. It needs the `open` column, which
+`fetch` writes — an older `season/data` file holding only closes reports the
+split as unavailable rather than guessing.
 
 ## Commands
 
 ```bash
-python tools/season_scan.py fetch                # universe daily closes
+python tools/season_scan.py fetch                # universe daily bars
 python tools/season_scan.py report               # scan + all three artifacts
 python tools/season_scan.py watchlist            # rewrite the watchlist only
+python tools/season_scan.py overnight            # overnight vs intraday split
 python tools/season_scan.py context XLE          # today's seasonal position
 ```
 

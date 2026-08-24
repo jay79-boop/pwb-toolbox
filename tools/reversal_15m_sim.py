@@ -572,6 +572,52 @@ def read_csv(path: str) -> list[Bar]:
     return sorted(bars, key=lambda b: b.ts)
 
 
+def resample(bars: Sequence[Bar], minutes: int, anchor: time) -> list[Bar]:
+    """Group bars into coarser ones on a grid anchored at the opening range.
+
+    Where the grid starts matters more than it looks. A generic grid counted
+    from midnight puts 30-minute buckets at :00 and :30, so a 09:15 opening
+    candle stops existing the moment the bars are widened and every session
+    is skipped as "no candle 1" -- a silent zero-trade backtest rather than
+    an error. The grid therefore starts at the session's own candle-1 time,
+    and earlier bars are bucketed backwards along the same spacing.
+
+    Widening bars changes the answer for two reasons at once, and both are
+    the point: the strategy sees different failure swings, *and* the fill
+    model gets coarser, because `_intrabar_path` has to guess the order of
+    an hour of trading from four numbers instead of fifteen minutes of it.
+    A result that only survives at one bar size is a result about that bar
+    size.
+    """
+    if minutes <= 0:
+        raise ValueError("minutes must be positive")
+    anchor_min = _minute(anchor)
+    buckets: dict[tuple[date, int], list[Bar]] = {}
+    for bar in sorted(bars, key=lambda b: b.ts):
+        m = bar.open_minute
+        # Python's modulo is non-negative, so this floors onto the grid for
+        # pre-anchor bars too. The one bucket that can start before midnight
+        # is clamped to 00:00; it cannot collide with the bucket above it.
+        start = max(0, m - ((m - anchor_min) % minutes))
+        buckets.setdefault((bar.ts.date(), start), []).append(bar)
+
+    out: list[Bar] = []
+    for (_day, start), group in sorted(buckets.items()):
+        first = group[0]
+        out.append(
+            Bar(
+                ts=first.ts.replace(
+                    hour=start // 60, minute=start % 60, second=0, microsecond=0
+                ),
+                open=first.open,
+                high=max(b.high for b in group),
+                low=min(b.low for b in group),
+                close=group[-1].close,
+            )
+        )
+    return sorted(out, key=lambda b: b.ts)
+
+
 def fragility_sweep(
     bars: Sequence[Bar], cfg: Config, daily_csv: str | None
 ) -> list[dict]:
@@ -581,13 +627,20 @@ def fragility_sweep(
     chosen value that is the lone peak of its own sweep is fitted to the
     history it was tuned on, and the night lab is where that verdict is
     delivered. No model is involved at any point -- this is the same sim run
-    ten more times.
+    a dozen more times.
+
+    Bar size is swept alongside the rule parameters because a strategy can
+    be fitted to a timeframe as easily as to a number, and that failure is
+    invisible from inside one chart. Only coarser sizes are reachable: 15
+    minutes is the finest Yahoo serves at this depth, so the chosen value
+    sits at the edge of its own sweep and the night lab says so.
     """
     session_days = sorted({b.ts.date() for b in bars})
     specs = []
     for param, values in (
         ("rr", [round(cfg.reward_risk + d, 1) for d in (-0.8, -0.4, 0.0, 0.4, 0.8)]),
         ("sma_length", [max(10, cfg.sma_length + d) for d in (-20, -10, 0, 10, 20)]),
+        ("bar_minutes", [cfg.bar_minutes * k for k in (1, 2, 3, 4)]),
     ):
         sweep = {}
         for value in values:
@@ -595,16 +648,26 @@ def fragility_sweep(
                 cfg,
                 reward_risk=value if param == "rr" else cfg.reward_risk,
                 sma_length=value if param == "sma_length" else cfg.sma_length,
+                bar_minutes=value if param == "bar_minutes" else cfg.bar_minutes,
+            )
+            trial_bars = (
+                resample(bars, value, trial.candle1)
+                if param == "bar_minutes" and value != cfg.bar_minutes
+                else bars
             )
             sma = None
             if trial.use_sma and daily_csv:
                 sma = sma_from_daily_csv(daily_csv, trial.sma_length, session_days)
-            stats = summarize(simulate(bars, trial, sma=sma))
+            stats = summarize(simulate(trial_bars, trial, sma=sma))
             sweep[str(value)] = stats["total_r"]
         specs.append(
             {
                 "param": param,
-                "chosen": cfg.reward_risk if param == "rr" else cfg.sma_length,
+                "chosen": {
+                    "rr": cfg.reward_risk,
+                    "sma_length": cfg.sma_length,
+                    "bar_minutes": cfg.bar_minutes,
+                }[param],
                 "sweep": sweep,
             }
         )
@@ -661,8 +724,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument(
         "--fragility-out",
         metavar="PATH",
-        help="sweep rr and sma-length around the chosen values and write "
-        "night-lab fragility specs (see night_lab.py plan)",
+        help="sweep rr, sma-length and bar size around the chosen values and "
+        "write night-lab fragility specs (see night_lab.py plan)",
     )
     args = ap.parse_args(argv)
 

@@ -467,3 +467,186 @@ def test_compute_merges_held_windows_into_now_and_the_watchlist_sees_them():
 
 def test_the_report_labels_folklore_entries():
     assert "folklore held" in render_report(scan_fixture())
+
+
+# ---------------------------------------------------------------------------
+# The other calendar: overnight vs intraday
+#
+# The published claim is that nearly all of the index's long-run return
+# arrived between the close and the next open. These tests do not check that
+# claim — they check that the machinery could find it if it were there, and
+# would refuse to find it if it were not.
+# ---------------------------------------------------------------------------
+
+from tools.season_scan import (
+    MIN_SESSIONS,
+    ROUND_TRIP_BPS,
+    load_all_bars,
+    overnight_pairs,
+    overnight_scan,
+    overnight_split,
+    read_bars,
+    render_overnight_table,
+    sign_flip_pvalue,
+)
+
+
+def synthetic_bars(
+    years: int = 8,
+    night_bps: float = 0.0,
+    day_bps: float = 0.0,
+    seed: int = 3,
+    night_vol: float = 0.004,
+    day_vol: float = 0.008,
+    first_half_only: bool = False,
+    start_year: int = 2010,
+):
+    """Daily (open, close) with a planted overnight/intraday split.
+
+    Drifts are per-session, in basis points of log return, so a test can ask
+    for "four basis points a night and nothing in session" directly.
+    """
+    rng = random.Random(seed)
+    bars, price = {}, 100.0
+    day = date(start_year, 1, 1)
+    end = date(start_year + years, 1, 1)
+    half_cut = start_year + years // 2
+    while day < end:
+        if day.weekday() < 5:
+            live = not (first_half_only and day.year >= half_cut)
+            overnight = rng.gauss(night_bps * 1e-4 if live else 0.0, night_vol)
+            intraday = rng.gauss(day_bps * 1e-4, day_vol)
+            open_ = price * math.exp(overnight)
+            price = open_ * math.exp(intraday)
+            bars[day] = (open_, price)
+        day += timedelta(days=1)
+    return bars
+
+
+def test_the_two_halves_sum_to_the_whole_day():
+    bars = synthetic_bars(years=1)
+    days = sorted(bars)
+    pairs = {p[0]: p for p in overnight_pairs(bars)}
+    for prev, day in zip(days, days[1:]):
+        if day not in pairs:
+            continue
+        _, overnight, intraday = pairs[day]
+        close_to_close = math.log(bars[day][1] / bars[prev][1])
+        assert overnight + intraday == pytest.approx(close_to_close)
+
+
+def test_a_hole_in_the_data_is_not_booked_as_one_enormous_night():
+    bars = synthetic_bars(years=2)
+    hole = [d for d in bars if date(2010, 6, 1) <= d < date(2010, 9, 1)]
+    for d in hole:
+        del bars[d]
+    first_after = [p for p in overnight_pairs(bars) if p[0] >= date(2010, 9, 1)][0]
+    # 1 Sep would have paired with 31 May across the hole; it is gone, and
+    # the record resumes with the ordinary 1 Sep -> 2 Sep night.
+    assert first_after[0] == date(2010, 9, 2)
+
+
+def test_a_planted_overnight_drift_is_convicted():
+    rows = overnight_scan(
+        {"AAA": synthetic_bars(years=10, night_bps=6, day_bps=-3)}, 400
+    )
+    row = rows[0]
+    assert row["n_days"] >= MIN_SESSIONS
+    assert row["winner"] == "overnight"
+    assert row["p"] < 0.01
+    assert row["tier"] == CONVICTED
+    assert row["overnight_pct"] > 0 > row["intraday_pct"]
+
+
+def test_a_fair_split_convicts_nothing():
+    universe = {f"N{i}": synthetic_bars(years=4, seed=20 + i) for i in range(5)}
+    rows = overnight_scan(universe, 400)
+    assert len(rows) == 5
+    assert all(r["tier"] != CONVICTED for r in rows)
+
+
+def test_a_split_that_stopped_working_is_refused_conviction():
+    rows = overnight_scan(
+        {"AAA": synthetic_bars(years=6, night_bps=8, first_half_only=True)}, 400
+    )
+    row = rows[0]
+    assert row["halves_agree"] is False
+    assert row["tier"] != CONVICTED
+
+
+def test_the_edge_is_charged_the_round_trip_it_pays_every_day():
+    row = overnight_scan({"AAA": synthetic_bars(years=3, night_bps=4)}, 100)[0]
+    assert row["net_bps"] == pytest.approx(row["overnight_bps"] - ROUND_TRIP_BPS)
+
+
+def test_concentration_names_the_few_nights_that_carried_the_whole_thing():
+    # Flat except for five enormous gaps: a real total, delivered by a
+    # lottery. `top_share` is what stops that reading as a strategy.
+    bars, price = {}, 100.0
+    day = date(2015, 1, 1)
+    for i in range(600):
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        open_ = price * (1.05 if i % 120 == 0 else 1.0)
+        price = open_
+        bars[day] = (open_, price)
+        day += timedelta(days=1)
+    row = overnight_split(bars, "JUMPY", permutations=100)
+    assert row["top_days"] == 6  # 1% of 599 pairs, floored at five
+    assert row["top_share"] > 0.99
+
+
+def test_sign_flip_finds_a_one_sided_difference_and_shrugs_at_nothing():
+    assert sign_flip_pvalue([0.01] * 30, permutations=200) < 0.01
+    assert sign_flip_pvalue([0.0] * 30, permutations=200) == 1.0
+    assert sign_flip_pvalue([], permutations=200) == 1.0
+
+
+def test_a_close_only_file_yields_no_split_and_says_so(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    write_csv(data / "AAA.csv", synthetic_closes(years=6))
+    assert read_bars(data / "AAA.csv") == {}
+    assert load_all_bars(tmp_path, ["AAA"]) == {}
+    text = render_overnight_table({"overnight": []})
+    assert "fetch" in text
+
+
+def test_files_with_opens_are_read_and_reach_the_report(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    bars = synthetic_bars(years=4, night_bps=6)
+    rows = ["timestamp,open,close"]
+    rows += [f"{d},{o:.4f},{c:.4f}" for d, (o, c) in sorted(bars.items())]
+    (data / "AAA.csv").write_text("\n".join(rows) + "\n")
+
+    assert len(read_bars(data / "AAA.csv")) == len(bars)
+    args = SimpleNamespace(dir=str(tmp_path), symbols=["AAA"])
+    assert cmd_report(args) == 0
+    scan = json.loads((tmp_path / "season.json").read_text())
+    assert scan["overnight"][0]["symbol"] == "AAA"
+    assert "Overnight vs intraday" in (tmp_path / "season-report.html").read_text()
+
+
+def test_the_terminal_table_prints_the_verdict_and_the_cost_line():
+    scan = {
+        "overnight": overnight_scan({"AAA": synthetic_bars(years=3, night_bps=4)}, 100)
+    }
+    text = render_overnight_table(scan)
+    assert "AAA" in text and "overnight" in text
+    assert "round trip" in text
+
+
+def test_the_share_is_withheld_when_one_half_lost_money():
+    # A ratio only reads as a share when both halves contributed. With the
+    # session losing money the fraction would print as -76% or 180%, which
+    # means nothing; the two columns beside it are the honest answer.
+    losing_session = overnight_split(
+        synthetic_bars(years=3, night_bps=12, day_bps=-6), "AAA", permutations=50
+    )
+    assert losing_session["overnight_pct"] > 0 > losing_session["intraday_pct"]
+    assert losing_session["share"] is None
+    both_up = overnight_split(
+        synthetic_bars(years=3, night_bps=6, day_bps=6, seed=4), "BBB", permutations=50
+    )
+    assert 0.0 <= both_up["share"] <= 1.0

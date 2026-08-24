@@ -39,6 +39,10 @@ from pwb_toolbox.options.greeks import (  # noqa: E402
     expected_move,
     implied_vol,
 )
+from pwb_toolbox.options.probability import (  # noqa: E402
+    finish_probability,
+    touch_probability,
+)
 
 needs_node = pytest.mark.skipif(
     shutil.which("node") is None, reason="node is not installed"
@@ -110,6 +114,24 @@ def _cases():
                 "expected": [list(t) for t in decay_schedule(*args)],
             }
         )
+        # The barrier probabilities: the journal quotes these on a ladder and
+        # tools/calibration_audit.py measures them against real bars, so the
+        # two implementations have to be the same number.
+        for target in (strike, spot * 1.1, spot * 0.9):
+            out.append(
+                {
+                    "fn": "finishProbability",
+                    "args": [spot, target, vol, days, rate],
+                    "expected": finish_probability(spot, target, vol, days, rate),
+                }
+            )
+            out.append(
+                {
+                    "fn": "touchProbability",
+                    "args": [spot, target, vol, days],
+                    "expected": touch_probability(spot, target, vol, days),
+                }
+            )
     return out
 
 
