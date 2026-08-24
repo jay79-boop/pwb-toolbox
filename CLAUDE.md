@@ -671,24 +671,21 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `8698ecf` — the merge of #98 (blueprint builder step editor,
-autosave, editable lists). Last updated 2026-08-23.
+**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: sim costs
+by default, prop-firm eval pricer). Last updated 2026-08-24.
 
-**Seven pull requests merged on 2026-08-23**, after a day when none had: #71
-(15-Minute Reversal), #87 (cross-instrument backtest lab), #90
-(`StrategyComparator`), #91 (date windows and risk rules), #92 (docs examples
-against real signatures), #96 (planner exit ladder), #98 (builder step editor).
-Six of them had gone stale enough to need `main` merged in first, and two no
-longer merged at all.
+**The 2026-08-23 drain finished**: #99, #100, #101 and the rest all landed, and
+#103–#110 followed (night lab, season scan, spicy lab, stream field notes).
+See the decision log for what each was.
 
 **Open (4).**
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and 46 commits behind; another session was working it |
-| #99 | One shared `static/process-grammar.js`, plus process flows on the dashboard | level with `main`, green |
-| #100 | The night lab: unattended overnight stress testing on a local model | level with `main` |
-| #101 | This block | level with `main` |
+| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`**, long behind; another session was working it |
+| #102 | State-block follow-up written for the end of the drain | its text predates #103–#110; needs a re-read before merging |
+| #109 | The agent fleet: critique, design, operating protocol | rewrites this block too — expect a conflict with this row |
+| #111 | The VWAP lab: fade candidate, crossover control, noise floor | this branch; level with `main`, suite green |
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -732,7 +729,7 @@ disagrees with GitHub, believe GitHub and fix this.
 
 ## Decision Log
 
-### [2026-08-24] VWAP lab: the fade as candidate, the crossover as control
+### [2026-08-24] VWAP lab: the fade as candidate, the crossover as control (PR #111)
 **Decision:** Add the VWAP strategy family — `pwb_toolbox/backtesting/vwap.py`
 (`SessionVwap` indicator with volume-weighted σ bands; `VwapStrategy` with
 three setups), `tools/vwap_lab.py` (driver through `backtest_lab`: costs
@@ -958,7 +955,7 @@ under "(PR #87)", which is how the two came to look like duplicated work.
 - [ ] Add position limit enforcement (reject trades that violate caps)
 - [ ] Success: Can trade all three strategies without blowing up
 
-*VWAP lab:*
+*VWAP lab (PR #111):*
 - [x] `SessionVwap` + `VwapStrategy` (fade / pullback / cross-as-control) + confirms
 - [x] `tools/vwap_lab.py` — costs, bps, per-setup two-vendor noise floor
 - [x] `pine/vwap_strategy.pine` for TradingView paper trading
