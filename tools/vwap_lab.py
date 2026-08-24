@@ -1,0 +1,254 @@
+"""Run the VWAP setups over one or two feeds and say what survived.
+
+The strategy lives in ``pwb_toolbox.backtesting.vwap``; this is the driver
+that holds it to the house standard from ``tools/backtest_lab.py``: costs are
+always charged, results are normalised to basis points of price, and -- when a
+second vendor's feed of the same instrument is supplied -- every setup has to
+clear the two-vendor noise floor before its number means anything.
+
+The crossover setup is run on purpose as a control. The published parameter
+sweeps found it worthless, so the expected reading of the table is fade and/or
+pullback with a real edge and cross without one; a run where cross wins is
+evidence about the harness or the data, not about the market.
+
+Single feed, ES minute bars from histdata::
+
+    python tools/vwap_lab.py SPXUSD.csv --vendor histdata --mintick 0.25
+
+Both vendors, per-year, with the confirms on::
+
+    python tools/vwap_lab.py SPXUSD.csv --vendor histdata \
+        --second SPX_oanda.csv --second-vendor oanda \
+        --rvol-min 1.5 --day-type-bp 30 --ma-len 200
+
+Crypto (24/7, UTC-midnight anchor -- a convention, not a fact)::
+
+    python tools/vwap_lab.py BTC.csv --vendor generic --crypto --mintick 0.5
+
+VWAP needs volume. Feeds that carry none (histdata index CFDs do this) make
+the indicator degrade to TWAP; the zero-volume share is printed so that run
+is read for what it is.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from pwb_toolbox.backtesting.vwap import SETUPS, VwapStrategy
+from tools.backtest_lab import (
+    KNOWN_FEED_TIMEZONES,
+    backtest,
+    noise_floor,
+    read_generic,
+    read_histdata,
+    to_bars,
+)
+
+
+def load_feed(path, vendor, tz=None, time_column="time"):
+    """One vendor's file -> naive-UTC OHLCV frame, via the lab's loaders."""
+    if vendor == "histdata":
+        return read_histdata(path, tz=tz or KNOWN_FEED_TIMEZONES["histdata"])
+    return read_generic(
+        path, tz=tz or KNOWN_FEED_TIMEZONES.get(vendor, "UTC"), time_column=time_column
+    )
+
+
+def zero_volume_share(frame) -> float:
+    """The fraction of bars carrying no volume -- the TWAP-degeneracy gauge."""
+    if not len(frame):
+        return 0.0
+    return float((frame["volume"] <= 0).mean())
+
+
+def per_year(frame, min_bars=500):
+    """Split a frame by calendar year, dropping stubs too short to mean much."""
+    return {
+        int(year): sub
+        for year, sub in frame.groupby(frame.index.year)
+        if len(sub) >= min_bars
+    }
+
+
+def run_setup(frame, setup, mintick, minutes, **params):
+    """One setup over one frame, costs charged, via the lab's ``backtest``."""
+    return backtest(
+        frame, VwapStrategy, mintick=mintick, minutes=minutes, setup=setup, **params
+    )
+
+
+def run_lab(frame, setups, mintick, minutes, second=None, min_bars=500, **params):
+    """Every requested setup over one feed, and the noise floor when two.
+
+    Returns ``{setup: {"result": Result, "floor": NoiseFloor | None}}``. With
+    a second feed, per-year results from both vendors feed ``noise_floor``;
+    the headline Result still comes from the first feed, which is arbitrary
+    and exactly why the floor verdict is printed beside it.
+    """
+    out = {}
+    years_a = per_year(frame, min_bars) if second is not None else {}
+    years_b = per_year(second, min_bars) if second is not None else {}
+    for setup in setups:
+        result = run_setup(frame, setup, mintick, minutes, **params)
+        floor = None
+        if second is not None:
+            a = {
+                y: run_setup(sub, setup, mintick, minutes, **params)
+                for y, sub in years_a.items()
+            }
+            b = {
+                y: run_setup(sub, setup, mintick, minutes, **params)
+                for y, sub in years_b.items()
+            }
+            common = set(a) & set(b)
+            if len(common) >= 2:
+                floor = noise_floor(
+                    {y: a[y] for y in common}, {y: b[y] for y in common}
+                )
+        out[setup] = {"result": result, "floor": floor}
+    return out
+
+
+def trades_as_records(trade_log, symbol):
+    """Closed trades in the shape the night lab's arithmetic reads.
+
+    Same contract as ``reversal_15m_sim.trades_as_records``: entry/stop/exit
+    and direction are what ``night_lab.trade_r`` computes R from, the lane
+    keeps sim trades distinguishable in leak-mining, and the timestamps carry
+    the patterns leaks are mined over.
+    """
+    records = []
+    for i, t in enumerate(trade_log):
+        records.append(
+            {
+                "id": f"sim-vwap-{i}",
+                "lane": "sim-vwap",
+                "symbol": symbol,
+                "direction": t["direction"],
+                "status": "closed",
+                "entry": t["entry"],
+                "stop": t["stop"],
+                "exit": t["exit"],
+                "opened": t["opened"],
+                "closed": t["closed"],
+                "reason": t["reason"],
+            }
+        )
+    return records
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("csv", help="bar file from the primary vendor")
+    ap.add_argument(
+        "--vendor",
+        default="generic",
+        help="histdata | oanda | generic (decides loader and timezone)",
+    )
+    ap.add_argument("--tz", default=None, help="override the vendor's known timezone")
+    ap.add_argument("--second", help="the same instrument from a second vendor")
+    ap.add_argument("--second-vendor", default="generic")
+    ap.add_argument("--second-tz", default=None)
+    ap.add_argument("--minutes", type=int, default=5, help="bar size to resample to")
+    ap.add_argument("--mintick", type=float, default=0.25)
+    ap.add_argument(
+        "--setups",
+        default=",".join(SETUPS),
+        help=f"comma-separated subset of {', '.join(SETUPS)}",
+    )
+    ap.add_argument("--band-k", type=float, default=2.0)
+    ap.add_argument("--stop-k", type=float, default=1.0)
+    ap.add_argument("--session-start", default="09:30")
+    ap.add_argument("--session-end", default="15:55")
+    ap.add_argument(
+        "--crypto",
+        action="store_true",
+        help="24/7 mode: UTC timezone, no session filter, UTC-midnight anchor",
+    )
+    ap.add_argument(
+        "--anchor",
+        default=None,
+        help="anchored-VWAP mode: naive-UTC ISO timestamp to anchor at "
+        "(pairs naturally with --setups pullback)",
+    )
+    ap.add_argument("--rvol-min", type=float, default=0.0)
+    ap.add_argument("--day-type-bp", type=float, default=0.0)
+    ap.add_argument("--ma-len", type=int, default=0)
+    ap.add_argument(
+        "--rsi", type=int, default=0, metavar="LEN", help="RSI control gate on fades"
+    )
+    ap.add_argument("--symbol", default=None, help="symbol label on exported trades")
+    ap.add_argument(
+        "--trades-out",
+        metavar="PATH",
+        help="write closed trades as JSON for the night lab (plan --sim)",
+    )
+    args = ap.parse_args(argv)
+
+    frame = to_bars(load_feed(args.csv, args.vendor, tz=args.tz), minutes=args.minutes)
+    second = None
+    if args.second:
+        second = to_bars(
+            load_feed(args.second, args.second_vendor, tz=args.second_tz),
+            minutes=args.minutes,
+        )
+
+    zero_share = zero_volume_share(frame)
+    if zero_share > 0.5:
+        print(
+            f"WARNING: {100 * zero_share:.0f}% of bars carry zero volume -- "
+            "this VWAP is a TWAP wearing the name. Read the numbers accordingly."
+        )
+
+    params = dict(
+        band_k=args.band_k,
+        stop_k=args.stop_k,
+        session_start=args.session_start,
+        session_end=args.session_end,
+        rvol_min=args.rvol_min,
+        day_type_bp=args.day_type_bp,
+        ma_len=args.ma_len,
+        rsi_len=args.rsi,
+        anchor=args.anchor,
+    )
+    if args.crypto:
+        params.update(tz="UTC", rth_only=False)
+
+    setups = [s.strip() for s in args.setups.split(",") if s.strip()]
+    results = run_lab(
+        frame, setups, args.mintick, args.minutes, second=second, **params
+    )
+
+    print(f"{'setup':<10} {'trades':>6} {'win%':>6} {'bps':>8}  noise floor")
+    for setup, row in results.items():
+        r = row["result"]
+        floor = row["floor"]
+        verdict = str(floor) if floor is not None else "-- (one feed: unjudged)"
+        print(f"{setup:<10} {r.trades:>6} {r.win_rate:>6.1f} {r.bps:>8.0f}  {verdict}")
+    if "cross" in results and results["cross"]["result"].bps > 0:
+        print(
+            "\nNote: the crossover control came out positive. The published "
+            "sweeps found it worthless -- before believing any row above, "
+            "work out why the control passed."
+        )
+
+    if args.trades_out:
+        logs = []
+        for setup, row in results.items():
+            strat = row["result"].strategy
+            if strat is not None:
+                logs.extend(trades_as_records(strat.trade_log, args.symbol or "VWAP"))
+        Path(args.trades_out).write_text(
+            json.dumps({"trades": logs}, indent=2), encoding="utf-8"
+        )
+        print(f"\n{len(logs)} closed trade(s) -> {args.trades_out}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

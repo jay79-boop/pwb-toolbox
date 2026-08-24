@@ -50,6 +50,35 @@ flatten time and reward:risk.
   do not change the trade count; set them to zero in the strategy properties if you want
   the gross figures.
 
+## `vwap_strategy.pine`
+
+The three VWAP setups from `pwb_toolbox/backtesting/vwap.py`, as one TradingView
+strategy: **fade** (a close outside the ±kσ band enters toward VWAP — the setup
+with empirical support), **pullback** (touch of VWAP from the prior close's side,
+ride toward the far band), and **cross** (close crosses VWAP, stop-and-reverse —
+the retail favorite, kept as a control because the published sweeps found it
+worthless; distrust any run where it wins).
+
+Two things to know before reading it:
+
+- **VWAP is accumulated by hand from the session input (default `0930-1555`),
+  not taken from `ta.vwap`.** `ta.vwap` resets at the instrument's session
+  boundary — 18:00 ET on CME futures — while the fade numbers this implements
+  are quoted off a 09:30 anchor. Hand accumulation keeps this file and the
+  Python strategy computing the same line, which is the whole point of having
+  both.
+- **The Python side is the executable reading.** Pine cannot run in a
+  container, so `tests/test_vwap.py` pins every rule (band math, session
+  reset, the gates, the flatten) against hand-built bars through a real
+  cerebro, and `tools/vwap_lab.py` is where the setups face costs and the
+  two-vendor noise floor. Change a rule in one file, change it in the other.
+
+Inputs cover the setup selector, band and stop widths in σ, the session, warmup
+minutes, and the four confirms (relative volume, first-30-minute day-type, MA
+side, RSI control — each off by default so every gate's cost is measurable).
+Defaults include costs: $2.50 per contract per side and 1 tick of slippage.
+The anchored-VWAP (swing) variant is Python-only for now: `vwap_lab --anchor`.
+
 ### Verifying a change
 
 `tools/reversal_15m_sim.py` is an executable second reading of the same rules, and

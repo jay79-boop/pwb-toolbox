@@ -141,6 +141,15 @@ A worked example, for this repo's 21st MCP key:
   correctly (see "Backtesting" below), normalises to basis points, and compares
   two vendors of the same instrument — the check that decides whether a
   single-instrument result meant anything
+- `tools/vwap_lab.py` — runs the VWAP setups (band-fade mean reversion,
+  pullback, and the crossover kept as a control expected to fail) over one or
+  two vendor feeds through `backtest_lab`'s cost-charging and noise-floor
+  machinery. The strategy itself is `pwb_toolbox/backtesting/vwap.py`
+  (session/anchored VWAP with volume-weighted σ bands + `VwapStrategy`), the
+  TradingView reading is `pine/vwap_strategy.pine`, and the evidence behind
+  the setup choices is sourced in `docs/trading-wisdom.md`. Warns when a feed
+  carries no volume (histdata index CFDs), because VWAP silently degrades to
+  TWAP there
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
@@ -715,6 +724,32 @@ disagrees with GitHub, believe GitHub and fix this.
 
 ## Decision Log
 
+### [2026-08-24] VWAP lab: the fade as candidate, the crossover as control
+**Decision:** Add the VWAP strategy family — `pwb_toolbox/backtesting/vwap.py`
+(`SessionVwap` indicator with volume-weighted σ bands; `VwapStrategy` with
+three setups), `tools/vwap_lab.py` (driver through `backtest_lab`: costs
+charged, bps-normalised, two-vendor noise floor per setup), and
+`pine/vwap_strategy.pine` (the TradingView reading of the same rules). A
+sourced VWAP section joins `docs/trading-wisdom.md` via this PR under the
+propose-then-approve contract.
+**Why these setups:** VWAP's peer-reviewed pedigree is execution benchmarking
+(Berkowitz/Logue/Noser 1988) — institutions are graded against it, so real
+order flow sits at the level. The practitioner evidence points at band-fade
+mean reversion (~60–63% win rates at ±2σ in liquid names; dominant in the
+largest published parameter sweep) and at the crossover being worthless
+(zero significant configurations in the same sweep). So fade and pullback
+are the candidates and **the crossover ships as a control expected to fail**
+— the lab prints a warning if the control comes out positive, because that
+is evidence about the harness, not the market.
+**Confirms:** relative volume, first-30-minute day-type (market intraday
+momentum, Gao/Han/Li/Zhou JFE 2018), MA side gate, RSI as a
+folklore-measuring control. Each off by default so every gate's cost is
+measurable separately.
+**Honesty notes baked in:** zero-volume feeds (histdata index CFDs) degrade
+VWAP to TWAP and the lab says so; the crypto session anchor (UTC midnight)
+is a convention, not a fact; no number is believed until it clears the
+vendor noise floor, and clearing it is necessary, nowhere near sufficient.
+
 ### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
 **Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the
 sector ETFs, index baselines, crypto and the owner's own names, with a
@@ -893,6 +928,13 @@ under "(PR #87)", which is how the two came to look like duplicated work.
 - [ ] Add live IB position feed + alerts on >80% margin usage
 - [ ] Add position limit enforcement (reject trades that violate caps)
 - [ ] Success: Can trade all three strategies without blowing up
+
+*VWAP lab:*
+- [x] `SessionVwap` + `VwapStrategy` (fade / pullback / cross-as-control) + confirms
+- [x] `tools/vwap_lab.py` — costs, bps, per-setup two-vendor noise floor
+- [x] `pine/vwap_strategy.pine` for TradingView paper trading
+- [ ] Run on real ES bars from both vendors (owner's machine — feeds live there)
+- [ ] Success: fade clears the noise floor and the crossover control fails
 
 *15-Minute Reversal (PR #71):*
 - [ ] Finish strategy logic (entry, exit, hold conditions)

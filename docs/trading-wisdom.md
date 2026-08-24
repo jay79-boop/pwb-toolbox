@@ -117,6 +117,47 @@ Honest summary: a real but shrinking, crash-prone edge concentrated in
 liquid majors. Good enough to rank candidates for *paper* trades and to
 practice the discipline loop; nowhere near good enough to skip the gates.
 
+## VWAP: what the evidence supports
+
+What `pwb_toolbox/backtesting/vwap.py` and `tools/vwap_lab.py` implement,
+and why:
+
+- **VWAP's pedigree is execution, not prediction.** It entered the
+  literature as the benchmark institutional executions are graded against
+  (Berkowitz, Logue & Noser, *J. Finance* 1988), and the peer-reviewed VWAP
+  literature since is almost entirely about executing *at* it — volume-curve
+  modelling, optimal execution schedules. That is precisely its claim to
+  significance as a level: institutions are measured against it, so real
+  order flow congregates around it in a way no oscillator line can claim.
+- **Mean reversion from the deviation bands is the flavor with support —
+  practitioner-grade support.** The largest published parameter sweep
+  (~6M configurations, Bonferroni-corrected) found band-fade mean reversion
+  dominant among VWAP setups, and band-fade backtests on liquid names
+  cluster around 60–63% win rates at ±2σ. None of this is top-journal,
+  out-of-sample evidence like the crypto momentum papers: price it as a
+  hypothesis, assume the published edge has decayed by half, and make it
+  clear the vendor noise floor before believing a number.
+- **The VWAP crossover — the popular retail version — produced zero
+  statistically significant configurations** in that same sweep. It is kept
+  in the lab as a control expected to fail: a harness that flatters the
+  known-dead setup is a broken harness, and that check is cheaper than any
+  amount of arguing with a backtest.
+- **The one peer-reviewed intraday companion is day-type.** Market intraday
+  momentum (Gao, Han, Li & Zhou, *J. Financial Economics* 2018): the first
+  half-hour's return predicts the last. Used here as a regime switch — a
+  trend day is not a day to fade.
+- **Confirms keep their existing evidence status.** Relative volume rides on
+  volume being a documented characteristic (JF 2022, cited above); MA trend
+  filters have out-of-sample support (Detzel et al. 2021, cited above); RSI
+  stays classified as folklore and is wired into the lab only as a control,
+  to measure whether it adds anything beyond the stretch it re-encodes.
+- **Two data caveats are load-bearing.** VWAP needs real volume, and several
+  feeds here (histdata index CFDs) carry none — the indicator then degrades
+  to TWAP and the lab prints the zero-volume share so the result is read as
+  what it is. And on 24/7 crypto the session anchor is a *convention*
+  (UTC midnight here), not a market fact; an edge that survives only one
+  anchor choice is an artifact.
+
 ## Iron condors: venue, construction, and the honest caveat
 
 **Venue: SPX — or XSP at small size.** Not SPY, not single names, not
