@@ -388,6 +388,64 @@ def _month_window(year: int, month: int) -> tuple[date, date]:
     return start, end
 
 
+def _run_bounds(months: list[int], today: date) -> tuple[date, date]:
+    """Start and end dates of the window's current-or-next occurrence.
+
+    Handles runs that wrap the year end (Nov-Apr): the start month is the one
+    whose predecessor sits outside the run, the end month the one whose
+    successor does. When today falls inside an occurrence, the bounds are for
+    that occurrence -- a wrapped run entered in January started last
+    calendar year.
+    """
+    start_month = next(m for m in months if ((m - 2) % 12) + 1 not in months)
+    end_month = next(m for m in months if (m % 12) + 1 not in months)
+    if today.month in months:
+        start_year = today.year - (start_month > today.month)
+    else:
+        start_year = today.year + (date(today.year, start_month, 1) <= today)
+    start = date(start_year, start_month, 1)
+    end = _month_window(start_year + (end_month < start_month), end_month)[1]
+    return start, end
+
+
+def folklore_now(
+    verdicts: list[dict], today: date, horizon: int = ENTER_LEAVE_DAYS
+) -> dict:
+    """HELD folklore windows, sorted the same way the screener sorts cells.
+
+    This exists because the first real scan produced exactly one finding --
+    the XLE spring run, HELD -- and it never reached the screener: the now
+    panel keyed on convicted grid cells only, so the lab's single real
+    discovery would have stayed buried in a table until someone remembered
+    it in February. A held claim is a pre-registered window with decades
+    behind it; it belongs where the owner will act on it.
+    """
+    out = {"in": [], "entering": [], "leaving": []}
+    for f in verdicts:
+        if f.get("verdict") != "HELD":
+            continue
+        start, end = _run_bounds(f["months"], today)
+        entry = {
+            "symbol": f["symbol"],
+            "label": f["name"],
+            "kind": "folklore",
+            "direction": "bullish" if f["direction"] == "up" else "bearish",
+            "mean_pct": f.get("mean_pct", 0.0),
+            "hit_rate": None,
+            "month": f"{MONTH_NAMES[start.month - 1]}-{MONTH_NAMES[end.month - 1]}",
+        }
+        if start <= today <= end:
+            days_left = (end - today).days
+            entry["days_left"] = days_left
+            (out["leaving"] if days_left <= horizon else out["in"]).append(entry)
+        else:
+            days_until = (start - today).days
+            if 0 < days_until <= horizon:
+                entry["days_until"] = days_until
+                out["entering"].append(entry)
+    return out
+
+
 def now_windows(
     cells: list[dict], today: date, horizon: int = ENTER_LEAVE_DAYS
 ) -> dict:
@@ -520,12 +578,17 @@ def compute(all_closes: dict[str, dict[date, float]], today: date) -> dict:
     for sym in sorted(all_closes):
         cells.extend(cell_stats(all_closes[sym], sym, permutations=permutations))
     assign_tiers(cells)
+    folklore = judge_folklore(all_closes)
+    now = now_windows(cells, today)
+    for bucket, entries in folklore_now(folklore, today).items():
+        now[bucket].extend(entries)
+        now[bucket].sort(key=lambda e: -abs(e.get("mean_pct") or 0))
     return {
         "generated": today.isoformat(),
         "symbols": sorted(all_closes),
         "cells": cells,
-        "folklore": judge_folklore(all_closes),
-        "now": now_windows(cells, today),
+        "folklore": folklore,
+        "now": now,
         "paths": {
             sym: average_year_path(all_closes[sym]) for sym in sorted(all_closes)
         },
@@ -688,6 +751,16 @@ def cmd_context(args):
         f"over {current['n_years']}y, hit rate {current['hit_rate']:.0%}, "
         f"p={current['p']}"
     )
+    for f in scan.get("folklore", []):
+        if f.get("verdict") == "HELD" and f["symbol"] == sym:
+            if today.month in f["months"]:
+                print(f"HELD window active: {f['name']} ({f['mean_pct']:+}%/mo).")
+            else:
+                start, _end = _run_bounds(f["months"], today)
+                print(
+                    f"HELD window ahead: {f['name']} begins "
+                    f"{MONTH_NAMES[start.month - 1]} {start.year}."
+                )
     if tier == CONVICTED:
         side = "strong" if current["mean"] > 0 else "weak"
         print(f"{line} — CONVICTED {side} month.")
@@ -875,7 +948,7 @@ document.getElementById("sub").textContent =
     for (const e of entries) {
       const row = el("div", "entry");
       row.appendChild(el("span", "chip " + (e.direction === "bullish" ? "up" : "down"),
-        e.symbol + " " + e.direction));
+        e.symbol + " " + e.direction + (e.kind === "folklore" ? " (folklore held)" : "")));
       const when = e.days_left !== undefined ? e.days_left + "d left"
                  : e.days_until !== undefined ? "in " + e.days_until + "d" : e.month;
       row.appendChild(el("span", "muted",

@@ -61,6 +61,11 @@ quietly waving it through.
   pre-trade pack and the desk agent quote when a position is opened against
   its own season.
 
+Held folklore windows flow into the now panel, the watchlist and `context`
+alongside convicted cells, labeled as folklore. The first real scan's only
+finding — the XLE spring run — taught this lesson: a discovery that lives
+only in a verdict table is a discovery nobody acts on.
+
 `fetch` pulls max-history daily closes (owner's machine; the cloud proxy
 blocks Yahoo). Add your own names in `season/universe.txt`, one per line.
 

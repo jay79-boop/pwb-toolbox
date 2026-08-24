@@ -373,3 +373,97 @@ def test_compute_reports_the_scaled_permutation_count(tmp_path):
     closes = {"AAA": synthetic_closes(strong_month=3, seed=1)}
     scan = compute(closes, date(2026, 3, 10))
     assert scan["gates"]["permutations"] == needed_permutations(12)
+
+
+# ---------------------------------------------------------------------------
+# Held folklore reaches the screener. The first real scan's only finding --
+# the XLE spring run -- never surfaced in the now panel or the watchlist,
+# because both keyed on convicted grid cells. A held, pre-registered window
+# now flows into the same in/entering/leaving buckets.
+# ---------------------------------------------------------------------------
+
+from tools.season_scan import folklore_now
+
+
+def held(months, symbol="XLE", direction="up", name="Energy spring run"):
+    return {
+        "verdict": "HELD",
+        "symbol": symbol,
+        "name": name,
+        "months": months,
+        "direction": direction,
+        "mean_pct": 1.98,
+    }
+
+
+def test_mid_window_is_in_with_the_window_end_in_sight():
+    now = folklore_now([held([2, 3, 4])], date(2026, 3, 10))
+    entry = now["in"][0]
+    assert entry["symbol"] == "XLE" and entry["kind"] == "folklore"
+    assert entry["days_left"] == (date(2026, 4, 30) - date(2026, 3, 10)).days
+    assert entry["month"] == "Feb-Apr"
+
+
+def test_window_tail_moves_to_leaving():
+    now = folklore_now([held([2, 3, 4])], date(2026, 4, 25))
+    assert now["leaving"][0]["days_left"] == 5
+    assert not now["in"]
+
+
+def test_upcoming_window_is_entering():
+    now = folklore_now([held([2, 3, 4])], date(2026, 1, 25))
+    assert now["entering"][0]["days_until"] == 7
+
+
+def test_a_wrapped_window_entered_after_new_year_knows_it_started_last_year():
+    # Nov-Apr, standing in January: the occurrence began last November and
+    # ends this April -- the case naive year arithmetic gets wrong.
+    now = folklore_now([held([11, 12, 1, 2, 3, 4])], date(2026, 1, 10))
+    entry = now["in"][0]
+    assert entry["days_left"] == (date(2026, 4, 30) - date(2026, 1, 10)).days
+    assert entry["month"] == "Nov-Apr"
+
+
+def test_a_wrapped_window_is_entered_from_late_october():
+    now = folklore_now([held([11, 12, 1, 2, 3, 4])], date(2026, 10, 25))
+    assert now["entering"][0]["days_until"] == 7
+
+
+def test_a_window_already_passed_this_year_points_at_next_year():
+    # Feb-Apr seen from August: not in, and the next start is >14d away.
+    now = folklore_now([held([2, 3, 4])], date(2026, 8, 23))
+    assert not now["in"] and not now["entering"] and not now["leaving"]
+
+
+def test_a_down_claim_reads_bearish():
+    now = folklore_now([held([9], direction="down")], date(2026, 9, 10))
+    assert now["in"][0]["direction"] == "bearish"
+
+
+def test_failed_and_insufficient_claims_stay_out_of_the_screener():
+    verdicts = [
+        dict(held([3]), verdict="FAILED"),
+        dict(held([3]), verdict="INSUFFICIENT"),
+    ]
+    now = folklore_now(verdicts, date(2026, 3, 10))
+    assert not now["in"] and not now["entering"] and not now["leaving"]
+
+
+def test_compute_merges_held_windows_into_now_and_the_watchlist_sees_them():
+    # Planted December strength on SPY makes Santa HELD; standing in
+    # mid-December the screener and the watchlist must both carry it.
+    data = {
+        "SPY": synthetic_closes(years=26, strong_month=12, seed=3),
+        "IWM": synthetic_closes(years=26, seed=4),
+        "XLE": synthetic_closes(years=26, seed=5),
+    }
+    scan = compute(data, date(2026, 12, 10))
+    folk_in = [e for e in scan["now"]["in"] if e.get("kind") == "folklore"]
+    assert any(e["symbol"] == "SPY" for e in folk_in)
+    watchlist = render_watchlist(scan)
+    in_section = watchlist.split("###")[1]
+    assert in_section.startswith("IN SEASON NOW") and "SPY" in in_section
+
+
+def test_the_report_labels_folklore_entries():
+    assert "folklore held" in render_report(scan_fixture())
