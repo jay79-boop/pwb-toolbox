@@ -106,3 +106,38 @@ and nothing else:
 
 `rate_limit_info.resetsAt` on any session gives the window boundary to filter
 against; `status: "rejected"` marks the sessions that hit the wall.
+
+## What was changed on 2026-08-24, and the catch in the fix
+
+Acted on the same day, with the owner's approval:
+
+- **Interrupted** the second live investigation session. It was running Opus at
+  `max` effort on the fresh window, re-deriving this same answer in parallel,
+  and had already spent $4.48 and opened a second pull request for it.
+- **Deleted `Re-check PR #111`** — self-re-armed hourly into the VWAP session,
+  fire time already in the past.
+- **Deleted the old `Spec desk: XRP/DOGE stop-target watch`** — self-re-armed
+  every three hours into the Kronos session. Its replacement had already existed
+  for thirteen hours; only the deletion was missing.
+- **Rebuilt the PR #78 check-in** as `25 13 * * *` with
+  `create_new_session_on_fire`, and deleted the persistent-session original.
+
+**The rebind is not free, and this is the part worth knowing before copying it.**
+A Routine created through the MCP tool stores no connector grants. Firing into a
+*persistent* session hides that — the session contributes its own tool surface,
+which is why the fleet heartbeats reached GitHub fine. A fresh session per fire
+has no such donor, so it starts **without `mcp__github__*`**: no CI status, no
+review comments. Plain `git` over the session proxy still works, so merging,
+resolving, validating and pushing all survive.
+
+So the trade is real: persistent sessions are expensive but well-equipped; fresh
+sessions are cheap but half-blind. The resolution is not to pick one — it is to
+**write the Routine's prompt so it states which steps need which tools, and
+degrades loudly**. The PR #78 prompt now opens by naming the capability it may
+lack, marks its git-only steps as the primary job, and forbids treating absent
+tooling as "nothing to do". The desk-agent weekly review had already reached the
+same shape independently, which is a fair sign it is the right one.
+
+The alternative — creating the Routine from the claude.ai routines UI, where
+connectors can be attached — is available if a scheduled job genuinely needs
+GitHub for its main purpose rather than its reporting.
