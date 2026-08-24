@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import math
+import os
 import statistics
 import time
 from typing import Dict, List, Optional, Sequence
@@ -41,6 +42,33 @@ from .config import OptimalQuoteConfig
 # Regular NYSE/Nasdaq session length; used to convert a daily volatility
 # estimate into the ticks-per-sqrt-second units `get_optimal_quote` expects.
 _SECONDS_PER_TRADING_SESSION = 6.5 * 3600
+
+# Interactive Brokers listens on a different port for paper and live accounts.
+# 4002 is the Gateway's paper port (this module's default) and 7497 is TWS's.
+# Orders on those ports cannot move real money, so they are never gated —
+# backtests, paper automation and the test suite run completely untouched.
+PAPER_PORTS = frozenset({4002, 7497})
+
+_LIVE_ORDER_ENV = "PWB_ALLOW_LIVE_ORDERS"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+class LiveOrderBlocked(RuntimeError):
+    """Raised when a live-account order is attempted without both unlocks.
+
+    Placing an order against a funded account is irreversible in a way nothing
+    else in this package is, so it takes two independent keys that are awkward
+    to supply by accident: an explicit ``allow_live_orders=True`` in the code
+    *and* ``PWB_ALLOW_LIVE_ORDERS`` set in the environment. A stray import, an
+    unattended scheduled run, or a config file someone flipped cannot satisfy
+    both.
+    """
+
+
+def _env_allows_live_orders() -> bool:
+    """True when ``PWB_ALLOW_LIVE_ORDERS`` is set to a truthy value."""
+
+    return os.environ.get(_LIVE_ORDER_ENV, "").strip().lower() in _TRUTHY
 
 
 def _sigma_from_closes(
@@ -124,12 +152,46 @@ class IBConnector:
         port: int = 4002,
         client_id: int = 1,
         market_data_type: int = 4,
+        allow_live_orders: bool = False,
     ) -> None:
         self.host = host
         self.port = port
         self.client_id = client_id
         self.market_data_type = market_data_type
+        self.allow_live_orders = allow_live_orders
         self.ib = IB()
+
+    # ------------------------------------------------------------------
+    # Live-order safety
+    # ------------------------------------------------------------------
+    def _assert_orders_allowed(self) -> None:
+        """Block live-account orders unless both unlocks are present.
+
+        Paper ports return immediately, so this is invisible to anything that
+        cannot move real money. Attributes are read defensively: an instance
+        built without ``__init__`` (as the tests do) fails closed rather than
+        raising ``AttributeError``.
+        """
+
+        port = getattr(self, "port", None)
+        if port in PAPER_PORTS:
+            return
+
+        missing = []
+        if not getattr(self, "allow_live_orders", False):
+            missing.append("pass allow_live_orders=True when constructing IBConnector")
+        if not _env_allows_live_orders():
+            missing.append(f"set {_LIVE_ORDER_ENV}=1 in the environment")
+        if not missing:
+            return
+
+        raise LiveOrderBlocked(
+            f"Refusing to send orders on port {port!r}, which is not a known "
+            f"paper port ({sorted(PAPER_PORTS)}). To trade a funded account, "
+            + " and ".join(missing)
+            + ". If this port is actually a paper account, supply both unlocks "
+            "as well — an unrecognised port is treated as live on purpose."
+        )
 
     # ------------------------------------------------------------------
     # Connection management
@@ -270,6 +332,8 @@ class IBConnector:
             Trade information for each successfully submitted order.
         """
 
+        self._assert_orders_allowed()
+
         trade_records: List[TradeRecord] = []
         for symbol, qty in orders.items():
             contract = Stock(symbol, "SMART", "USD")
@@ -352,6 +416,8 @@ class IBConnector:
             Trade information for each submitted order (including refreshes and
             the final market order if necessary).
         """
+
+        self._assert_orders_allowed()
 
         trade_records: List[TradeRecord] = []
         start_time = time.time()
