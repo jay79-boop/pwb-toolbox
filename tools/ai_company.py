@@ -873,7 +873,7 @@ body{margin:0;background:var(--bg);color:var(--fg);
   line-height:1.6;font-size:16px}
 .wrap{max-width:1080px;margin:0 auto;padding:48px 24px 96px}
 h1,h2,h3{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-weight:600;line-height:1.25;letter-spacing:-0.01em}
+  font-weight:600;line-height:1.25;letter-spacing:-0.01em;text-wrap:balance}
 h1{font-size:2rem;margin:0 0 8px}
 h2{font-size:1.25rem;margin:56px 0 4px;padding-top:24px;border-top:1px solid var(--border)}
 h3{font-size:1rem;margin:28px 0 8px}
@@ -882,7 +882,7 @@ p{margin:8px 0 16px;max-width:70ch}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:28px 0}
 .tile{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
 .tile .n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:1.9rem;font-weight:600;
-  display:block;line-height:1.1}
+  display:block;line-height:1.1;font-variant-numeric:tabular-nums}
 .tile .k{color:var(--muted-fg);font-size:.82rem;text-transform:uppercase;letter-spacing:.06em}
 .tile .s{color:var(--muted-fg);font-size:.86rem;margin-top:6px;display:block}
 .diagram{overflow-x:auto;margin:24px 0;background:var(--card);border:1px solid var(--border);
@@ -895,12 +895,14 @@ p{margin:8px 0 16px;max-width:70ch}
   color:var(--muted-fg)}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
 .scroll{overflow-x:auto;margin:10px 0}
+.scroll:focus-visible,.diagram:focus-visible{outline:2px solid var(--accent);
+  outline-offset:2px}
 th{text-align:left;font-weight:600;color:var(--muted-fg);font-size:.78rem;
   text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;
   border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:8px 10px;border-bottom:1px solid var(--muted);vertical-align:top}
 td.num{font-family:"JetBrains Mono",ui-monospace,monospace;color:var(--muted-fg);
-  width:2.5rem;text-align:right}
+  width:2.5rem;text-align:right;font-variant-numeric:tabular-nums}
 .badge{display:inline-block;font-size:.72rem;font-weight:600;padding:2px 7px;
   border-radius:20px;white-space:nowrap;
   font-family:"JetBrains Mono",ui-monospace,monospace}
