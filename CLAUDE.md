@@ -79,6 +79,24 @@ Two rules that are *not* in the skill:
   see which steps are already done, because an unticked list of five items and a
   half-finished one look identical. Sub-steps of a single item stay plain text
   underneath it; only the things they must actually *do* get a box.
+- **The block is also copied into the Action Ledger**, and that is the copy that
+  survives:
+
+      https://claude.ai/code/artifact/a9da0f16-1b7f-4658-a21f-70271be5c413
+
+  A checkbox in a terminal reply is text — there is nothing to click, and it
+  scrolls away with the session. The ledger is a published artifact holding the
+  `artifact` capability, so ticking a box republishes the page: the state *is*
+  the page, it follows them to another device, and **a tick costs no tokens
+  because it never involves a session at all.**
+
+  **Append to it; never start a second one.** Read it with the Artifact tool
+  (`action: "read"`, that URL), add your items to the state JSON in
+  `<script id="app-state">`, and republish with `url` set to that same address.
+  Items already ticked stay ticked. An item raised weeks ago staying visibly
+  open is the entire point — a fresh list every session is what they asked us to
+  stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
+  so they can tell at a glance which items are still theirs.
 
 ## Layout
 
