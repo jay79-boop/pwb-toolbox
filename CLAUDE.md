@@ -681,7 +681,7 @@ the field-notes #110 merged straight through on 2026-08-23/24.)
 | --- | --- | --- |
 | #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
 | #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
-| #109 | Agent-fleet critique, design, and operating protocol | merged `main` in and resolved the decision-log collision |
+| #109 | Agent-fleet critique, design, and operating protocol | **merged** 2026-08-24 (`42313c3`); fleet armed, see registry below |
 | #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
 
 **This block collided twice in one hour.** #108 and #110 both landed while
@@ -689,6 +689,38 @@ the field-notes #110 merged straight through on 2026-08-23/24.)
 point — the exact failure the fleet design calls out as why conversational
 state does not survive. Anything editing this block should merge `main`
 immediately before pushing, not at review time.
+
+## Fleet registry (armed 2026-08-24)
+
+The multi-agent fleet is **armed**. Protocol: the `agent-fleet` skill;
+rationale: `docs/agent-fleet.md` (PR #109). This registry is the ledger entry
+the design depends on — a restarted lead rehydrates from here, never from a
+peer's memory. Keep it current or the watchdogs are chasing ghosts.
+
+| Role | Session | Heartbeat Routine | Fires |
+| --- | --- | --- | --- |
+| Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | hourly at :28 |
+| Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | hourly at :58 |
+
+**The two heartbeats are staggered 30 minutes on purpose.** Both were created
+at `0 * * * *`, which the server anchors to the creation minute — so both
+landed on :28 and would have woken in the same second. Simultaneous watchdog
+wakes are the correlated-failure pattern this whole design exists to avoid,
+and they would also spike the token burn twice an hour instead of smoothing
+it. If either Routine is ever recreated, set the minute explicitly.
+
+**Unverified at arming time:** Routines created through the MCP tool store no
+connector grants, and the tool warned that the fired sessions may lack
+`mcp__*` tools. Because these fire into *persistent* sessions (mode 2) they
+should inherit that session's own tool surface, but this was not confirmed. A
+heartbeat that cannot reach GitHub or `list_sessions` fails silently and looks
+identical to "nothing changed" — so the first thing to check if the fleet
+seems quiet is whether the leads still have their tools.
+
+**Other Routines already on this account** (they are not fleet, do not restart
+them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
+review, the daily Grok merge, the monthly credit check. The fleet's two hourly
+wakes are additive to those — see the budget note in the skill.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
