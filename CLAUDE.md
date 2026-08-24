@@ -664,8 +664,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
-charged by default, prop-eval pricer). Last updated 2026-08-24.
+**Main Branch:** `42313c3` — the merge of #109 (agent-fleet critique, design
+and operating protocol). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -674,21 +674,33 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
-the field-notes #110 merged straight through on 2026-08-23/24.)
+**Open (3).** (#99–#101 merged; the night-lab/season-scan series #103–#108, the
+field-notes #110 and the agent-fleet #109 merged straight through on
+2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
-| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
-| #109 | Agent-fleet critique, design, and operating protocol | merged `main` in and resolved the decision-log collision |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
+| #78 | Desk agent and the risk model that sets its limits | conflicts on `CLAUDE.md`; **73 commits behind** `main` |
+| #102 | State-block update for the rest of the merge drain | conflicts on `CLAUDE.md`; 18 behind. Superseded by what has landed since — reconcile or close |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | CI green on its head; conflicts on `CLAUDE.md`; 4 behind |
 
-**This block collided twice in one hour.** #108 and #110 both landed while
-#109 was open, and both added a decision-log entry at the same insertion
-point — the exact failure the fleet design calls out as why conversational
-state does not survive. Anything editing this block should merge `main`
-immediately before pushing, not at review time.
+**Every open pull request conflicts with `main`, and every one of them
+conflicts on this file and nothing else.** Checked 2026-08-24 by merging each
+head against `main`: three for three, `CLAUDE.md` the sole conflicted path in
+all three. The earlier note said this block had collided twice in one hour
+(#108 and #110 landing while #109 was open, both adding a decision-log entry
+at the same insertion point). That undercounted and, more importantly,
+misdiagnosed it as bad luck on a busy day. It is not luck. Every branch that
+does real work also edits this block, the block is one dense region of prose,
+and git has no way to merge two rewrites of the same paragraph. The rate is
+structural and will hold as long as the block's shape does.
+
+The working rule stays **merge `main` immediately before pushing, not at
+review time** — it costs one resolution instead of one per stale day. But the
+rule is a mitigation, and the shape of this block is the actual defect. A
+split into an append-only PR log plus a small hand-edited summary would make
+most of these merges automatic; that is a change to the ledger's own design
+and belongs to the owner, not to a session passing through.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -704,13 +716,16 @@ rebuild something, check the decision log first.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
 **Keeping this honest:** this block is machine-read, so a stale copy actively
-misleads. Two lessons paid for already. Update it when a pull request opens,
+misleads. Three lessons paid for already. Update it when a pull request opens,
 merges or closes — not on a schedule; the version this replaced said "3 drafts
 in flight" while ten were open, and that is how two sessions built adjacent
-things without noticing each other. And file a decision-log entry under the
-pull request that actually carries the work: #90's entry, filed under #87, is
-the whole reason two different tools looked like one. When the count here
-disagrees with GitHub, believe GitHub and fix this.
+things without noticing each other. File a decision-log entry under the pull
+request that actually carries the work: #90's entry, filed under #87, is the
+whole reason two different tools looked like one. And **verify against GitHub
+before trusting a line here** — the version this replaced named four open pull
+requests an hour after one of the four had merged, and quoted a `main` SHA one
+merge old. When the count here disagrees with GitHub, believe GitHub and fix
+this.
 
 ## Tech Stack & Dependencies
 
