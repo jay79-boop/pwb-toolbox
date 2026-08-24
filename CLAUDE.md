@@ -237,6 +237,13 @@ A worked example, for this repo's 21st MCP key:
   it) alongside rr and sma-length, because a strategy can be fitted to a
   timeframe as easily as to a number
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
+  the patterns that exhaust a usage window: Routines that re-arm themselves into
+  a persistent session, wakes bound to a session too fat to load cheaply, and
+  too many sessions live at once. It will **not** derive a burn rate from a
+  single snapshot — session metadata reports lifetime totals, so a rate needs a
+  `--baseline` to diff against. Pure functions, tested on synthetic snapshots
+  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
@@ -286,7 +293,11 @@ A worked example, for this repo's 21st MCP key:
   DevTools Protocol — unrelated to the library, written down because the setup has
   traps that otherwise get rediscovered every time) and `agent-fleet.md` (critique
   and design of the owner's multi-agent fleet — the operating procedure itself is
-  the `agent-fleet` skill under `.claude/skills/`)
+  the `agent-fleet` skill under `.claude/skills/`) and the spend-safety pair —
+  `token-drain-2026-08-24.md` (what exhausted a five-hour window, measured
+  rather than guessed) and `spend-safety.md` (every surface that can reach a
+  card, ranked by worst case, and the five layers that bound them; the rules
+  themselves are the `spend-safety` skill)
 
 ## Environment
 
@@ -348,6 +359,7 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 python tools/prop_sim.py evaluate --risk 200  # price a prop eval (demo rules)
+python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs

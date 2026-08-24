@@ -13,6 +13,8 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-24 | [Guard the irreversible path, not the whole surface](2026-08-24-guard-the-irreversible-path-not-the-whole-surface.md) |
+| 2026-08-24 | [A $290 session that did no work, and the cap that follows](2026-08-24-a-290-session-that-did-no-work-and-the-cap-that-follows.md) |
 | 2026-08-24 | [The stream's second haul: the night, the timeframe, the model](2026-08-24-the-stream-s-second-haul-the-night-the-timeframe-the-model.md) |
 | 2026-08-24 | [The ledger's shape is the defect, and a clean merge proved it](2026-08-24-the-ledger-s-shape-is-the-defect-and-a-clean-merge-proved-it.md) |
 | 2026-08-24 | [The dollars were never dollars](2026-08-24-the-dollars-were-never-dollars.md) |
