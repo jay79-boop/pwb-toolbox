@@ -284,7 +284,9 @@ A worked example, for this repo's 21st MCP key:
   `index.html` (the published landing page; see "Design tooling" below) and
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
-  traps that otherwise get rediscovered every time)
+  traps that otherwise get rediscovered every time) and `agent-fleet.md` (critique
+  and design of the owner's multi-agent fleet — the operating procedure itself is
+  the `agent-fleet` skill under `.claude/skills/`)
 
 ## Environment
 
@@ -683,8 +685,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `8698ecf` — the merge of #98 (blueprint builder step editor,
-autosave, editable lists). Last updated 2026-08-23.
+**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
+charged by default, prop-eval pricer). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -693,14 +695,74 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).**
+**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
+the field-notes #110 merged straight through on 2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and 46 commits behind; another session was working it |
-| #99 | One shared `static/process-grammar.js`, plus process flows on the dashboard | level with `main`, green |
-| #100 | The night lab: unattended overnight stress testing on a local model | level with `main` |
-| #101 | This block | level with `main` |
+| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
+| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
+| #109 | Agent-fleet critique, design, and operating protocol | **merged** 2026-08-24 (`42313c3`); fleet armed, see registry below |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
+
+**This block collided twice in one hour.** #108 and #110 both landed while
+#109 was open, and both added a decision-log entry at the same insertion
+point — the exact failure the fleet design calls out as why conversational
+state does not survive. Anything editing this block should merge `main`
+immediately before pushing, not at review time.
+
+## Fleet registry (armed 2026-08-24)
+
+The multi-agent fleet is **armed**. Protocol: the `agent-fleet` skill;
+rationale: `docs/agent-fleet.md` (PR #109). This registry is the ledger entry
+the design depends on — a restarted lead rehydrates from here, never from a
+peer's memory. Keep it current or the watchdogs are chasing ghosts.
+
+| Role | Session | Heartbeat Routine | Fires |
+| --- | --- | --- | --- |
+| Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | `28 */4 * * *` |
+| Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | `58 2-22/4 * * *` |
+
+**A heartbeat costs about $3.30–$4.30, and that killed the hourly cadence.**
+Measured on the first wake of each lead: A $3.29, B $4.29, for a round that
+mostly just read the ledger and looked at PRs. Hourly for two leads is ~$180/day
+standing, before a single IC does any work — against an account that hit its
+usage limit twice on 2026-08-24. Cadence was cut to every 4 hours, alternating
+(~$45/day, a lead awake roughly every two hours). To go back to hourly:
+`update_trigger` with `28 * * * *` and `58 * * * *`. Do not restore hourly
+without a reason that is worth $135/day.
+
+The lesson generalises past this repo: a heartbeat that "does nothing" is not
+free, because reading the ledger and listing PRs is most of the cost. If the
+fleet needs tighter liveness than 4 hours, the cheap fix is a smaller check
+(one `list_sessions` call, no repo read) rather than a more frequent full wake.
+
+**Connector inheritance: confirmed working.** Both leads were fired manually at
+01:32 UTC and came back having read GitHub PRs and session state, so a Routine
+firing into a *persistent* session does inherit that session's MCP tools even
+though the Routine itself stores no connector grants. The warning at creation
+time is real but does not bite in mode 2. It would bite a
+`create_new_session_on_fire` Routine.
+
+**The two heartbeats are staggered on purpose.** Both were created
+at `0 * * * *`, which the server anchors to the creation minute — so both
+landed on :28 and would have woken in the same second. Simultaneous watchdog
+wakes are the correlated-failure pattern this whole design exists to avoid,
+and they would also spike the token burn twice an hour instead of smoothing
+it. If either Routine is ever recreated, set the minute explicitly.
+
+**Unverified at arming time:** Routines created through the MCP tool store no
+connector grants, and the tool warned that the fired sessions may lack
+`mcp__*` tools. Because these fire into *persistent* sessions (mode 2) they
+should inherit that session's own tool surface, but this was not confirmed. A
+heartbeat that cannot reach GitHub or `list_sessions` fails silently and looks
+identical to "nothing changed" — so the first thing to check if the fleet
+seems quiet is whether the leads still have their tools.
+
+**Other Routines already on this account** (they are not fleet, do not restart
+them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
+review, the daily Grok merge, the monthly credit check. The fleet's two hourly
+wakes are additive to those — see the budget note in the skill.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -790,6 +852,22 @@ docstring so it is not rediscovered as a finding.
 requests (#102, #112, #114) are already rewriting it, which is precisely the
 collision this file warns about; a fourth version would conflict with all of
 them and add nothing.
+
+### [2026-08-24] Agent fleet: liveness by scheduler, judgment by model (PR #109)
+**Decision:** Write the owner's multi-agent daily driver down and fix its
+architecture on paper before arming anything: `docs/agent-fleet.md` (critique
+and design) plus the `agent-fleet` skill (the operating procedure). The two
+lead agents stop being each other's watchdog — mutual restart cannot catch
+correlated failures, proven twice in one day when usage-limit outages stopped
+both leads and the task they were carrying at once. Liveness moves to hourly
+Routines with restart hysteresis; the leads keep cross-checking *decisions*.
+Durable state moves from SendMessage threads to the ledger (each repo's state
+block + PR state), so any restarted agent rehydrates from files. IC autonomy
+is gated by checkpoint artifacts — draft PR by the end of the first work
+block, CI green as the only "done" — not by time.
+**Deliberately not armed:** standing Routines burn tokens around the clock;
+arming is an explicit "arm the fleet" command, and the skill carries the
+steps.
 
 ### [2026-08-24] Stream intel: costs closed, prop evals priced
 **Decision:** A live stream's backtest-hygiene argument was distilled into
