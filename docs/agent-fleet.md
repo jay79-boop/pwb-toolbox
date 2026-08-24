@@ -92,7 +92,7 @@ ask what happened.
 | Watchdog | A cron **Routine** per lead: fires hourly, checks `list_sessions` last-activity and Routine `last_run`s, restarts what is actually dead |
 | Self check-in | `send_later` armed before a session goes quiet on open work |
 | IC verification | Draft PR + CI + `subscribe_pr_activity`; the PM babysits the PR, not the agent |
-| The ledger | Each repo's machine-read state block (here: CLAUDE.md's Operating System section) plus PR/branch state |
+| The ledger | Each repo's durable state files (here: `CLAUDE.md`, `docs/state.md`, `docs/decisions/`) plus PR/branch state queried live |
 | Escalation to human | The `## 🔴 NEEDS YOU` block, reserved for human-only items |
 
 The load-bearing change from the current setup: **liveness moves to the
@@ -106,7 +106,7 @@ heartbeats before any restart, and never restart a session that pushed or
 messaged within the last interval.
 
 Restart is cheap by design, because rehydration is a ledger read: a
-restarted lead reads the state blocks of its projects and `list_sessions`
+restarted lead reads the state files of its projects and `list_sessions`
 for its fleet and is current; a restarted IC reads its own draft PR and
 branch and loses at most one work block. The protocol details — role
 definitions, heartbeat cadence, checkpoint rules, write partitions,

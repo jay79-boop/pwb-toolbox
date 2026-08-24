@@ -99,7 +99,9 @@
       "mcp__tradingview__ui_find_element",
       "mcp__tradingview__ui_fullscreen",
       "mcp__tradingview__batch_run",
-      "mcp__tradingview__tv_update"
+      "mcp__tradingview__tv_update",
+      "mcp__Blotato__blotato_buy_credits",
+      "mcp__Windsor_ai__execute_action"
     ]
   },
   "hooks": {
