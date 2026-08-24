@@ -664,8 +664,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
-charged by default, prop-eval pricer). Last updated 2026-08-24.
+**Main Branch:** `52c04a9` — the merge of #115 (fleet heartbeat cut to
+4-hourly). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -674,25 +674,48 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
-the field-notes #110 merged straight through on 2026-08-23/24.)
+**Open (5).** (#99–#101 merged; the night-lab/season-scan series #103–#108, the
+field-notes #110, and the agent-fleet #109/#113/#115 all merged on 2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
-| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
-| #109 | Agent-fleet critique, design, and operating protocol | **merged** 2026-08-24 (`42313c3`); fleet armed, see registry below |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
+| #78 | Desk agent and the risk model that sets its limits | base still at `410f6b5`, ~2,460 lines over 18 files, far behind `main`, conflicts on `CLAUDE.md`. **Owned** by Routine `trig_01VHpiW6NQGMTYpfZDf8iV3v`, which checks it in daily at 13:25 UTC bound to the session that built it — do not merge-resolve it from another session, the two would fight for the branch |
+| #102 | State-block update for the rest of the merge drain | conflicts on `CLAUDE.md`. Its facts are now wrong (it claims `main` is `fe12415` and one PR is open). Superseded **except** for its honesty lesson, folded in below. Recommended: close |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | CI green at `396ae53`, draft, its session idle — waiting on the owner, not on an agent. **Merges clean and silently reverts this block; see below** |
+| #112 | Ledger correction by fleet lead A | superseded — its findings are folded in here. Recommended: close |
+| #114 | Ledger correction by fleet lead B | superseded — its findings are folded in here. Recommended: close |
 
-**This block collided twice in one hour.** #108 and #110 both landed while
-#109 was open, and both added a decision-log entry at the same insertion
-point — the exact failure the fleet design calls out as why conversational
-state does not survive. Anything editing this block should merge `main`
-immediately before pushing, not at review time.
+**Four of the five open branches conflict with `main`, and every one of them
+conflicts on this file and nothing else.** Verified 2026-08-24 by test-merging
+each head against `main` at `52c04a9`. An earlier version of this note called
+that bad luck on a busy day. It is not luck, and it is not the fleet: every
+branch that does real work also edits this block, the block is one dense region
+of prose, and git cannot merge two rewrites of the same paragraph.
+
+**The clean merge is the dangerous one, not the conflict.** #111 is the fifth
+branch, and it merges into current `main` with **zero conflicts** — then leaves
+this block claiming `main` is `1b11dca` (three merges stale) with four PRs open.
+Nothing warns anybody. A conflict stops you and demands a decision; a clean
+merge of two contradictory statements of fact just quietly picks one. So
+"merge `main` before pushing" is a real rule and still worth following, but it
+would not have caught this: there was nothing to notice.
+
+That makes the shape of this block the actual defect. A machine-read record of
+volatile facts should not live as free prose in the one file every branch edits
+— either derive the volatile parts from GitHub at read time, or split into an
+append-only log plus a small hand-edited summary so most merges become
+automatic. That is a change to the ledger's own design and belongs to the
+owner, not to a session passing through.
 
 ## Fleet registry (armed 2026-08-24)
 
-The multi-agent fleet is **armed**. Protocol: the `agent-fleet` skill;
+The multi-agent fleet is **PAUSED** as of 2026-08-24 01:44 UTC, at the owner's
+instruction. Both heartbeat Routines below are `enabled: false`; the two lead
+sessions still exist and hold their context, so resuming is two
+`update_trigger` calls with `enabled: true` and nothing has to be rebuilt.
+Everything below describes the armed configuration it will resume into.
+
+Protocol: the `agent-fleet` skill;
 rationale: `docs/agent-fleet.md` (PR #109). This registry is the ledger entry
 the design depends on — a restarted lead rehydrates from here, never from a
 peer's memory. Keep it current or the watchdogs are chasing ghosts.
@@ -740,8 +763,15 @@ seems quiet is whether the leads still have their tools.
 
 **Other Routines already on this account** (they are not fleet, do not restart
 them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
-review, the daily Grok merge, the monthly credit check. The fleet's two hourly
-wakes are additive to those — see the budget note in the skill.
+review, the daily Grok merge, the monthly credit check. The fleet's wakes are
+additive to those — see the budget note in the skill.
+
+**The big burn is long-running sessions, not Routines.** Two were still running
+when the fleet was armed: the Ollama/night-lab session at roughly $266 and the
+Kronos/spec-desk watcher at roughly $154. Either dwarfs the whole fleet's
+standing cost, so "is a Routine worth its burn" is the wrong first question —
+"is a session still running that should have finished" is the right one. Check
+`list_sessions` for long-lived sessions before trimming schedules.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -757,13 +787,28 @@ rebuild something, check the decision log first.
 - **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
 
 **Keeping this honest:** this block is machine-read, so a stale copy actively
-misleads. Two lessons paid for already. Update it when a pull request opens,
-merges or closes — not on a schedule; the version this replaced said "3 drafts
-in flight" while ten were open, and that is how two sessions built adjacent
-things without noticing each other. And file a decision-log entry under the
-pull request that actually carries the work: #90's entry, filed under #87, is
-the whole reason two different tools looked like one. When the count here
-disagrees with GitHub, believe GitHub and fix this.
+misleads. Four lessons paid for already.
+
+1. **Update it when a pull request opens, merges or closes — not on a
+   schedule.** The version this replaced said "3 drafts in flight" while ten
+   were open, and that is how two sessions built adjacent things without
+   noticing each other. This block went stale three times in one afternoon
+   while the backlog drained; that is the cost of the rule, and it is smaller
+   than the cost of skipping it.
+2. **File a decision-log entry under the pull request that actually carries
+   the work.** #90's entry, filed under #87, is the whole reason two different
+   tools looked like one built twice.
+3. **A branch left alone does not hold still.** #78 went from seventeen commits
+   behind and merging cleanly to conflicting and far behind in a single
+   afternoon, without anybody touching it, purely because everything around it
+   landed. (Salvaged from #102, which is otherwise superseded.)
+4. **Verify against GitHub before trusting a line here, including the ones
+   that merged without complaint.** A previous version named four open pull
+   requests an hour after one had merged and quoted a `main` SHA one merge old
+   — and #111 shows a branch can revert this whole block with no conflict at
+   all. A clean merge is not evidence the facts survived.
+
+When the count here disagrees with GitHub, believe GitHub and fix this.
 
 ## Tech Stack & Dependencies
 
@@ -784,6 +829,35 @@ disagrees with GitHub, believe GitHub and fix this.
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-24] The ledger's shape is the defect, and a clean merge proved it
+**Decision:** Fold the two competing lead-agent ledger corrections (#112, #114)
+into one update, and record what arming the fleet measured. Fleet **paused**
+at the owner's instruction the same night — Routines disabled, lead sessions
+kept, resumable with two calls.
+**What the collision actually was:** four of five open branches conflicted with
+`main`, every one of them on `CLAUDE.md` and nothing else. Not bad luck on a
+busy day and not the fleet's fault: every branch that does real work edits this
+block, it is one dense region of prose, and git cannot merge two rewrites of
+the same paragraph.
+**The finding that matters is the fifth branch.** #111 merges into `main` with
+zero conflicts and leaves this block asserting a `main` SHA three merges stale
+with four PRs open. Nothing warns anybody. The conflicts were the safe failure;
+the clean merge is the dangerous one, because "merge `main` before pushing"
+cannot catch a merge with nothing to notice. So the fix is structural — derive
+the volatile facts from GitHub at read time, or split into an append-only log
+plus a small hand-edited summary — and it is the owner's call, not a passing
+session's.
+**Measured while arming:** a lead's heartbeat wake costs $3.29–$4.29, almost
+all of it reading the ledger and listing PRs. Two leads hourly is ~$180/day
+standing before any IC works, which is why the cadence went to 4-hourly (#115)
+before the pause. But two long-running sessions ($266 and $154) each dwarfed
+the entire fleet schedule — so the first cost question is always whether a
+session is still running that should have finished, not whether a Routine is
+too frequent.
+**Also confirmed:** a Routine firing into a *persistent* session inherits that
+session's MCP tools despite storing no connector grants. The creation-time
+warning is real but applies to `create_new_session_on_fire`.
 
 ### [2026-08-24] Agent fleet: liveness by scheduler, judgment by model (PR #109)
 **Decision:** Write the owner's multi-agent daily driver down and fix its
