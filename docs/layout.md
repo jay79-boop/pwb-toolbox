@@ -164,7 +164,11 @@ top-level directories and points here for the detail.
   too many sessions live at once. It will **not** derive a burn rate from a
   single snapshot — session metadata reports lifetime totals, so a rate needs a
   `--baseline` to diff against. Pure functions, tested on synthetic snapshots
-  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`
+  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`. Also flags
+  two enabled Routines running the same job on the same cron, and its `session`
+  command warns — from the session's own transcript, costing no tokens — when
+  the current session has itself grown expensive to keep going. Wired to every
+  prompt by `.claude/hooks/session-size.sh`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and

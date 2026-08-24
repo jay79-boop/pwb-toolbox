@@ -70,8 +70,15 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-One rule that is *not* in the skill: if a step is also explained in prose above,
-it still gets repeated in the block. The block is the checklist of record.
+Two rules that are *not* in the skill:
+
+- **If a step is also explained in prose above, it still gets repeated in the
+  block.** The block is the checklist of record.
+- **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
+  Asked for 2026-08-24: they work through the block across sittings and need to
+  see which steps are already done, because an unticked list of five items and a
+  half-finished one look identical. Sub-steps of a single item stay plain text
+  underneath it; only the things they must actually *do* get a box.
 
 ## Layout
 
@@ -108,6 +115,11 @@ import of a third-party package fails in the first moments of a session, the
 install is most likely still running; re-run rather than treating it as a real
 failure. The hook is a no-op locally.
 
+`.claude/hooks/session-size.sh` runs on every prompt and warns once when this
+session's own accumulated context passes 10M, 25M and 50M cache reads. It reads
+the transcript the harness already writes, so it costs nothing — a spend warning
+that spends the window is not one worth having. Silent below the first tier.
+
 By hand:
 
 ```bash
@@ -141,6 +153,7 @@ pytest tests/test_skills.py -q    # skills: live paths, description budget
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
+python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
