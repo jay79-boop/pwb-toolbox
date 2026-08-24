@@ -103,6 +103,44 @@ it, pushes it, and states the problem in its final message. Logging is the last 
 gives up, not the first. The old prompt put that instruction at the end, where anything
 that stopped the run early also stopped the logging.
 
+## Monday's first scheduled run never fired, and would have failed if it had
+
+2026-08-24. Two independent faults, found together.
+
+**The task had never run.** `LastTaskResult` was `267011` — `SCHED_S_TASK_HAS_NOT_RUN`
+— with `LastRunTime` at the `11/30/1999` sentinel and zero missed runs, four hours
+after its 07:00 trigger. `Register-ScheduledTask` defaults to a `LogonType` of
+`Interactive`, meaning the task runs *only while the owner is signed in*; a 07:00
+job on a machine that sleeps overnight then quietly does nothing. The read-back now
+prints `State`, `LastTaskResult` and `LogonType` so this is visible at registration
+instead of a fortnight later.
+
+**And the checkout was on `main`, which does not carry the desk agent.** Other
+sessions switch branches in that working tree all day, and until this merges the
+agent exists on exactly one branch. A task pointed at a path inside that tree stops
+existing the moment somebody checks out something else — and then fails with no log,
+because the directory it would log to is on the branch that is missing.
+
+The second fault is the more instructive one, because it is the third time this
+system has failed by leaving nothing behind. Two changes:
+
+**The launcher is installed outside the repository.** `register_desk_agent.ps1`
+copies `run_job.ps1` to `%LOCALAPPDATA%\pwb-desk-agent\` and points the tasks
+there, passing `-RepoRoot` explicitly. The launcher then always exists whatever the
+checkout is doing, so it always runs, so a bad run always leaves evidence. Re-run
+the registration script after changing `run_job.ps1` — the copy is what executes.
+
+**Logs are written outside the repository too**, to
+`%LOCALAPPDATA%\pwb-desk-agent\logs\`, and the launcher refuses to start against a
+checkout that lacks `playbook.md` or the job file: it names the branch, says the
+agent is not on it, writes a `failed` record with blocker
+`desk-agent-not-present-on-branch`, and exits 2. Verified against a repo with the
+agent removed.
+
+**The real fix is still to merge.** Once the desk agent is on `main` it exists on
+every branch cut afterwards, and the guard above becomes a backstop rather than the
+thing standing between you and a working agent.
+
 ## Reading the log yourself
 
 ```bash

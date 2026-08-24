@@ -73,12 +73,27 @@ if (-not (Test-Path -LiteralPath $RepoRoot)) {
   Write-Host 'Pass -RepoRoot with the checkout you want the agent to run in.'
   exit 1
 }
-$runner = Join-Path $RepoRoot 'tools\desk_agent\run_job.ps1'
-if (-not (Test-Path -LiteralPath $runner)) {
-  Write-Host ("Runner not found: " + $runner)
+$source = Join-Path $RepoRoot 'tools\desk_agent\run_job.ps1'
+if (-not (Test-Path -LiteralPath $source)) {
+  Write-Host ("Runner not found: " + $source)
   Write-Host 'Check out the branch that adds it, then run this again.'
   exit 1
 }
+
+# Install a COPY of the launcher outside the repository and point the tasks at
+# that, rather than at a path inside a working tree whose branch nobody
+# controls. Other sessions switch branches in this checkout all day; a task
+# aimed inside it stops existing the moment one of them does. The copy always
+# exists, so the launcher always runs, so a bad run always leaves a log --
+# which is the difference between a diagnosable failure and silence.
+$installDir = Join-Path $env:LOCALAPPDATA 'pwb-desk-agent'
+if (-not (Test-Path -LiteralPath $installDir)) {
+  New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+}
+$runner = Join-Path $installDir 'run_job.ps1'
+Copy-Item -LiteralPath $source -Destination $runner -Force
+Write-Host ("Launcher installed at: " + $runner)
+Write-Host ("  (copied from " + $source + "; re-run this script after changing it)")
 
 # StartWhenAvailable is the flag whose absence silently eats overnight runs on a
 # machine that was asleep at the scheduled minute. AllowStartIfOnBatteries and
@@ -95,7 +110,7 @@ $registered = @()
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
 
-  $arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job ' + $j.Job
+  $arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job ' + $j.Job + ' -RepoRoot "' + $RepoRoot + '"'
   $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
                                     -Argument $arg `
                                     -WorkingDirectory $RepoRoot
@@ -139,11 +154,26 @@ foreach ($j in $jobs) {
   $next = if ($info -and $info.NextRunTime) { $info.NextRunTime } else { '(not scheduled)' }
   $swa = $task.Settings.StartWhenAvailable
   $count = @($task.Triggers).Count
-  Write-Host ("  OK        " + $name + "  (" + $count + " trigger(s))")
+  $last  = if ($info -and $info.LastRunTime) { $info.LastRunTime } else { '(never)' }
+  $rc    = if ($info) { $info.LastTaskResult } else { '?' }
+  Write-Host ("  " + $task.State.ToString().PadRight(9) + " " + $name + "  (" + $count + " trigger(s))")
   Write-Host ("            next run: " + $next)
+  Write-Host ("            last run: " + $last + "   result: " + $rc)
   Write-Host ("            StartWhenAvailable: " + $swa)
+  # LogonType decides whether this can fire while nobody is signed in. The
+  # default from Register-ScheduledTask is Interactive, which means it runs
+  # ONLY when the user is logged on -- a 07:00 task on a machine that sleeps
+  # overnight then quietly does nothing, which is exactly what happened.
+  $logon = $task.Principal.LogonType
+  Write-Host ("            LogonType: " + $logon + "   RunAs: " + $task.Principal.UserId)
+  if ("$logon" -eq 'Interactive') {
+    Write-Host '            NOTE: runs only while you are signed in.'
+  }
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'
+  }
+  if ("$rc" -eq '267011') {
+    Write-Host '            267011 = SCHED_S_TASK_HAS_NOT_RUN: it has never fired.'
   }
   $ok++
 }

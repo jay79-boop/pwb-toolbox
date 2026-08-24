@@ -38,7 +38,12 @@ $ErrorActionPreference = 'Stop'
 if (-not $RepoRoot) { $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "Repo root not found: $RepoRoot" }
 
-$logDir = Join-Path $RepoRoot 'tools\desk_agent\logs'
+# Logs live OUTSIDE the repo on purpose. A checkout sitting on the wrong branch
+# has no tools/desk_agent/ at all -- which is precisely the case where the
+# evidence matters most, and precisely when a repo-relative log path cannot be
+# written. Three silent failures in this system have now come from evidence
+# having nowhere to go.
+$logDir = Join-Path $env:LOCALAPPDATA 'pwb-desk-agent\logs'
 if (-not (Test-Path -LiteralPath $logDir)) {
   New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
@@ -96,6 +101,26 @@ if (-not $claude) {
 # a local timestamp goes into the log labelled as UTC and disagrees with
 # runs.jsonl, which is real UTC.
 Write-Log ("[" + (Get-Date).ToUniversalTime().ToString('u') + "] job=" + $Job + " repo=" + $RepoRoot)
+
+# The desk agent may simply not be on the branch this checkout has open. Other
+# sessions switch branches in this working tree constantly, and until the agent
+# is merged to main it exists on exactly one of them. Say so rather than dying
+# with no explanation: a task that fails with an empty log is indistinguishable
+# from a task that never fired, and telling those apart is the whole point.
+$playbook = Join-Path $RepoRoot 'tools\desk_agent\playbook.md'
+$jobFile  = Join-Path $RepoRoot ('tools\desk_agent\jobs\' + $Job + '.md')
+try { $branch = (& git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) } catch { $branch = '(unknown)' }
+Write-Log ("branch: " + $branch)
+
+if (-not (Test-Path -LiteralPath $playbook) -or -not (Test-Path -LiteralPath $jobFile)) {
+  Write-Log 'The desk agent is not present in this checkout.'
+  Write-Log ("  missing: " + $(if (Test-Path -LiteralPath $playbook) { $jobFile } else { $playbook }))
+  Write-Log ("  branch " + $branch + " does not carry tools/desk_agent/.")
+  Write-Log '  Check out a branch that does, or merge the desk agent to main.'
+  Record-Failure ('desk agent not present on branch ' + $branch) `
+                 ('Nothing ran: the checkout is on branch ' + $branch + ', which does not carry tools/desk_agent/. No chart was read and no gameplan written.')
+  exit 2
+}
 
 if (-not $claude) {
   Write-Log 'Claude Code not found (looked for claude.exe then claude.cmd).'
