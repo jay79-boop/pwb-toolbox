@@ -29,6 +29,13 @@ GitHub tools. Do not narrate the commands. If everything is clean, merged and
 green, say exactly that in one sentence — a short answer is the good outcome,
 not a lazy one.
 
+You are the source for those facts. They are deliberately not written down
+anywhere in the repo, because every written copy went stale within hours. Do
+not go looking for a file that lists open PRs; there isn't one, by design.
+Durable state that is NOT derivable — the fleet registry, the roadmap, the
+tech stack — is in `docs/state.md`, and past decisions are one-per-file in
+`docs/decisions/`. Read either only when the task actually needs it.
+
 Then stop and wait. The catch-up is an offer, not a gate: if the owner opened
 with a real request, answer that first and fold the state into a single line.
 
