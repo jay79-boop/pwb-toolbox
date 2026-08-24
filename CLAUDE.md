@@ -198,7 +198,11 @@ A worked example, for this repo's 21st MCP key:
   (heatmap, average-year run/dip paths with both halves overlaid, now-window
   screener), a sectioned TradingView watchlist, and `season.json` for other
   tools; `context SYMBOL` answers "where does today sit in this ticker's
-  year?". Protocol in `docs/season-scan.md`; data in `season/` (gitignored —
+  year?". Also splits the *other* calendar — the one inside the day: every
+  ticker's return decomposed into close-to-open and open-to-close, gated the
+  same three ways, with the round trip an overnight-only position pays
+  **every day** charged against it and the best-few-nights concentration
+  printed beside it. Protocol in `docs/season-scan.md`; data in `season/` (gitignored —
   universe.txt names what the owner watches). Stats are pure and tested on
   planted synthetic data (`tests/test_season_scan.py`)
 - `tools/spicy_lab.py` — Excel export and quote helper for the spicy lab:
@@ -222,11 +226,42 @@ A worked example, for this repo's 21st MCP key:
   moves pass odds only *through* the rules (time limits, consistency,
   trailing drawdowns), not on the pure walk. Protocol and honesty caveats in
   `docs/prop-sim.md`; intel source in `docs/field-notes-prop-firms-and-data.md`
+- `tools/calibration_audit.py` — when Black-Scholes said 30% touch, how
+  often did it actually touch? Runs this repo's own finish/touch
+  probabilities over years of real daily bars: barriers placed in sigma
+  units so every row is an exact binomial test, non-overlapping windows,
+  trailing volatility versus a static benchmark, BH across the rows. Reads
+  the bars `season_scan fetch` already writes. The window's own realized
+  volatility is deliberately *not* offered as a mode — self-normalization
+  would report a fat-tailed series as thin-tailed. Manual in
+  `docs/calibration-audit.md`; tested against synthetic data the model is
+  right about (must convict nothing) and wrong about (must convict the far
+  barriers) in `tests/test_calibration_audit.py`
 - `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
   rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
   gets checked against; it emulates TradingView's intrabar path assumption so a low
-  printed before the entry filled cannot retroactively stop the trade out
+  printed before the entry filled cannot retroactively stop the trade out.
+  `--fragility-out` sweeps bar size (15/30/45/60, resampled on a grid
+  anchored at the opening candle so widening the bars cannot silently erase
+  it) alongside rr and sma-length, because a strategy can be fitted to a
+  timeframe as easily as to a number
 - `tools/trade_card.py` — pre-trade commitment card and hold-time checker for long single-leg options
+- `tools/audit_electron_app.ps1` — reads a closed-source Electron app off disk without
+  running it and reports signature, every host baked into the bundle, credential-reading
+  code and auto-update. PowerShell, for the user's machine; see
+  `docs/tradingview-agent-security.md`
+- `tools/desk_agent/` — the unattended agent: a playbook, five job files, a run log
+  it writes after every run, and a weekly review that revises the playbook from that
+  log and opens a draft PR. Guardrails live in a section of the playbook the review
+  is forbidden to edit. `tools/register_desk_agent.ps1` registers the Windows
+  scheduled tasks; see `tools/desk_agent/README.md`
+- `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
+  the patterns that exhaust a usage window: Routines that re-arm themselves into
+  a persistent session, wakes bound to a session too fat to load cheaply, and
+  too many sessions live at once. It will **not** derive a burn rate from a
+  single snapshot — session metadata reports lifetime totals, so a rate needs a
+  `--baseline` to diff against. Pure functions, tested on synthetic snapshots
+  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
@@ -271,12 +306,19 @@ A worked example, for this repo's 21st MCP key:
   consult it; it grows by proposal, never by silent edit
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
-  `index.html` (the published landing page; see "Design tooling" below) and
+  `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
-  traps that otherwise get rediscovered every time) and `agent-fleet.md` (critique
-  and design of the owner's multi-agent fleet — the operating procedure itself is
-  the `agent-fleet` skill under `.claude/skills/`)
+  traps that otherwise get rediscovered every time),
+  `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
+  and on which account — the CDP threat model, the two-login rule, and what was
+  actually verified about the open-source bridge by reading its source),
+  `agent-fleet.md` (critique and design of the owner's multi-agent fleet — the
+  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`)
+  and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
+  five-hour window, measured rather than guessed) and `spend-safety.md` (every
+  surface that can reach a card, ranked by worst case, and the five layers that
+  bound them; the rules themselves are the `spend-safety` skill)
 
 ## Environment
 
@@ -338,11 +380,16 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
 python tools/prop_sim.py evaluate --risk 200  # price a prop eval (demo rules)
+python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
+python -m tools.desk_agent.runlog summary --last 20   # is the agent actually working
+python -m tools.desk_agent.runlog review  --last 40   # what the weekly review reads
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
 python tools/night_lab.py verdict --quiet  # morning findings; silent if none
 python tools/season_scan.py report  # seasonality: report + watchlist + json
+python tools/season_scan.py overnight       # overnight vs intraday, per ticker
+python tools/calibration_audit.py --symbols SPY   # is our option math calibrated?
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
@@ -411,6 +458,28 @@ headline figure somewhere useless.
 
 A non-zero crash count is a bug in the converter, not a fact about the corpus.
 `convert` is contracted never to raise.
+
+## The desk agent runs itself, and reports on itself
+
+`tools/desk_agent/` is a Claude Code agent that runs on a schedule and revises its
+own playbook. Two things about it are worth knowing before touching it, because both
+are deliberate and both look like oversights.
+
+**The run log is committed.** `runs.jsonl` is one JSON line per unattended run. It is
+tracked rather than ignored because it is the only part of the agent a cloud session
+can see, and because `git log` over it is the audit trail. Raw stdout under `logs/`
+is ignored — that is noise, and it can carry chart detail.
+
+**The agent may not edit its own guardrails, its own log, or `runlog.py`.** The
+weekly review rewrites the rest of the playbook freely and opens a draft PR for it,
+which is the self-improvement loop. But an agent that can loosen its own limits does
+not have limits, and one that can edit its own record of what happened cannot be
+reviewed — so those three are walled off, and a review that wants to change them has
+to stop and say so instead.
+
+The autonomy ceiling is "everything except order entry", on a TradingView login with
+no broker connected. The reasoning behind that specific line, and why it beats
+auditing the tooling, is in `docs/tradingview-agent-security.md`.
 
 ## Backtesting: two things that produced confidently wrong answers
 
@@ -525,6 +594,17 @@ not.** As of 2026-08-18, both directories have `jay` = the fork
 `git pull origin main` means two different things depending on which directory
 the shell happens to be in, and fails by succeeding against the wrong project
 rather than by erroring.
+
+**Never hand over a `merge` or `checkout` without the `fetch` on the same line.**
+Both fail by succeeding. `git checkout <branch>` on a branch that already exists
+locally is a no-op that reports "Already on ..." and brings nothing down;
+`git merge --ff-only jay/<branch>` merges the remote-tracking ref *as of the last
+fetch*, so it happily fast-forwards to a commit that is already stale. Each cost a
+round trip on 2026-08-22, and in both cases the terminal said what had happened —
+"Your branch is behind ... by 2 commits" — while the next step failed with an
+unrelated-looking error about a missing file. Write
+`git fetch jay <branch>; git merge --ff-only jay/<branch>` as one line, every time,
+and end it with a `Test-Path` on a file the new commit adds so success is visible.
 
 **So use `jay` and `upstream` explicitly and never write a bare `origin`
 command.** `git fetch jay <branch>` now works identically in both — which was not
@@ -667,408 +747,32 @@ come with the web one, are under "Design tooling (UI/UX)" above.
 
 ---
 
-# Operating System (Live State + Decisions + Roadmap)
+# The ledger
 
-This section is **machine-read by Claude and the live dashboard**. Changes here drive both the dashboard display and Claude's understanding of project state.
+Project state lives in three places, split by how fast each kind of fact goes
+stale. This file is the slow half: what the project is, how to work in it, and
+the traps that cost real days. It is loaded into every session automatically,
+so keep it durable and keep it short.
 
-## Current State
+- **`docs/state.md`** — operating state: the fleet registry, the roadmap, the
+  tech stack, and the honesty lessons. Hand-maintained, changes on the order of
+  weeks. Not auto-loaded; read it when you need it.
+- **`docs/decisions/`** — one file per decision, newest first in
+  `docs/decisions/README.md`. Append a new file for a new decision; never
+  rewrite an old one. A correction is a new entry that supersedes.
+- **Nowhere at all** — open pull requests, their CI, what `main` points at, and
+  any count of them. **Derive those from git and the GitHub tools at read
+  time.** They were written down for months and were wrong within hours every
+  time; three separate sessions wrote a wrong PR count on 2026-08-24 alone. The
+  SessionStart hook already tells every session to gather them fresh.
 
-**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
-charged by default, prop-eval pricer). Last updated 2026-08-24.
+If you are about to write a PR number, a commit SHA, or "N open" into this file
+or into `docs/state.md`, that is the mistake the split exists to prevent.
 
-**The 2026-08-23 drain finished**: #99, #100, #101 and the rest all landed, and
-#103–#110 followed (night lab, season scan, spicy lab, stream field notes).
-See the decision log for what each was.
-
-**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
-the field-notes #110 merged straight through on 2026-08-23/24.)
-
-| PR | What it is | State |
-| --- | --- | --- |
-| #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
-| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
-| #109 | Agent-fleet critique, design, and operating protocol | **merged** 2026-08-24 (`42313c3`); fleet armed, see registry below |
-| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | draft; `main` merged in 2026-08-24, suite green |
-
-**This block collided twice in one hour.** #108 and #110 both landed while
-#109 was open, and both added a decision-log entry at the same insertion
-point — the exact failure the fleet design calls out as why conversational
-state does not survive. Anything editing this block should merge `main`
-immediately before pushing, not at review time.
-
-## Fleet registry (armed 2026-08-24)
-
-The multi-agent fleet is **armed**. Protocol: the `agent-fleet` skill;
-rationale: `docs/agent-fleet.md` (PR #109). This registry is the ledger entry
-the design depends on — a restarted lead rehydrates from here, never from a
-peer's memory. Keep it current or the watchdogs are chasing ghosts.
-
-| Role | Session | Heartbeat Routine | Fires |
-| --- | --- | --- | --- |
-| Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | `28 */4 * * *` |
-| Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | `58 2-22/4 * * *` |
-
-**A heartbeat costs about $3.30–$4.30, and that killed the hourly cadence.**
-Measured on the first wake of each lead: A $3.29, B $4.29, for a round that
-mostly just read the ledger and looked at PRs. Hourly for two leads is ~$180/day
-standing, before a single IC does any work — against an account that hit its
-usage limit twice on 2026-08-24. Cadence was cut to every 4 hours, alternating
-(~$45/day, a lead awake roughly every two hours). To go back to hourly:
-`update_trigger` with `28 * * * *` and `58 * * * *`. Do not restore hourly
-without a reason that is worth $135/day.
-
-The lesson generalises past this repo: a heartbeat that "does nothing" is not
-free, because reading the ledger and listing PRs is most of the cost. If the
-fleet needs tighter liveness than 4 hours, the cheap fix is a smaller check
-(one `list_sessions` call, no repo read) rather than a more frequent full wake.
-
-**Connector inheritance: confirmed working.** Both leads were fired manually at
-01:32 UTC and came back having read GitHub PRs and session state, so a Routine
-firing into a *persistent* session does inherit that session's MCP tools even
-though the Routine itself stores no connector grants. The warning at creation
-time is real but does not bite in mode 2. It would bite a
-`create_new_session_on_fire` Routine.
-
-**The two heartbeats are staggered on purpose.** Both were created
-at `0 * * * *`, which the server anchors to the creation minute — so both
-landed on :28 and would have woken in the same second. Simultaneous watchdog
-wakes are the correlated-failure pattern this whole design exists to avoid,
-and they would also spike the token burn twice an hour instead of smoothing
-it. If either Routine is ever recreated, set the minute explicitly.
-
-**Unverified at arming time:** Routines created through the MCP tool store no
-connector grants, and the tool warned that the fired sessions may lack
-`mcp__*` tools. Because these fire into *persistent* sessions (mode 2) they
-should inherit that session's own tool surface, but this was not confirmed. A
-heartbeat that cannot reach GitHub or `list_sessions` fails silently and looks
-identical to "nothing changed" — so the first thing to check if the fleet
-seems quiet is whether the leads still have their tools.
-
-**Other Routines already on this account** (they are not fleet, do not restart
-them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
-review, the daily Grok merge, the monthly credit check. The fleet's two hourly
-wakes are additive to those — see the budget note in the skill.
-
-**#87 and #90 are different jobs and both landed.** The lab asks whether one
-strategy's edge survives the data — one strategy, many instruments, two vendor
-feeds, a noise floor. The comparator asks whether several real edges belong in
-the same account — many strategies, one dataset, correlation and portfolio
-metrics. They came to look like one job because #90 filed its decision-log entry
-and its roadmap checkboxes under "(PR #87)". If you find yourself about to
-rebuild something, check the decision log first.
-
-**Live/Backtesting Strategies:**
-- **ICT AM OB** (PR #77, #76, merged) — Session timezones, history tracking, order cancellation. Live for testing.
-- **ICT OB+FVG** (PR #75, merged) — Priced entries, session management, mintick conversion. Backtest baseline.
-- **4-Week T-Bill Ladder** (PR #68, merged) — Exit planning via Treasury curve. Live with planner watcher.
-
-**Keeping this honest:** this block is machine-read, so a stale copy actively
-misleads. Two lessons paid for already. Update it when a pull request opens,
-merges or closes — not on a schedule; the version this replaced said "3 drafts
-in flight" while ten were open, and that is how two sessions built adjacent
-things without noticing each other. And file a decision-log entry under the
-pull request that actually carries the work: #90's entry, filed under #87, is
-the whole reason two different tools looked like one. When the count here
-disagrees with GitHub, believe GitHub and fix this.
-
-## Tech Stack & Dependencies
-
-| Component | Version | Status | Renewal/Update | Cost |
-|-----------|---------|--------|-----------------|------|
-| **Python** | 3.12 (local), 3.11 (CI) | Current | — | Free |
-| **Backtrader** | 1.9.78.123 | Legacy (2019, stable) | No active updates | Free |
-| **Interactive Brokers** | ib_insync | Current | Live subscription | ~$10/mo |
-| **Hugging Face** | `datasets` | Current | API-based | Free tier / Paid |
-| **pandas** | 3.0.5 | Current | Monthly updates | Free |
-| **black** | Pinned (requirements) | Current | Jan yearly updates | Free |
-| **pytest** | Current | Current | Regular updates | Free |
-| **21st.dev MCP** | HTTP server | Current | Per-request quota | ~$0.01/req |
-
-**Critical Path Dependencies:**
-- Backtrader: strategy compilation + execution (single point of failure, no replacement)
-- pandas: data munging + analysis
-- Interactive Brokers: live execution + account data
-
-## Decision Log
-
-### [2026-08-24] VWAP lab: the fade as candidate, the crossover as control (PR #111)
-**Decision:** Add the VWAP strategy family — `pwb_toolbox/backtesting/vwap.py`
-(`SessionVwap` indicator with volume-weighted σ bands; `VwapStrategy` with
-three setups), `tools/vwap_lab.py` (driver through `backtest_lab`: costs
-charged, bps-normalised, two-vendor noise floor per setup), and
-`pine/vwap_strategy.pine` (the TradingView reading of the same rules). A
-sourced VWAP section joins `docs/trading-wisdom.md` via this PR under the
-propose-then-approve contract.
-**Why these setups:** VWAP's peer-reviewed pedigree is execution benchmarking
-(Berkowitz/Logue/Noser 1988) — institutions are graded against it, so real
-order flow sits at the level. The practitioner evidence points at band-fade
-mean reversion (~60–63% win rates at ±2σ in liquid names; dominant in the
-largest published parameter sweep) and at the crossover being worthless
-(zero significant configurations in the same sweep). So fade and pullback
-are the candidates and **the crossover ships as a control expected to fail**
-— the lab prints a warning if the control comes out positive, because that
-is evidence about the harness, not the market.
-**Confirms:** relative volume, first-30-minute day-type (market intraday
-momentum, Gao/Han/Li/Zhou JFE 2018), MA side gate, RSI as a
-folklore-measuring control. Each off by default so every gate's cost is
-measurable separately.
-**Honesty notes baked in:** zero-volume feeds (histdata index CFDs) degrade
-VWAP to TWAP and the lab says so; the crypto session anchor (UTC midnight)
-is a convention, not a fact; no number is believed until it clears the
-vendor noise floor, and clearing it is necessary, nowhere near sufficient.
-
-### [2026-08-24] Agent fleet: liveness by scheduler, judgment by model (PR #109)
-**Decision:** Write the owner's multi-agent daily driver down and fix its
-architecture on paper before arming anything: `docs/agent-fleet.md` (critique
-and design) plus the `agent-fleet` skill (the operating procedure). The two
-lead agents stop being each other's watchdog — mutual restart cannot catch
-correlated failures, proven twice in one day when usage-limit outages stopped
-both leads and the task they were carrying at once. Liveness moves to hourly
-Routines with restart hysteresis; the leads keep cross-checking *decisions*.
-Durable state moves from SendMessage threads to the ledger (each repo's state
-block + PR state), so any restarted agent rehydrates from files. IC autonomy
-is gated by checkpoint artifacts — draft PR by the end of the first work
-block, CI green as the only "done" — not by time.
-**Deliberately not armed:** standing Routines burn tokens around the clock;
-arming is an explicit "arm the fleet" command, and the skill carries the
-steps.
-
-### [2026-08-24] Stream intel: costs closed, prop evals priced
-**Decision:** A live stream's backtest-hygiene argument was distilled into
-`docs/field-notes-prop-firms-and-data.md` and acted on the same day. Four
-changes: `reversal_15m_sim` now charges costs by default (1bp round trip,
-`--no-costs` to compare) with the export bridge netting the friction so the
-night lab's R stays consistent; the sim reports profit factor, Sortino, max
-drawdown in R, and a chronological first/second-half split; `--fragility-out`
-sweeps rr and sma-length into night-lab fragility specs that a bare `plan`
-picks up by file convention; and `tools/prop_sim.py` prices prop-firm
-evaluations (the stream's one genuinely new idea).
-**The catch that mattered:** the sim shipped frictionless despite this
-repo's own "charge costs always" doctrine, and its frictionless trades were
-feeding the night lab's stress record. A stranger's checklist found it.
-**The prop math worth remembering:** for a pure symmetric walk, P(pass) =
-D/(T+D) regardless of position size — pinned against the closed form.
-Sizing moves pass odds only through the rules (time limits reward it,
-consistency rules tax it, trailing drawdowns are strictly worse than
-fixed), and on the demo rule set a coin flip is EV-negative at every size.
-The tool exists so any real firm's rules get priced before an eval is
-bought; owner's stated intent is "want the math first", not a commitment.
-
-### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
-**Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the
-sector ETFs, index baselines, crypto and the owner's own names, with a
-three-gate evidence standard: within-year permutation test (2,000
-reshuffles), split-half agreement across the years, and BH-FDR across the
-scanned grid. Almanac folklore is pre-registered and judged one-sided on
-its own terms, verdicts published HELD/FAILED. Deliverables: self-contained
-visual report, sectioned TradingView watchlist (manual re-import;
-TradingView cannot auto-sync a file), `season.json` + `context` for other
-tools.
-**Why the gates:** 15 tickers x 12 months is 180 casts; ~9 "patterns"
-appear by luck alone. The failed-folklore list is deliberately a first-class
-output — the things to stop believing are worth as much as the things that
-held.
-**A null-hypothesis bug worth remembering:** the first permutation null
-circularly shifted the monthly series. Under a 12-periodic window mask that
-collapses the null to eleven distinct values (and shifts by multiples of 12
-realign the calendar entirely), so a merely top-ranked month read as
-p=0.0005. The shipped null shuffles months within each year — volatility
-regimes survive, alignment dies, and pure noise convicts at the expected
-~5%/0% rates (checked in tests). A second resolution trap surfaced on the
-first real run: at 204 cells the rank-1 BH bar (q/n=0.00049) sits below the
-smallest p 2,000 permutations can produce (0.0005), mathematically blocking
-a lone true pattern — so the permutation count now scales with the grid
-(`needed_permutations`, also pinned by tests).
-
-### [2026-08-23] Overnight stress lab on a local model ("good night")
-**Decision:** Add `tools/night_lab.py` — a 1am-8am unattended stress lab
-driven by a local Ollama model, triggered by saying "good night". Four job
-kinds: adversarial attacks on open theses, shock scenarios over the closed
-record, parameter fragility sweeps, and leak-mining the paper history.
-**The rule:** *the model proposes, Python computes.* An LLM cannot calculate
-a drawdown; asked to, it produces a fluent unfalsifiable number, and seven
-hours of that is seven hours of fiction that looks like analysis. So the
-model only generates hypotheses — the thing it is good at and that gets
-better with volume you could not afford to buy at cloud prices — and every
-resulting figure comes from deterministic arithmetic over the real ledger.
-Proposals that will not parse, name no checkable condition, or drift onto a
-ticker the trade does not hold are **dropped, never repaired**.
-**Why overnight at all:** the arithmetic alone runs in seconds and does not
-need the night. What needs the night is *volume* of hypotheses, which is
-exactly what a free local model buys.
-**Yielding:** the window and the idle timer are a pure function
-(`next_action`), so 3am behaviour is tested at 3pm. Jobs are small and the
-queue checkpoints after each one, so a person sitting down at 3am costs the
-job in flight and nothing else. `keep_alive: 0` hands the GPU straight back.
-**Morning:** silence is the good outcome — `verdict --quiet` prints nothing
-when nothing broke, and the orientation hook stays quiet with it. Findings
-stage as **pending** proposals under the wisdom doc's propose-then-approve
-contract; the lab never changes a rule or places a trade.
-
-### [2026-08-22] Speculative desk: walled-off high-risk paper pot ("trade spicy")
-**Decision:** Add a second, deliberately speculative track beside the core
-program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent
-protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped
-at 2.5%), momentum stocks, defined-risk credit spreads. Fixed pot as a slice
-of the paper account; per-trade max loss 10% of pot; 4 positions max; spent
-pot locks the desk until `review` runs; refill only after review. Owner
-executes every order (options in thinkorswim paperMoney — TradingView has no
-options; stocks/crypto in TradingView paper); agent plans, logs, watches
-(`check` alerts on stop/target), and reviews. Two triggers: "trade spicy" on
-demand, plus a Windows-scheduled morning scan.
-**Why:** The owner wants high-risk/high-reward speculation *and* steady safe
-core growth. The wall is the design: the spec pot can die without touching
-core statistics, and its scored record (R-multiples per lane) is the desk's
-real product — after 30 trades a lane either proves expectancy or gets a
-pause proposal. Self-learning follows the wisdom-doc contract: the agent
-drafts changes from the record; the owner approves.
-
-### [2026-08-22] Paper-first trading program: wisdom base + crypto scanner + condor mock run
-**Decision:** Start a paper-first trading program with hard gates to live
-money. Three pieces shipped together: `docs/trading-wisdom.md` (ten sourced,
-machine-enforceable risk rules and the evidence base), `tools/crypto_scan.py`
-(the "trade crypto" screener over evidence-backed momentum signals), and a
-weekly SPX/XSP iron condor mock run starting Monday (paper only, collecting
-expected-move-vs-realized data).
-**Why:** The owner wants to trade actively without breaking the bank. The
-published base rates (97% of persistent Brazilian day traders lost money;
-~1.6% of Taiwanese day traders predictably profitable) say unstructured
-retail trading fails by default; the documented practices of successful
-traders converge on small constant risk, positive expectancy proven before
-sizing up, and mechanically enforced limits.
-**Gates to live:** a strategy trades real money only after positive
-expectancy over ≥30 paper trades (rule 9 in the wisdom doc), and then under
-the desk agent's caps (PR #78). "Self-learning" = the propose-then-approve
-loop in the wisdom doc: the system drafts its own rule changes from journal
-evidence; the owner approves every change.
-**Also decided:** Kronos fine-tuning parked — not until the backtest lab
-(#87) is merged and the paper program is producing data; any future
-fine-tuned model must pass `kronos_lab` eval before use.
-
-### [2026-08-22] Kronos foundation model: measured, no zero-shot edge (PR #93)
-**Decision:** Before integrating the Kronos K-line foundation model
-(shiyu-coder/Kronos) anywhere, measure it with `tools/kronos_lab.py`. Result on
-Kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all
-post-training-cutoff 2026 data: BTC-USD 46.7% direction hit rate (p=0.70),
-ES=F 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse
-than persistence on both.
-**Why:** Three candidate uses were on the table — a fourth signal for the
-backtest lab, a confirmation filter on ICT entries, a discretionary forecast
-chart. All three require measurable directional skill; none was found.
-**Outcome:** Kronos stays out of the backtest lab, the desk agent, and live
-decisions. The forecast-chart mode exists but must not inform trades. The lab
-tool stays merged as the standing instrument for any future revisit (a
-fine-tuned variant, a newer model release) — re-run the eval before believing
-any of them.
-
-### [2026-08-22] StrategyComparator: the portfolio side (PR #90)
-**Decision:** A reusable harness, `pwb_toolbox.backtesting.comparator`, that runs
-several strategies over identical data and reports how they interact.
-**How:** `StrategyComparator` runs each registered strategy, extracts its NAV
-series, computes per-strategy metrics through `pwb_toolbox.performance`, builds a
-weighted portfolio NAV, and returns the correlation matrix alongside both sets of
-metrics. 18 unit tests drive it on synthetic data.
-**Why it is not the backtest lab (PR #87):** they answer different questions on
-different axes. The lab takes *one* strategy across many instruments and two
-vendor feeds and asks whether its edge survives the data. The comparator takes
-*many* strategies over one dataset and asks whether they hedge each other or
-amplify. The lab decides whether an edge is real; the comparator decides whether
-several real ones belong in the same account. This entry was originally filed
-under "(PR #87)", which is how the two came to look like duplicated work.
-
-### [2026-08-22] Cross-Instrument Backtest Lab (PR #87)
-**Decision:** Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.
-**Why:** Can't compare strategies in a vacuum. Need to see: Do they hedge each other? Do they amplify losses? What's the portfolio win rate vs. individual strategy win rates?
-**What it measures:** Win rate, Sharpe ratio, max drawdown, correlation, portfolio cumulative return, monthly breakdown.
-**Target:** Identify if 15-Min Reversal adds value to ICT AM/OB, or if they're too correlated.
-
-### [2026-08-22] Desk Agent + Risk Model (PR #78)
-**Decision:** Build an agent that enforces position limits, exposure caps, and live risk alerts across all three strategies.
-**Why:** Live execution will have real consequences. Can't trade three correlated strategies if position sizes aren't coordinated. Need automatic stops and alerts.
-**What it does:** Reads live positions from IB, calculates portfolio Greeks, enforces per-strategy position caps, enforces max portfolio exposure, alerts on margin usage >80%.
-**Dependency:** Needs backtest lab results to set appropriate position sizing rules.
-
-### [2026-08-22] Blueprint as Operating System
-**Decision:** Turn CLAUDE.md into a machine-readable operating system that drives both the dashboard and Claude's decision context.
-**Why:** Scattered info (Git, GitHub, spreadsheets, chat) → single source of truth. Allows Claude to make better decisions without asking for status updates.
-**Outcome:** Merged into main. Syncs to live dashboard via GitHub MCP.
-
-### [2026-08-20] Live Work Dashboard
-**Decision:** Build GitHub-connected dashboard instead of static blueprint.
-**Why:** Previous blueprint went stale; live data self-updates.
-**Status:** Live. Auto-refreshes every 3 minutes.
-
-### [2026-08-15] Converter Test Coverage
-**Decision:** Test `pwb_toolbox.converting` by compiling generated Backtrader code + running on synthetic bars, not just parsing.
-**Why:** A converter that parses but doesn't execute is a failure waiting to happen.
-**Outcome:** Tests in `tests/test_converting.py` end-to-end section now validate execution.
-
-### [2026-08-10] ICT AM/OB Strategy Refactor
-**Decision:** Hoist computed security reads instead of subscripting floats in `next()`.
-**Why:** Cleaner data flow, reduces session state bugs.
-**Outcome:** Merged PR #76. Reduced float handling surface area.
-
-### [2026-08-01] T-Bill Ladder Offline-First Design
-**Decision:** Accept `--rate` overrides instead of calling Treasury when live data blocked.
-**Why:** Cloud containers can't reach home.treasury.gov; need to work offline.
-**Outcome:** Merged PR #68. Math still validates without live data.
-
-## Roadmap
-
-**Now (This week — parallel tracks):**
-
-*StrategyComparator (PR #90):*
-- [x] Implement `StrategyComparator` — runs all three strategies on identical price data
-- [x] Add correlation matrix calculation (Pearson + rolling)
-- [x] Add portfolio-level metrics (combined P&L, win rate, Sharpe, max drawdown)
-
-*Backtest Lab (PR #87):*
-- [ ] Test on 90-day ICT price history
-- [ ] Success: See if 15-Min Reversal adds value or just adds noise
-
-*Desk Agent (PR #78):*
-- [ ] Implement risk model: Greeks calculator, margin tracker, exposure aggregator
-- [ ] Define position size rules (per-strategy caps, portfolio exposure cap)
-- [ ] Add live IB position feed + alerts on >80% margin usage
-- [ ] Add position limit enforcement (reject trades that violate caps)
-- [ ] Success: Can trade all three strategies without blowing up
-
-*VWAP lab (PR #111):*
-- [x] `SessionVwap` + `VwapStrategy` (fade / pullback / cross-as-control) + confirms
-- [x] `tools/vwap_lab.py` — costs, bps, per-setup two-vendor noise floor
-- [x] `pine/vwap_strategy.pine` for TradingView paper trading
-- [ ] Run on real ES bars from both vendors (owner's machine — feeds live there)
-- [ ] Success: fade clears the noise floor and the crossover control fails
-
-*15-Minute Reversal (PR #71):*
-- [ ] Finish strategy logic (entry, exit, hold conditions)
-- [ ] Backtest on 6 months of data
-- [ ] Validate win rate, Sharpe, max drawdown vs. ICT strategies
-- [ ] Await backtest lab results before deciding if it's live-tradeable
-
-**Next (After "Now" merges — 2-3 days):**
-- [ ] Merge #87 (backtest lab) → use results to size positions in desk agent
-- [ ] Merge #78 (desk agent) → build live execution harness on top of it
-- [ ] Merge #71 (15-Min Reversal) → add to desk agent position tracking
-- [ ] Run full portfolio backtest: all three strategies with desk agent constraints
-
-**Later (Backlog):**
-- [ ] Live execution: connect desk agent to IB, enable live trading
-- [ ] Performance analytics: daily P&L dashboard, monthly statement generation
-- [ ] Trade journal automation: hook desk agent events to trade journal
-- [ ] Strategy upgrade: Backtrader 1.9.78 → investigate modern fork or Zipline
-- [ ] Risk monitoring: multi-day drawdown alerts, portfolio stress tests
-
-**Done (Reference):**
-- [x] ICT AM/OB Strategy (PR #77, #76) — live testing
-- [x] ICT OB+FVG Strategy (PR #75) — backtest baseline
-- [x] T-Bill Ladder Tool (PR #68) — live with planner watcher
-- [x] Operating System (PR #88) — CLAUDE.md as single source of truth
-
-## Why This Format
-
-Claude reads this section on every turn. It means:
-- **No status meetings:** "What's the current state?" is answered by reading this file.
-- **Better decisions:** Claude sees the roadmap, knows active strategies, understands past choices.
-- **Change tracking:** Every decision lives here with context and outcome.
-- **Dashboard sync:** The live dashboard pulls from this section to stay current.
+**Why it was split.** Every branch doing real work also edited one dense region
+of prose here, so branches conflicted on `CLAUDE.md` and on nothing else — and
+on 2026-08-24 one branch merged with *zero* conflicts while silently reverting
+the whole region to a state three merges stale. A conflict at least stops you
+and demands a decision; a clean merge of two contradictory claims just picks
+one. Per-file decisions removed the shared insertion point, and deriving the
+volatile facts removed the thing worth fighting over.

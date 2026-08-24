@@ -647,7 +647,7 @@ def test_the_sweep_produces_scorable_specs_with_the_chosen_value_inside():
         bars += shift_days(winning_long_day(), i * 7)
     cfg = Config(cost_bps=0.0, use_sma=False)
     specs = fragility_sweep(bars, cfg, daily_csv=None)
-    assert {s["param"] for s in specs} == {"rr", "sma_length"}
+    assert {s["param"] for s in specs} == {"rr", "sma_length", "bar_minutes"}
     rr = next(s for s in specs if s["param"] == "rr")
     assert str(rr["chosen"]) in rr["sweep"]
     assert len(rr["sweep"]) == 5
@@ -657,3 +657,79 @@ def test_the_sweep_produces_scorable_specs_with_the_chosen_value_inside():
     job = make_job("fragility", rr, "frag-rr")
     got = run_fragility(job)
     assert "verdict" in got or "cliff" in got
+
+
+# ---------------------------------------------------------------------------
+# Timeframe fragility: the same rules on wider bars
+# ---------------------------------------------------------------------------
+
+from tools.reversal_15m_sim import resample
+
+
+def test_resample_aggregates_ohlc_inside_the_bucket():
+    wide = resample(winning_long_day(), 30, time(9, 15))
+    assert len(wide) == 2
+    first = wide[0]
+    # 09:15 (95/100/90/95) merged with 09:30 (92/95/88/94).
+    assert (first.open, first.high, first.low, first.close) == (95.0, 100.0, 88.0, 94.0)
+    assert first.ts.hour == 9 and first.ts.minute == 15
+
+
+def test_the_grid_starts_at_candle_1_not_at_the_hour():
+    # The trap this exists to prevent: a grid counted from midnight puts
+    # 30-minute bars at :00 and :30, the 09:15 opening candle stops existing,
+    # and every session is skipped as "no candle 1" -- a silent zero-trade
+    # backtest that looks like a strategy finding nothing.
+    wide = resample(winning_long_day(), 30, time(9, 15))
+    assert [b.open_minute for b in wide] == [9 * 60 + 15, 9 * 60 + 45]
+    assert summarize(run(wide, bar_minutes=30))["days_with_candle_1"] == 1
+
+
+def test_wider_bars_do_not_merge_across_sessions():
+    two_days = winning_long_day() + shift_days(winning_long_day(), 1)
+    wide = resample(two_days, 60, time(9, 15))
+    assert len({b.ts.date() for b in wide}) == 2
+
+
+def test_a_bucket_that_would_start_before_midnight_is_clamped_not_dropped():
+    overnight = bars(
+        MONDAY,
+        ("00:00", 10.0, 11.0, 9.0, 10.5),
+        ("00:15", 10.5, 12.0, 10.0, 11.5),
+    )
+    wide = resample(overnight, 30, time(9, 15))
+    assert [b.open_minute for b in wide] == [0, 15]
+    assert all(b.ts.date() == MONDAY for b in wide)
+
+
+def test_widening_the_bars_swallows_the_setup_whole():
+    # The honest demonstration of why this sweep exists: at 15 minutes this
+    # session is a clean +2.4R, and at 30 the failure swing is inside candle
+    # 1 rather than after it, so there is no trade at all. Same rules, same
+    # data, different answer.
+    assert summarize(run(winning_long_day()))["trades"] == 1
+    wide = resample(winning_long_day(), 30, time(9, 15))
+    assert summarize(run(wide, bar_minutes=30))["trades"] == 0
+
+
+def test_the_sweep_scores_bar_size_and_reports_the_fine_edge():
+    day_bars = []
+    for i in range(3):
+        day_bars += shift_days(winning_long_day(), i * 7)
+    specs = fragility_sweep(
+        day_bars, Config(cost_bps=0.0, use_sma=False), daily_csv=None
+    )
+    size = next(s for s in specs if s["param"] == "bar_minutes")
+    assert size["chosen"] == 15
+    assert sorted(int(k) for k in size["sweep"]) == [15, 30, 45, 60]
+
+    from tools.night_lab import make_job, run_fragility
+
+    got = run_fragility(make_job("fragility", size, "frag-bars"))
+    # 15 minutes is the finest Yahoo serves at this depth, so only the coarse
+    # neighbour is reachable and the cliff is measured against it alone. Here
+    # the whole result is gone at 30 minutes, which is a cliff of 1.0 — the
+    # lab must convict that, not average it away.
+    assert got["chosen"] == 15
+    assert got["cliff"] == pytest.approx(1.0)
+    assert "fitted" in got["verdict"]

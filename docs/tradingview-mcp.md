@@ -23,6 +23,13 @@ that instruction looks arbitrary, that is what it is for.
 Use `127.0.0.1`, not `localhost`. On machines where `localhost` resolves to IPv6 `::1`
 the connection fails, because Electron's debug server does not listen there.
 
+## Whether to do this at all
+
+The setup below is the *how*. `tradingview-agent-security.md` is the *whether*: what
+an open debug port actually grants, why the account you point this at should not be
+the one your broker is linked to, and what reading this project's source did and did
+not establish. Read it once before connecting anything that holds money.
+
 ## The terms-of-use exposure
 
 TradingView's Terms restrict automated data collection and non-display usage. The
