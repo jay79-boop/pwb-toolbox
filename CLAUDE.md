@@ -78,6 +78,11 @@ A worked example, for this repo's 21st MCP key:
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
 - `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
+- `tools/strategy_lab/` — live dashboard for strategy test runs; stdlib-only server
+  serving `static/strategy-lab.html` plus a run API. Every strategy test in this repo
+  reports into it through one JSON run-record contract, so results accumulate and
+  compare instead of scrolling past in a terminal. `--export` writes a standalone
+  snapshot for publishing or reading off the machine
 - `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
 - `tools/bill_ladder.py` — settles roll-vs-hold on the T-bill curve, sizes a
   ladder from the maturities Treasury actually sells, and prices the state-tax
@@ -96,6 +101,11 @@ A worked example, for this repo's 21st MCP key:
   a `file://` page gets. The arithmetic is what is tested (`node
   static/journal-shots.test.js`, run under pytest by `tests/test_journal_shots.py`);
   `shrink()` needs a canvas and is verified in a browser instead
+- `static/strategy-lab.html` / `static/strategy-lab-stats.js` — the Strategy Lab
+  dashboard and its arithmetic. Same arrangement as `option-lab.js` and the journal:
+  the stats module is a separate, tested file that the page inlines verbatim, and
+  `tests/test_strategy_lab.py` requires its numbers to agree with
+  `pwb_toolbox.performance.trade_stats` so the screen and the package cannot drift
 - `static/option-lab.js` — Black-Scholes, greeks, decay and profit ladders in the
   browser, with no dependencies. A port of `pwb_toolbox/options/{greeks,decay}.py`
   kept deliberately faithful: `tests/test_option_lab.py` prices a spread of
@@ -167,6 +177,9 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
+python -m tools.strategy_lab                       # live dashboard on :8771
+python tools/reversal_15m_sim.py bars.csv --post   # send that run to the dashboard
+node static/strategy-lab-stats.test.js            # dashboard math (also run by pytest)
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js  # screenshot sizing/budget (also run by pytest)
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope

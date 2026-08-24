@@ -28,3 +28,6 @@ graphify-out/.vocab.txt
 # machine — so it produced a large diff on every rebuild while meaning nothing.
 graphify-out/graph.html
 graphify-out/manifest.json
+
+# Strategy Lab run records: local test output, not source.
+strategy-runs/
