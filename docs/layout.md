@@ -207,6 +207,14 @@ top-level directories and points here for the detail.
   behind `crypto_scan`'s signals, iron condor venue/construction facts, and
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
+- `tools/broker_costs.py` — prices the same option structure at every broker on
+  the shortlist, with platform fees in the total where they belong, because a
+  headline commission decides nothing on its own. `condor` runs the weekly
+  SPX/XSP program a year at a time across a size sweep; `spread` reports best
+  against worst, which is the only number that says whether a difference is
+  real. The finding it exists to produce: at one lot the entire spread is under
+  $200/yr, so broker choice here is a capability question and not a cost one —
+  pinned by a test, so it fails loudly if that stops being true
 - `docs/brokers.md` — which broker to execute through, scored against what the
   desk actually trades rather than against a rate card. Ten-broker shortlist
   with sourced fees and API terms, the incumbent setup (IB, Schwab, TradingView,

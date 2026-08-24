@@ -59,6 +59,30 @@ it.
 Every order in the spec desk is currently typed in by hand. That is the
 bottleneck — not commissions, not futures access.
 
+### The second trap, found while checking the first
+
+The obvious rejoinder to all of the above is: **IB already has a paper
+account, and this package already talks to it.** That is half true, and the
+half that is false is the expensive half.
+
+True: `IBConnector` defaults to port 4002, which is IB Gateway's *paper* port,
+and `PAPER_PORTS` is wired into a live-order brake that requires two
+independent unlocks before an order can reach a funded account. Paper is the
+default and the safe path is already built.
+
+False, until 2026-08-24: **`IBConnector` could not place an option order at
+all.** Both `place_orders` and `execute_orders` hardcoded
+`Stock(symbol, "SMART", "USD")`. The connector served the systematic side,
+where a strategy emits a target share position per ticker, and nothing else.
+Four of the seven things this desk trades are options, and none of them could
+reach any broker except by hand — including through the broker already paid
+for, on the paper account already running.
+
+So the gap was never really "which broker". It was that the desk's dominant
+instrument had no programmatic path to *any* venue. `place_option_order` plus
+`pwb_toolbox/execution/option_contract.py` close it against the incumbent, at
+no new cost and with the existing brake still in force.
+
 ---
 
 ## The ten, scored against that
@@ -170,23 +194,66 @@ the unlock.
 
 ---
 
+## What it costs — and why that settles less than expected
+
+`tools/broker_costs.py` prices the weekly SPX/XSP iron condor program at every
+broker, over a year, with platform fees where they belong. The default case is
+52 cycles, four legs, 70% closed rather than left to expire:
+
+| Broker | 1 lot | 2 lot | 5 lot | 10 lot | 25 lot |
+| --- | --- | --- | --- | --- | --- |
+| Webull | **$176.80** | **$353.60** | $884.00 | $1,768.00 | $4,420.00 |
+| tastytrade | $208.00 | $416.00 | $1,040.00 | $2,080.00 | **$2,080.00** |
+| IBKR (marginal) | $229.84 | $459.68 | $1,149.20 | $2,298.40 | $5,746.00 |
+| Schwab / tos | $229.84 | $459.68 | $1,149.20 | $2,298.40 | $5,746.00 |
+| Tradier Pro | $243.76 | $367.52 | **$738.80** | **$1,357.60** | $3,214.00 |
+| TradeStation | $353.60 | $707.20 | $1,768.00 | $3,536.00 | $8,840.00 |
+
+Three things fall out, and only the third matters.
+
+1. **Tradier's $120/year platform fee makes it the *most* expensive venue at
+   one lot** and the cheapest from about three lots up. The headline "$0
+   commission" is true and misleading in the same breath.
+2. **tastytrade's $10-per-leg cap makes size free above ten lots** — its 10-lot
+   and 50-lot costs are identical — which is why it wins at the top of the
+   range and loses at the bottom.
+3. **At one lot the entire spread across seven brokers is $176.80 a year.**
+   Against a paper program that has not yet produced 30 closed trades in any
+   lane, that is noise. `test_one_lot_spread_across_brokers_stays_small` pins
+   it, so if it ever stops being noise the test fails and this section gets
+   rewritten.
+
+**So cost does not decide this, at this size.** Anyone ranking these brokers by
+commission is answering a question that is worth under $200 a year here. The
+capability argument — which venue can hold a programmatic paper record — is
+worth the whole program, because rule 9 is what stands between this desk and
+the base rates in `docs/trading-wisdom.md`.
+
 ## Verdict
 
 | Question | Answer |
 | --- | --- |
-| Best fit for what this desk trades | **Tradier**, on the paper-API argument, not on price |
-| Best if one account must span options *and* futures | **tastytrade** |
-| Worth adding to the existing testing setup | Tradier — it is additive to IB, not a replacement |
-| Cheapest for the SPX/XSP condor program | Tradier Pro ($0.35/contract) |
-| Best futures execution, in isolation | NinjaTrader lifetime, then Optimus/AMP — **and premature** |
-| Safe to skip entirely | E*Trade, Plus500, Webull, AMP, Optimus |
+| The actual bottleneck | Options had no programmatic path to any venue. **Now fixed against IB**, the incumbent |
+| Cheapest next step | Nothing to buy — `place_option_order` on the IB paper account already running |
+| Best *new* broker, if one is added | **Tradier**, for a paper API that shares the live surface; **tastytrade** if futures must share the account |
+| Does cost decide it | **No.** $176.80/yr spread at one lot |
+| When Tradier starts paying for itself | ~3 lots per condor cycle; below that its platform fee is the most expensive thing on the list |
+| Best futures execution, in isolation | NinjaTrader lifetime, then Optimus/AMP — **and premature**, the strategies have not cleared the noise floor |
+| Cheapest at one lot | **Webull** — and still a skip: no paper endpoint, so it wins the axis that does not matter |
+| Safe to skip entirely | E*Trade, Plus500, Webull, AMP, Optimus, TradeStation |
 
-**What actually gets built if the answer is Tradier:** a `TradierConnector`
-beside `IBConnector` and `CCXTConnector`, registered in
-`pwb_toolbox/execution/broker_factory.py` under `PWB_BROKER=tradier`, pointed at
-the sandbox first. `spec_desk.py open` gains the ability to place the paper
-order it currently only logs. Nothing about the gates changes — costs still get
-charged, R-multiples still get recorded, and rule 9 still holds the door.
+**The recommendation changed while writing this.** It opened as "add Tradier",
+on the argument that no venue here could hold a programmatic paper record. That
+argument was right about the gap and wrong about the cheapest way to close it:
+the incumbent could not trade an option because of one hardcoded contract type,
+not because of anything about IB. Fixing that costs nothing, keeps the existing
+live-order brake, and uses a paper account already running.
+
+Tradier remains the right *second* move — its sandbox needs no market-data
+subscription and its paper surface is identical to live, which IB's is not
+quite. But it is now an improvement to a working loop rather than the thing
+that creates one, and at one lot it is the most expensive venue on the list.
+Worth doing when a lane is close to its 30 trades, not before.
 
 ## Sources
 
