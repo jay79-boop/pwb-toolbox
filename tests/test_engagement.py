@@ -22,6 +22,7 @@ import pytest
 from tools.engagement import (
     DECK_FILENAME,
     PHASES,
+    SEED_MARKER,
     EngagementError,
     add_note,
     advance,
@@ -32,6 +33,7 @@ from tools.engagement import (
     main,
     new_engagement,
     retro,
+    seed_target,
     slugify,
     status_text,
 )
@@ -253,3 +255,68 @@ def test_export_flow_records_a_skipped_phase_without_calling_it_done(tmp_path):
     revise = next(n for n in flow["nodes"] if n["id"] == "revise")
     assert revise["status"] == "draft"
     assert revise["notes"] == "skipped"
+
+
+# ----------------------------------------------------- seeding the design
+
+
+def test_seed_target_writes_a_design_that_cannot_be_advanced_on(tmp_path):
+    """A phase gated on "the file exists" is passed by a file written for you.
+
+    Seeding the target design from the reference architecture is a real
+    convenience -- the shape of the answer does not have to be rediscovered
+    per business -- and it is exactly the shortcut that would let someone
+    reach the stakeholder deck with a document describing a business that is
+    not theirs. The marker is what stops that, so it is what this pins.
+    """
+    slug = new_engagement(tmp_path, "Acme Plumbing", today=TODAY)["slug"]
+    _advance_through(tmp_path, slug, "design")
+    assert current_phase(load(tmp_path, slug)).key == "design"
+
+    path = seed_target(tmp_path, slug)
+    seeded = path.read_text(encoding="utf-8")
+    assert SEED_MARKER in seeded
+    assert "Acme Plumbing" in seeded
+    # the reference's shape came through: roles, gates, the plain files
+    assert "Intake agent" in seeded and "Pricing analyst agent" in seeded
+    assert "Where a person stays" in seeded
+    assert "pricing.yaml" in seeded
+
+    with pytest.raises(EngagementError) as excinfo:
+        advance(tmp_path, slug, today=TODAY)
+    assert SEED_MARKER in str(excinfo.value)
+    assert current_phase(load(tmp_path, slug)).key == "design"
+
+
+def test_design_advances_once_the_marker_is_gone(tmp_path):
+    slug = new_engagement(tmp_path, "Acme Plumbing", today=TODAY)["slug"]
+    _advance_through(tmp_path, slug, "design")
+    path = seed_target(tmp_path, slug)
+    edited = "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if SEED_MARKER not in line
+    )
+    path.write_text(edited, encoding="utf-8")
+    advance(tmp_path, slug, today=TODAY)
+    assert current_phase(load(tmp_path, slug)).key == "present"
+
+
+def test_seed_refuses_to_overwrite_real_work(tmp_path):
+    slug = new_engagement(tmp_path, "Acme Plumbing", today=TODAY)["slug"]
+    _advance_through(tmp_path, slug, "design")
+    design = PHASES[6]
+    assert design.key == "design"
+    _write_deliverable(
+        tmp_path, slug, design, "## Our own target design\n\nreal work\n"
+    )
+    with pytest.raises(EngagementError, match="already has real content"):
+        seed_target(tmp_path, slug)
+
+
+def test_seed_can_be_re_run_over_an_untouched_seed(tmp_path):
+    """Re-seeding a file nobody has edited is harmless and should not error."""
+    slug = new_engagement(tmp_path, "Acme Plumbing", today=TODAY)["slug"]
+    _advance_through(tmp_path, slug, "design")
+    seed_target(tmp_path, slug)
+    assert SEED_MARKER in seed_target(tmp_path, slug).read_text(encoding="utf-8")

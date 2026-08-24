@@ -71,6 +71,28 @@ did not happen.
    process: what runs automatically, what an AI agent does, what stays human,
    and the controls around each.
 
+   There is a **reference target architecture** to start from rather than
+   rediscovering the shape of the answer per business:
+   `docs/one-person-ai-company.md`, with the whole thing as a blueprint in
+   `docs/blueprint-one-person-ai-company.json`. It is a local service business
+   run as a loop — marketing, intake, sales, operations, finance, and the
+   collected cash setting next week's ads — with agents on the information and
+   people on money and risk. `python tools/engagement.py seed-target <slug>`
+   stamps it into the engagement with every section turned into a question
+   about *this* business.
+
+   The seeded file carries an `UNEDITED REFERENCE` line and `advance` refuses
+   while it is there. A phase whose gate is "the deliverable exists" is
+   trivially passed by a deliverable written for you; seeding is a convenience
+   for the shape, never for the content.
+
+   Two checks this phase owes the design, both of which can fail:
+   `python tools/ai_company.py gates --blueprint <target>` convicts any AI step
+   that commits money with no person in front of it, and
+   `python tools/ai_company.py hours --blueprint <target> --baseline <current>`
+   turns phase 2's map and this one into a before-and-after number rather than
+   an adjective.
+
 ### Decide
 
 8. **Stakeholder presentation** (`08-feedback.md`) — build the deck
@@ -121,6 +143,7 @@ python tools/engagement.py advance acme-logistics # complete the current phase
 python tools/engagement.py deck acme-logistics    # render the stakeholder deck
 python tools/engagement.py list                   # every engagement at a glance
 python tools/engagement.py retro                  # lessons, grouped by phase
+python tools/engagement.py seed-target acme-logistics  # start phase 7 from the reference
 ```
 
 Or just tell a Claude session in this repo to *"start a readiness engagement

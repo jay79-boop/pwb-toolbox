@@ -39,6 +39,20 @@ top-level directories and points here for the detail.
   `static/flow-canvas.html` imports one (each process renders as a chain of
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
+- `tools/ai_company.py` — the one-person AI company, made checkable. Its
+  subject is `docs/blueprint-one-person-ai-company.json`, a whole local service
+  business as a blueprint — five loop stages, every process, every step's
+  executor named — and the doctrine is `docs/one-person-ai-company.md`. Derives
+  the agent roster **from the map** rather than keeping a list beside it, so
+  the two cannot disagree; convicts any AI step that commits money with no
+  person step in front of it (`commits: true` on a step is the declaration —
+  reading a payment system and charging through one are the same tool, so it
+  cannot be inferred); prices the person steps; runs the loop economics; and
+  gates repricing on sample size before drift, so "not enough jobs yet" is a
+  first-class answer. `page` regenerates `docs/one-person-ai-company.html` from
+  the blueprint — edit the blueprint, never that file. It is the reference
+  target for phase 7 of the readiness framework, stamped into an engagement by
+  `engagement.py seed-target`
 - `tools/backtest_lab.py` — runs one strategy across instruments and vendors and
   says whether the result clears its own noise floor. Reads a feed's timezone
   correctly (see "Backtesting" below), normalises to basis points, and compares
@@ -208,7 +222,10 @@ top-level directories and points here for the detail.
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
-  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
+  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
+  `one-person-ai-company.md` (the reference target architecture that playbook's
+  phase 7 designs toward — a local service business as a loop rather than a
+  funnel, with agents on the information and people on money and risk), plus
   `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has

@@ -47,6 +47,20 @@ from pathlib import Path
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent / "engagements"
 
 DECK_FILENAME = "deck.html"
+
+#: A seeded deliverable carries this until someone has replaced the generic
+#: answers with the business's own. ``advance`` refuses while it is present:
+#: a phase whose gate is "the file exists" is trivially passed by a file that
+#: was written for you, and a reference architecture stamped in unedited is
+#: exactly that file.
+SEED_MARKER = "UNEDITED REFERENCE"
+
+#: The target architecture a design phase can start from.
+REFERENCE_BLUEPRINT = (
+    Path(__file__).resolve().parent.parent
+    / "docs"
+    / "blueprint-one-person-ai-company.json"
+)
 STATE_FILENAME = "engagement.json"
 
 
@@ -219,6 +233,14 @@ def _deliverable_ready(root: Path, slug: str, phase: Phase) -> Path:
         raise EngagementError(
             f"phase {phase.key!r} is gated on its deliverable: write "
             f"{path} first. Done when {phase.done_when}."
+        )
+    if SEED_MARKER in path.read_text(encoding="utf-8"):
+        raise EngagementError(
+            f"phase {phase.key!r} is gated on a deliverable that is still the "
+            f"seeded reference: {path} carries the {SEED_MARKER} line. It "
+            "describes a generic business, not this one. Replace every "
+            "section with what this business will actually do, then delete "
+            "that line."
         )
     return path
 
@@ -564,6 +586,145 @@ def export_flow(root: Path, slug: str) -> Path:
     return out
 
 
+# --- seeding the target design ----------------------------------------------
+
+
+def seed_target(root: Path, slug: str, blueprint_path: Path | None = None) -> Path:
+    """Write ``07-target-design.md`` from a reference architecture.
+
+    The point of a reference is that the shape of the answer -- five stages in
+    a loop, agents on the information, people on money and risk, config in
+    plain files -- does not have to be rediscovered per business. The point of
+    the marker it carries is that the *content* does. Until someone deletes
+    that line, ``advance`` refuses, so nobody gets through the design phase on
+    a document that describes somebody else's business.
+    """
+    data = load(root, slug)
+    path = root / slug / PHASE_BY_KEY["design"].deliverable
+    if path.exists() and path.read_text(encoding="utf-8").strip():
+        if SEED_MARKER not in path.read_text(encoding="utf-8"):
+            raise EngagementError(
+                f"{path} already has real content in it — seeding would "
+                "overwrite work. Delete it first if that is what you want."
+            )
+
+    source = blueprint_path or REFERENCE_BLUEPRINT
+    blueprint = json.loads(Path(source).read_text(encoding="utf-8"))
+
+    procs = {p["id"]: p for p in blueprint.get("processes", [])}
+    agents, gates, files = [], [], []
+    for proc in blueprint.get("processes", []):
+        for step in proc.get("steps", []):
+            if step.get("kind", "task") not in ("task", "decision"):
+                continue
+            owner = step.get("owner", "")
+            if step.get("executor") == "ai" and owner not in agents:
+                agents.append(owner)
+            if step.get("executor") == "person" and step.get("kind") == "decision":
+                gates.append((proc["id"], step["number"], step.get("title", "")))
+    for tool in blueprint.get("tools", []):
+        if str(tool.get("category", "")).startswith("Config"):
+            files.append((tool.get("name", ""), tool.get("purpose", "")))
+
+    out = [
+        f"# Target process — {data['name']}",
+        "",
+        f"> {SEED_MARKER} — seeded from `{Path(source).name}`, which describes a",
+        "> generic local service business. Every heading below is a question about",
+        f"> {data['name']}, not an answer. `engagement.py advance` refuses while this",
+        "> line is here; delete it once each section says what *this* business does.",
+        "",
+        "## The loop",
+        "",
+        "The reference treats the business as a loop rather than a funnel: what",
+        "finance collects decides what marketing spends, and every stage hands the",
+        "next one a complete record so nobody re-interviews the customer.",
+        "",
+    ]
+    for dept in blueprint.get("departments", []):
+        if not dept.get("processes"):
+            continue
+        out.append(f"### {dept['name']}")
+        out.append("")
+        out.append(f"*Reference:* {dept.get('description', '').strip()}")
+        out.append("")
+        for proc_id in dept["processes"]:
+            proc = procs.get(proc_id)
+            if proc:
+                out.append(
+                    f"- `{proc_id}` — {proc['name']} ({proc.get('frequency', '?')})"
+                )
+        out.append("")
+        out.append(f"**TODO:** what does {data['name']} actually do here, and what")
+        out.append("does the phase 2 map say it costs today?")
+        out.append("")
+
+    out += [
+        "## Agent roles",
+        "",
+        f"The reference specifies {len(agents)} roles. A role exists because a step",
+        "in the map says it runs one — do not name an agent here that no step uses.",
+        "",
+    ]
+    out += [f"- {a}" for a in agents]
+    out += [
+        "",
+        f"**TODO:** which of these {data['name']} needs, which it does not, and what",
+        "it needs that is not on this list.",
+        "",
+        "## Where a person stays",
+        "",
+        "Agents move information; a person moves money and risk. The reference puts",
+        "an approval gate at each of these:",
+        "",
+    ]
+    out += [f"- {t} (`{p}` step {n})" for p, n, t in gates]
+    out += [
+        "",
+        f"**TODO:** the same question for {data['name']} — and for each gate, the",
+        "threshold in a file rather than a judgement call in a prompt.",
+        "",
+        "## What the agents read",
+        "",
+        "Config lives in plain files the owner edits. Agents read them; only a",
+        "person writes them.",
+        "",
+    ]
+    out += [f"- **{name}** — {purpose}" for name, purpose in files]
+    out += [
+        "",
+        f"**TODO:** what {data['name']}'s equivalents are, who owns each, and where",
+        "they live.",
+        "",
+        "## Controls",
+        "",
+        "**TODO:** for every automated or agent step above — the review, the",
+        "threshold, and the rollback. Then run:",
+        "",
+        "```bash",
+        "python tools/ai_company.py gates --blueprint <this business's blueprint>",
+        "```",
+        "",
+        "It convicts any AI step that commits money with no person in front of it.",
+        "A target design that cannot pass it is not finished.",
+        "",
+        "## Before and after",
+        "",
+        "**TODO:** the monthly human load of this design against phase 2's figure:",
+        "",
+        "```bash",
+        "python tools/ai_company.py hours --blueprint <target> --baseline <current>",
+        "```",
+        "",
+        "Nothing here is Live until go-live. A target map claiming Live is a pitch",
+        "pretending to be a record.",
+        "",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out), encoding="utf-8")
+    return path
+
+
 # --- CLI --------------------------------------------------------------------
 
 
@@ -606,6 +767,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--phase", help="only this phase key")
 
     p = sub.add_parser(
+        "seed-target",
+        help="start 07-target-design.md from the reference architecture",
+    )
+    p.add_argument("slug")
+    p.add_argument(
+        "--blueprint",
+        type=Path,
+        help="a blueprint to seed from (default: the one-person AI company "
+        "reference architecture)",
+    )
+
+    p = sub.add_parser(
         "export-flow",
         help="write flow.json for static/flow-canvas.html (Import button)",
     )
@@ -640,6 +813,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "deck":
             out = build_deck(args.root, args.slug)
             print(f"Deck written to {out}")
+        elif args.command == "seed-target":
+            out = seed_target(args.root, args.slug, args.blueprint)
+            print(f"Seeded {out}")
+            print(
+                f"It carries the {SEED_MARKER} line and advance refuses while "
+                "that is there — it describes a generic business, not this one."
+            )
         elif args.command == "export-flow":
             out = export_flow(args.root, args.slug)
             print(f"Flow written to {out} — open static/flow-canvas.html and Import it")

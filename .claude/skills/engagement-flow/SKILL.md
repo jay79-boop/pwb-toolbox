@@ -90,6 +90,15 @@ bullets with bold lead-ins instead.
   before-and-after number rather than an adjective. Nothing here is Live
   until go-live; a target map that claims Live is a pitch pretending to be a
   record.
+  Start from the reference architecture rather than a blank file —
+  `python tools/engagement.py seed-target <slug>` writes the loop, the agent
+  roles, the approval gates and the plain-file config as questions about this
+  business (see `docs/one-person-ai-company.md`). It leaves an
+  `UNEDITED REFERENCE` line that blocks `advance` until you have replaced the
+  generic answers, which is deliberate: seed the shape, never the content.
+  Then run `python tools/ai_company.py gates --blueprint <target>` — it
+  convicts any AI step that commits money with no person step in front of it,
+  and a target design that cannot pass it is not finished.
 - **present → `08-feedback.md`** — Render the deck
   (`python tools/engagement.py deck <slug>` → `deck.html`, opens from
   `file://`), have the user present it or walk through it with them, and
