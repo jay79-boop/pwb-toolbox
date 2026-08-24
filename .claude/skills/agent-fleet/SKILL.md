@@ -30,12 +30,22 @@ titled so `list_sessions` reads as an org chart.
 
 ## The ledger rule
 
-Durable state lives in repo files and PR state — for this repo, the
-Operating System block in CLAUDE.md plus open PRs and branches. SendMessage
-is for notification only ("PR 112 is green", "yielding the surface"). If a
-fact must survive a restart, it goes in the ledger before the turn ends.
-Any agent, on any wake, answers "where was I" by reading the ledger — never
-by asking a peer to remember.
+Durable state lives in repo files and PR state. For this repo the ledger is
+split by how fast each fact goes stale: `CLAUDE.md` for the project itself,
+`docs/state.md` for operating state (fleet registry, roadmap), and
+`docs/decisions/` for one-file-per-decision history. **Volatile facts — open
+PRs, their CI, `main`'s SHA — are written nowhere and derived from git and
+the GitHub tools at read time.** Do not re-introduce them to a file; that is
+the defect the split removed.
+
+SendMessage is for notification only ("PR 112 is green", "yielding the
+surface"). If a fact must survive a restart, it goes in the ledger before the
+turn ends. Any agent, on any wake, answers "where was I" by reading the
+ledger and querying GitHub — never by asking a peer to remember.
+
+Filing a decision: add a **new file** to `docs/decisions/` named
+`YYYY-MM-DD-slug.md` and add its row to that directory's README. Never rewrite
+an existing entry — a correction is a new entry that supersedes the old one.
 
 ## Heartbeats and the watchdog
 
