@@ -7,7 +7,7 @@
    cycled; win/loss uses the diverging blue-red pair, because the
    question there is polarity, not identity.
    ============================================================ */
-.lab {
+:root {
   color-scheme: light;
   --surface-1: #fcfcfb;
   --plane: #f9f9f7;
@@ -35,7 +35,7 @@
   --ord-4: #184f95;
 }
 @media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) .lab {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --surface-1: #1a1a19;
     --plane: #0d0d0d;
@@ -56,7 +56,7 @@
     --ord-4: #2a78d6;
   }
 }
-:root[data-theme="dark"] .lab {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --surface-1: #1a1a19;
   --plane: #0d0d0d;
@@ -78,7 +78,9 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; }
+/* The viewer paints its own ground behind the page, so body takes an explicit
+   token background — a transparent body silently borrows the host's theme. */
+body { margin: 0; background: var(--plane); color: var(--text-primary); }
 
 .lab {
   background: var(--plane);
@@ -627,6 +629,9 @@ td.neg { color: var(--neg); }
     if (f[0].value > 0 && f[1].value === 0) {
       notices.push(["critical", "!", "<b>No Candle 1 in any session.</b><p>All " + f[0].value +
         " sessions in range are missing the opening-range bar — this is a regular-hours chart, not a strategy result.</p>"]);
+    }
+    if (run.notes) {
+      notices.push(["good", "i", "<b>About this run.</b><p>" + esc(run.notes) + "</p>"]);
     }
     var breaches = S.riskBreaches(trades);
     if (breaches.length) {
