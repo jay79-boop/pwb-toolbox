@@ -202,7 +202,9 @@ def test_records_built_from_the_simulator_carry_the_funnel():
         bar("09:45", 93.5, 96, 93, 95),
         bar("10:00", 95, 101, 95, 100.5),
     ]
-    cfg = Config()
+    # Gross, so this stays a test of the record contract rather than of cost
+    # policy; the 1bp default is pinned by test_reversal_15m_sim.py instead.
+    cfg = Config(cost_bps=0.0)
     results = simulate(bars, cfg, sma={date(2026, 8, 17): 50.0})
     out = rec.from_reversal_sim(results, cfg, symbol="CME_MINI:NQ1!")
 

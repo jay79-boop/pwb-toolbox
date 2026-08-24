@@ -730,6 +730,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="PATH",
         help="sweep rr, sma-length and bar size around the chosen values and "
         "write night-lab fragility specs (see night_lab.py plan)",
+    )
     ap.add_argument(
         "--json", metavar="PATH", help="write a Strategy Lab run record here"
     )
