@@ -29,9 +29,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import json
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from datetime import date, datetime, time
 from typing import Iterable, Sequence
@@ -78,10 +79,15 @@ class Trade:
     target: float
     stop: float
     reason: str
+    # Round-trip friction in points, deducted from every trade. A
+    # frictionless run measures nothing tradeable -- this repo learned that
+    # on eight years of S&P minute bars -- and this sim shipped frictionless
+    # anyway until a stranger's backtest-hygiene checklist caught it.
+    cost: float = 0.0
 
     @property
     def points(self) -> float:
-        return (self.exit - self.entry) * self.direction
+        return (self.exit - self.entry) * self.direction - self.cost
 
     @property
     def r_multiple(self) -> float:
@@ -113,6 +119,10 @@ class Config:
     skip_friday: bool = True
     reward_risk: float = 2.4
     bar_minutes: int = 15
+    # Round-trip cost in basis points of the entry price. Basis points so one
+    # default is sane across a 6,000-point future and a $600 ETF alike; 1bp
+    # on ES is roughly a tick of spread plus a tick of slippage.
+    cost_bps: float = 1.0
 
 
 def _minute(t: time) -> int:
@@ -273,7 +283,16 @@ def _run_day(
     result.entry, result.target, result.stop = entry, target, stop
 
     result.trade = _fill(
-        day, day_bars, setup, direction, entry, target, stop, flat_min, cfg.bar_minutes
+        day,
+        day_bars,
+        setup,
+        direction,
+        entry,
+        target,
+        stop,
+        flat_min,
+        cfg.bar_minutes,
+        cfg.cost_bps,
     )
     return result
 
@@ -302,6 +321,7 @@ def _fill(
     stop: float,
     flat_min: int,
     bar_minutes: int = 15,
+    cost_bps: float = 0.0,
 ) -> Trade | None:
     """Walk every bar after the setup along its assumed path, in order.
 
@@ -333,6 +353,7 @@ def _fill(
             target=target,
             stop=stop,
             reason=reason,
+            cost=entry_px * cost_bps / 10_000,
         )
 
     for i, bar in enumerate(after):
@@ -369,12 +390,38 @@ def _straddles_flatten(bar: Bar, flat_min: int, bar_minutes: int = 15) -> bool:
     return bar.open_minute < flat_min <= bar.open_minute + bar_minutes
 
 
-def summarize(results: Iterable[DayResult]) -> dict[str, float | int]:
-    results = list(results)
+def _r_stats(rs: list[float]) -> dict[str, float]:
+    """The risk numbers a screenshot never shows: how the R sequence behaved.
+
+    Profit factor and max drawdown are computed over R-multiples rather than
+    dollars, so the figures compare across instruments the way everything in
+    this repo does. Sortino uses per-trade R as the return unit with a zero
+    floor -- the downside deviation of losing trades only.
+    """
+    if not rs:
+        return {"profit_factor": 0.0, "sortino": 0.0, "max_dd_r": 0.0}
+    gains = sum(r for r in rs if r > 0)
+    losses = abs(sum(r for r in rs if r < 0))
+    downside = [r for r in rs if r < 0]
+    dd_sigma = math.sqrt(sum(r * r for r in downside) / len(rs)) if downside else 0.0
+    peak = worst = running = 0.0
+    for r in rs:
+        running += r
+        peak = max(peak, running)
+        worst = min(worst, running - peak)
+    return {
+        "profit_factor": round(gains / losses, 2) if losses else float("inf"),
+        "sortino": round(statistics.mean(rs) / dd_sigma, 2) if dd_sigma else 0.0,
+        "max_dd_r": round(abs(worst), 2),
+    }
+
+
+def summarize(results: Iterable[DayResult]) -> dict:
+    results = sorted(results, key=lambda r: r.day)
     trades = [r.trade for r in results if r.trade]
     wins = [t for t in trades if t.points > 0]
     rs = [t.r_multiple for t in trades]
-    return {
+    out = {
         "days": len(results),
         "days_with_candle_1": sum(1 for r in results if r.candle1),
         "days_committed": sum(1 for r in results if r.committed_direction),
@@ -385,6 +432,27 @@ def summarize(results: Iterable[DayResult]) -> dict[str, float | int]:
         "avg_r": round(statistics.mean(rs), 3) if rs else 0.0,
         "points": round(sum(t.points for t in trades), 2),
     }
+    out.update(_r_stats(rs))
+
+    # The out-of-sample question, answered the way season_scan answers it:
+    # split the days in half chronologically and report each side. A result
+    # that lives entirely in one half is describing a regime, not an edge.
+    if len(results) >= 2:
+        cut = results[len(results) // 2].day
+        for name, keep in (
+            ("first_half", lambda r: r.day < cut),
+            ("second_half", lambda r: r.day >= cut),
+        ):
+            half_rs = [r.trade.r_multiple for r in results if keep(r) and r.trade]
+            out[name] = {
+                "trades": len(half_rs),
+                "total_r": round(sum(half_rs), 2),
+                "avg_r": round(statistics.mean(half_rs), 3) if half_rs else 0.0,
+            }
+        out["halves_agree"] = (out["first_half"]["total_r"] > 0) == (
+            out["second_half"]["total_r"] > 0
+        )
+    return out
 
 
 def trades_as_records(trades: list[Trade], symbol: str) -> list[dict]:
@@ -395,6 +463,12 @@ def trades_as_records(trades: list[Trade], symbol: str) -> list[dict]:
     the exact fields `night_lab.trade_r` computes R from, `lane` keeps the
     sim's trades distinguishable from the desk's in leak-mining, and `opened`
     carries the timestamp patterns (weekday, month) leaks are mined over.
+
+    The exported exit is NET of the trade's round-trip cost -- shifted
+    against the trade's direction by the friction -- so the R the night lab
+    recomputes from prices equals the sim's own net r_multiple. Exporting
+    raw fills would hand the stress lab a gross record from a net backtest,
+    and the two would quietly disagree about every trade.
     """
     records = []
     for i, t in enumerate(trades):
@@ -407,7 +481,7 @@ def trades_as_records(trades: list[Trade], symbol: str) -> list[dict]:
                 "status": "closed",
                 "entry": t.entry,
                 "stop": t.stop,
-                "exit": t.exit,
+                "exit": t.exit - t.direction * t.cost,
                 "opened": t.entry_ts.isoformat(),
                 "closed": t.exit_ts.isoformat(),
                 "reason": t.reason,
@@ -498,6 +572,45 @@ def read_csv(path: str) -> list[Bar]:
     return sorted(bars, key=lambda b: b.ts)
 
 
+def fragility_sweep(
+    bars: Sequence[Bar], cfg: Config, daily_csv: str | None
+) -> list[dict]:
+    """Total net R at each setting one step around the chosen ones.
+
+    The output is the exact payload `night_lab.run_fragility` scores: a
+    chosen value that is the lone peak of its own sweep is fitted to the
+    history it was tuned on, and the night lab is where that verdict is
+    delivered. No model is involved at any point -- this is the same sim run
+    ten more times.
+    """
+    session_days = sorted({b.ts.date() for b in bars})
+    specs = []
+    for param, values in (
+        ("rr", [round(cfg.reward_risk + d, 1) for d in (-0.8, -0.4, 0.0, 0.4, 0.8)]),
+        ("sma_length", [max(10, cfg.sma_length + d) for d in (-20, -10, 0, 10, 20)]),
+    ):
+        sweep = {}
+        for value in values:
+            trial = replace(
+                cfg,
+                reward_risk=value if param == "rr" else cfg.reward_risk,
+                sma_length=value if param == "sma_length" else cfg.sma_length,
+            )
+            sma = None
+            if trial.use_sma and daily_csv:
+                sma = sma_from_daily_csv(daily_csv, trial.sma_length, session_days)
+            stats = summarize(simulate(bars, trial, sma=sma))
+            sweep[str(value)] = stats["total_r"]
+        specs.append(
+            {
+                "param": param,
+                "chosen": cfg.reward_risk if param == "rr" else cfg.sma_length,
+                "sweep": sweep,
+            }
+        )
+    return specs
+
+
 def _parse_hm(text: str) -> time:
     hh, mm = text.replace(" ", "").split(":")
     return time(int(hh), int(mm))
@@ -533,6 +646,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="PATH",
         help="write closed trades as JSON for the night lab (see night_lab.py plan --sim)",
     )
+    ap.add_argument(
+        "--cost-bps",
+        type=float,
+        default=1.0,
+        help="round-trip cost in basis points of entry, charged on every trade "
+        "(default 1.0; a frictionless run measures nothing tradeable)",
+    )
+    ap.add_argument(
+        "--no-costs",
+        action="store_true",
+        help="charge nothing, for comparing gross to net only",
+    )
+    ap.add_argument(
+        "--fragility-out",
+        metavar="PATH",
+        help="sweep rr and sma-length around the chosen values and write "
+        "night-lab fragility specs (see night_lab.py plan)",
+    )
     args = ap.parse_args(argv)
 
     if args.fetch:
@@ -552,6 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         use_sma=not args.no_sma,
         skip_friday=not args.trade_fridays,
         reward_risk=args.rr,
+        cost_bps=0.0 if args.no_costs else args.cost_bps,
     )
     if cfg.use_sma and daily_csv:
         session_days = sorted({b.ts.date() for b in bars})
@@ -570,7 +702,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     width = max(len(k) for k in stats)
     for key, value in stats.items():
+        if isinstance(value, dict):
+            value = (
+                f"{value['trades']} trades, {value['total_r']:+} R "
+                f"(avg {value['avg_r']:+})"
+            )
         print(f"{key.replace('_', ' '):<{width}}  {value}")
+    if args.fragility_out:
+        specs = fragility_sweep(bars, cfg, daily_csv)
+        Path(args.fragility_out).write_text(
+            json.dumps(specs, indent=2), encoding="utf-8"
+        )
+        print(f"fragility specs -> {args.fragility_out}")
+
     starved = sum(1 for r in results if r.skipped_reason == "sma warming up")
     if starved and starved == stats["days_with_candle_1"]:
         print(

@@ -47,8 +47,15 @@ def only(results, day: date):
 
 
 def run(day_bars, **cfg_kwargs):
-    """Simulate with the trend SMA pinned, so no warm-up is needed."""
+    """Simulate with the trend SMA pinned, so no warm-up is needed.
+
+    Costs default to zero HERE (and only here): these fixtures pin the fill
+    mechanics -- a stop is exactly -1R, a target exactly +RR -- and friction
+    would smear every exact assertion. The cost behavior has its own tests;
+    the shipped default charges 1bp round trip.
+    """
     trend = cfg_kwargs.pop("trend", 50.0)
+    cfg_kwargs.setdefault("cost_bps", 0.0)
     cfg = Config(**cfg_kwargs)
     days = {b.ts.date() for b in day_bars}
     return simulate(day_bars, cfg, sma={d: trend for d in days})
@@ -503,3 +510,150 @@ def test_a_trend_above_the_day_still_filters_the_long_out(tmp_path):
 
 def test_daily_path_sits_beside_the_bars():
     assert daily_path_for("night_lab/es15.csv").endswith("es15.daily.csv")
+
+
+# ---------------------------------------------------------------------------
+# Costs. A frictionless run measures nothing tradeable -- this repo's own
+# doctrine -- and this sim shipped frictionless until a stream's hygiene
+# checklist caught it. The default charges; the mechanics tests above run
+# gross on purpose (see `run`).
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta as _td
+
+from tools.reversal_15m_sim import fragility_sweep, trades_as_records, _r_stats
+from tools.night_lab import trade_r as night_lab_trade_r
+
+
+def first_trade(results):
+    return next(r.trade for r in results if r.trade)
+
+
+def losing_long_day():
+    """The proven stop-hit shape from test_stop_hit_loses_exactly_one_r."""
+    return bars(
+        MONDAY,
+        CANDLE1,
+        ("09:30", 92.0, 95.0, 88.0, 94.0),
+        ("09:45", 93.5, 96.0, 93.0, 95.0),
+        ("10:00", 94.0, 94.0, 91.0, 91.2),
+    )
+
+
+def winning_short_day():
+    """The proven short shape from test_short_is_the_mirror_image."""
+    return bars(
+        MONDAY,
+        CANDLE1,
+        ("09:30", 99.0, 103.0, 97.0, 98.0),
+        ("09:45", 98.5, 98.5, 96.0, 96.5),
+        ("10:00", 96.0, 96.0, 89.0, 89.5),
+    )
+
+
+def shift_days(day_bars, days):
+    """The same session replayed `days` later, skipping onto a weekday."""
+    out = []
+    for b in day_bars:
+        ts = b.ts + _td(days=days)
+        while ts.weekday() >= 5:
+            ts += _td(days=2)
+        out.append(Bar(ts, b.open, b.high, b.low, b.close))
+    return out
+
+
+def test_costs_shave_the_target_r_below_the_gross_rr():
+    gross = first_trade(run(winning_long_day()))
+    net = first_trade(run(winning_long_day(), cost_bps=10.0))
+    assert gross.r_multiple == pytest.approx(2.4)
+    assert net.r_multiple < gross.r_multiple
+    # 10bp of the entry, over the trade's risk, is exactly the R shaved off.
+    shaved = (net.entry * 10 / 10_000) / abs(net.entry - net.stop)
+    assert net.r_multiple == pytest.approx(2.4 - shaved)
+
+
+def test_a_stopped_trade_loses_more_than_one_r_net():
+    net = first_trade(run(losing_long_day(), cost_bps=10.0))
+    assert net.r_multiple < -1.0
+
+
+def test_the_shipped_default_charges_one_bp():
+    assert Config().cost_bps == 1.0
+
+
+def test_the_export_bridge_hands_the_night_lab_net_fills():
+    # The R the night lab recomputes from exported prices must equal the
+    # sim's own net r_multiple, or the stress record quietly goes gross.
+    trades = [r.trade for r in run(winning_long_day(), cost_bps=10.0) if r.trade]
+    record = trades_as_records(trades, "ES")[0]
+    assert night_lab_trade_r(record) == pytest.approx(trades[0].r_multiple)
+
+
+def test_short_exports_net_the_cost_the_other_way():
+    trades = [
+        r.trade for r in run(winning_short_day(), cost_bps=10.0, trend=150.0) if r.trade
+    ]
+    record = trades_as_records(trades, "ES")[0]
+    assert night_lab_trade_r(record) == pytest.approx(trades[0].r_multiple)
+    assert record["exit"] > trades[0].exit  # a short's net exit sits higher
+
+
+# ---------------------------------------------------------------------------
+# The richer stats and the out-of-sample halves
+# ---------------------------------------------------------------------------
+
+
+def test_r_stats_profit_factor_and_drawdown():
+    got = _r_stats([2.0, -1.0, -1.0, 2.0, -1.0])
+    assert got["profit_factor"] == pytest.approx(4.0 / 3.0, abs=0.01)
+    assert got["max_dd_r"] == pytest.approx(2.0)
+
+
+def test_r_stats_all_wins_is_infinite_pf_not_a_crash():
+    got = _r_stats([1.0, 2.0])
+    assert got["profit_factor"] == float("inf")
+    assert got["max_dd_r"] == 0.0
+    assert _r_stats([]) == {"profit_factor": 0.0, "sortino": 0.0, "max_dd_r": 0.0}
+
+
+def test_summarize_reports_both_halves_and_whether_they_agree():
+    bars = []
+    for i in range(4):
+        bars += shift_days(winning_long_day(), i * 7)
+    for i in range(4, 8):
+        bars += shift_days(losing_long_day(), i * 7)
+    stats = summarize(run(bars))
+    assert stats["first_half"]["total_r"] > 0
+    assert stats["second_half"]["total_r"] < 0
+    assert stats["halves_agree"] is False
+
+
+def test_agreeing_halves_say_so():
+    bars = []
+    for i in range(4):
+        bars += shift_days(winning_long_day(), i * 7)
+    stats = summarize(run(bars))
+    assert stats["halves_agree"] is True
+
+
+# ---------------------------------------------------------------------------
+# The fragility sweep feeds the night lab's cliff scoring
+# ---------------------------------------------------------------------------
+
+
+def test_the_sweep_produces_scorable_specs_with_the_chosen_value_inside():
+    bars = []
+    for i in range(3):
+        bars += shift_days(winning_long_day(), i * 7)
+    cfg = Config(cost_bps=0.0, use_sma=False)
+    specs = fragility_sweep(bars, cfg, daily_csv=None)
+    assert {s["param"] for s in specs} == {"rr", "sma_length"}
+    rr = next(s for s in specs if s["param"] == "rr")
+    assert str(rr["chosen"]) in rr["sweep"]
+    assert len(rr["sweep"]) == 5
+    # And the night lab can score it as-is.
+    from tools.night_lab import make_job, run_fragility
+
+    job = make_job("fragility", rr, "frag-rr")
+    got = run_fragility(job)
+    assert "verdict" in got or "cliff" in got

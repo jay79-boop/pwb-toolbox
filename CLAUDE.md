@@ -206,6 +206,13 @@ A worked example, for this repo's 21st MCP key:
   directory (never duplicates its math), saves inputs to localStorage.
   Gain/loss pair `#0d9488`/`#ef4444` validated CVD-safe; signs always shown
 - `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
+- `tools/prop_sim.py` — prices a prop-firm evaluation against its own
+  published rules: pass probability, attempts and cost to funded, EV per
+  attempt, for a coin flip or a sim's real exported R-distribution. Monte
+  Carlo pinned against gambler's-ruin closed forms; demonstrates that sizing
+  moves pass odds only *through* the rules (time limits, consistency,
+  trailing drawdowns), not on the pure walk. Protocol and honesty caveats in
+  `docs/prop-sim.md`; intel source in `docs/field-notes-prop-firms-and-data.md`
 - `tools/reversal_15m_sim.py` — executable second reading of the 15-Minute Reversal
   rules in `pine/`. Pine cannot be run from a container, so this is what a rule change
   gets checked against; it emulates TradingView's intrabar path assumption so a low
@@ -321,6 +328,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/bill_ladder.py compare --roll-rate 3.70 --hold-rate 3.81  # roll vs hold
 python tools/reversal_15m_sim.py bars.csv           # 15-Minute Reversal over a bar CSV
+python tools/prop_sim.py evaluate --risk 200  # price a prop eval (demo rules)
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
@@ -656,8 +664,8 @@ This section is **machine-read by Claude and the live dashboard**. Changes here 
 
 ## Current State
 
-**Main Branch:** `b54e99c` — the merge of #107 (season-scan permutations scaled
-to the FDR family size). Last updated 2026-08-24.
+**Main Branch:** `1b11dca` — the merge of #110 (stream field notes: costs
+charged by default, prop-eval pricer). Last updated 2026-08-24.
 
 **Seven pull requests merged on 2026-08-23**, after a day when none had: #71
 (15-Minute Reversal), #87 (cross-instrument backtest lab), #90
@@ -666,15 +674,21 @@ against real signatures), #96 (planner exit ladder), #98 (builder step editor).
 Six of them had gone stale enough to need `main` merged in first, and two no
 longer merged at all.
 
-**Open (4).** (#99, #100 and #101 merged; the night-lab/season-scan series
-#103–#107 merged straight through on 2026-08-23/24.)
+**Open (4).** (#99–#101 merged; the night-lab/season-scan series #103–#108 and
+the field-notes #110 merged straight through on 2026-08-23/24.)
 
 | PR | What it is | State |
 | --- | --- | --- |
 | #78 | Desk agent and the risk model that sets its limits | **conflicts with `main`** and far behind; another session was working it |
-| #102 | State-block update for the rest of the merge drain | overlaps this block — whichever merges second must reconcile |
-| #108 | Route held folklore windows into the season screener | level with `main` |
-| #109 | Agent-fleet critique, design, and operating protocol | level with `main` |
+| #102 | State-block update for the rest of the merge drain | overlaps this block and is now largely superseded by it — reconcile or close |
+| #109 | Agent-fleet critique, design, and operating protocol | merged `main` in and resolved the decision-log collision |
+| #111 | VWAP strategy family: fade candidate, crossover control, noise-floor lab | opened 2026-08-24 by another session |
+
+**This block collided twice in one hour.** #108 and #110 both landed while
+#109 was open, and both added a decision-log entry at the same insertion
+point — the exact failure the fleet design calls out as why conversational
+state does not survive. Anything editing this block should merge `main`
+immediately before pushing, not at review time.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -733,6 +747,29 @@ block, CI green as the only "done" — not by time.
 **Deliberately not armed:** standing Routines burn tokens around the clock;
 arming is an explicit "arm the fleet" command, and the skill carries the
 steps.
+
+### [2026-08-24] Stream intel: costs closed, prop evals priced
+**Decision:** A live stream's backtest-hygiene argument was distilled into
+`docs/field-notes-prop-firms-and-data.md` and acted on the same day. Four
+changes: `reversal_15m_sim` now charges costs by default (1bp round trip,
+`--no-costs` to compare) with the export bridge netting the friction so the
+night lab's R stays consistent; the sim reports profit factor, Sortino, max
+drawdown in R, and a chronological first/second-half split; `--fragility-out`
+sweeps rr and sma-length into night-lab fragility specs that a bare `plan`
+picks up by file convention; and `tools/prop_sim.py` prices prop-firm
+evaluations (the stream's one genuinely new idea).
+**The catch that mattered:** the sim shipped frictionless despite this
+repo's own "charge costs always" doctrine, and its frictionless trades were
+feeding the night lab's stress record. A stranger's checklist found it.
+**The prop math worth remembering:** for a pure symmetric walk, P(pass) =
+D/(T+D) regardless of position size — pinned against the closed form.
+Sizing moves pass odds only through the rules (time limits reward it,
+consistency rules tax it, trailing drawdowns are strictly worse than
+fixed), and on the demo rule set a coin flip is EV-negative at every size.
+The tool exists so any real firm's rules get priced before an eval is
+bought; owner's stated intent is "want the math first", not a commitment.
+
+### [2026-08-23] Seasonality lab: calendar rotation measured, not remembered
 **Decision:** Add `tools/season_scan.py` — batch seasonal analysis over the
 sector ETFs, index baselines, crypto and the owner's own names, with a
 three-gate evidence standard: within-year permutation test (2,000
