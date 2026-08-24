@@ -2,6 +2,7 @@ from .base_strategy import BaseStrategy
 from .commission import get_commissions
 from .backtest_engine import run_strategy, generate_sensitivity_results
 from .optimization_engine import optimize_strategy_ga
+from .config import StrategyConfig, GAOptimizationConfig
 from .indicators import (
     EmaRsiStochRsiSignal,
     SigmoidLongCompositeIndicator,

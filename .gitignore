@@ -31,3 +31,28 @@ graphify-out/manifest.json
 
 # Strategy Lab run records: local test output, not source.
 strategy-runs/
+# desk agent: raw per-run stdout. Noise, and it can contain chart detail.
+# runs.jsonl (the structured record) and out/ (gameplans, Pine reports) stay
+# tracked -- they are the agent's memory and its deliverables.
+tools/desk_agent/logs/
+
+# per-business engagement data (tools/engagement.py) — this fork is public,
+# and a client's process map and findings are confidential. Only the README
+# explaining that is tracked.
+engagements/*
+!engagements/README.md
+
+# speculative paper-trading ledger (tools/spec_desk.py) — personal trade
+# records, and this fork is public. Only the README explaining that is tracked.
+spec_desk/*
+!spec_desk/README.md
+
+# overnight stress lab (tools/night_lab.py) - derived from personal trade
+# records, and this fork is public. Only the README explaining that is tracked.
+night_lab/*
+!night_lab/README.md
+
+# seasonality lab (tools/season_scan.py) - universe.txt names what the
+# owner watches and the report derives from it; this fork is public.
+season/*
+!season/README.md

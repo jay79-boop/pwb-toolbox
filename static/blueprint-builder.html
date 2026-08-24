@@ -1,0 +1,2007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blueprint Builder - Operations Framework</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1e40af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-900: #111827;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary: #3b82f6;
+                --gray-50: #0f172a;
+                --gray-100: #1e293b;
+                --gray-200: #334155;
+                --gray-300: #475569;
+                --gray-600: #cbd5e1;
+                --gray-700: #e2e8f0;
+                --gray-900: #f8fafc;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: var(--gray-50);
+            color: var(--gray-900);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: var(--gray-100);
+            border-bottom: 2px solid var(--gray-200);
+            padding: 20px 0;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: var(--gray-600);
+            font-size: 0.95em;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+            padding: 15px;
+            background: var(--gray-100);
+            border-radius: 8px;
+        }
+
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: var(--primary-dark);
+        }
+
+        button.secondary {
+            background: var(--gray-300);
+            color: var(--gray-900);
+        }
+
+        button.secondary:hover {
+            background: var(--gray-400);
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid var(--gray-200);
+            margin: 20px 0;
+        }
+
+        .tab-button {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 1em;
+            color: var(--gray-600);
+            border-radius: 0;
+        }
+
+        .tab-button.active {
+            border-bottom-color: var(--primary);
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 20px 0;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid var(--gray-200);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .form-section {
+                background: var(--gray-100);
+            }
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="number"],
+        input[type="date"],
+        input[type="url"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            font-size: 0.95em;
+            font-family: inherit;
+            background: white;
+            color: var(--gray-900);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            input[type="text"],
+            input[type="email"],
+            input[type="number"],
+            input[type="date"],
+            input[type="url"],
+            textarea,
+            select {
+                background: var(--gray-50);
+                border-color: var(--gray-300);
+            }
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .list-item {
+            background: var(--gray-50);
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 4px solid var(--primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .list-item {
+                background: var(--gray-200);
+            }
+        }
+
+        .list-item-content {
+            flex: 1;
+        }
+
+        .list-item-title {
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .list-item-desc {
+            font-size: 0.9em;
+            color: var(--gray-600);
+        }
+
+        .list-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        button.sm {
+            padding: 6px 12px;
+            font-size: 0.85em;
+        }
+
+        button.danger {
+            background: var(--danger);
+        }
+
+        button.danger:hover {
+            background: #dc2626;
+        }
+
+        button:disabled,
+        button:disabled:hover {
+            opacity: 0.4;
+            cursor: default;
+            background: var(--gray-300);
+            color: var(--gray-600);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-essential {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .status-important {
+            background: #fef3c7;
+            color: #78350f;
+        }
+
+        .status-nice {
+            background: #dbeafe;
+            color: #0c4a6e;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            background: var(--gray-100);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--primary);
+        }
+
+        .summary-label {
+            font-size: 0.9em;
+            color: var(--gray-600);
+            margin-bottom: 5px;
+        }
+
+        .summary-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--gray-600);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .modal-content {
+                background: var(--gray-100);
+            }
+        }
+
+        .modal-header {
+            font-size: 1.5em;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: flex-end;
+        }
+
+        .chip {
+            display: inline-block;
+            background: var(--gray-200);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin-right: 5px;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .card {
+                background: var(--gray-100);
+            }
+        }
+
+        .card-title {
+            font-size: 1.2em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .help-text {
+            font-size: 0.85em;
+            color: var(--gray-600);
+            margin-top: 5px;
+        }
+
+        /* --- step editor --- */
+        .subview-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .subview-head h2 {
+            margin: 0;
+        }
+
+        .step-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background: var(--gray-50);
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 4px solid var(--primary);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .step-row { background: var(--gray-200); }
+        }
+
+        .step-row.is-editing {
+            border-left-color: var(--warning);
+        }
+
+        .step-num {
+            flex: none;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: var(--gray-200);
+            color: var(--gray-900);
+            font-size: 0.8em;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .step-body { flex: 1; min-width: 0; }
+
+        .step-title { font-weight: 600; margin-bottom: 2px; }
+
+        .step-meta {
+            font-size: 0.85em;
+            color: var(--gray-600);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 10px;
+        }
+
+        .step-branches {
+            font-size: 0.85em;
+            color: var(--gray-600);
+            margin-top: 4px;
+        }
+
+        .step-actions { display: flex; gap: 6px; flex: none; }
+
+        .kind-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            background: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .kind-decision { background: #fef3c7; color: #78350f; }
+        .kind-delay    { background: #e0e7ff; color: #3730a3; }
+        .kind-end      { background: #e5e7eb; color: #374151; }
+        .kind-goto     { background: #dbeafe; color: #0c4a6e; }
+
+        .branch-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .branch-row input { flex: 1; }
+        .branch-row select { flex: 1; }
+
+        .tool-picker {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 14px;
+            padding: 8px 0;
+        }
+
+        .tool-picker label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin: 0;
+            font-weight: 400;
+            font-size: 0.9em;
+        }
+
+        .tool-picker input { width: auto; }
+
+        .checks {
+            border-radius: 6px;
+            padding: 12px 15px;
+            margin-bottom: 15px;
+            background: var(--gray-100);
+            font-size: 0.9em;
+        }
+
+        .checks-title {
+            font-weight: 700;
+            font-size: 0.8em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--gray-600);
+            margin-bottom: 6px;
+        }
+
+        .checks div { padding: 2px 0; }
+        .checks .err { color: var(--danger); }
+        .checks .warn { color: var(--warning); }
+        .checks .ok { color: var(--success); }
+
+        .issue-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 700;
+            margin-left: 6px;
+        }
+
+        .issue-err { background: #fee2e2; color: #991b1b; }
+        .issue-warn { background: #fef3c7; color: #78350f; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>📋 Blueprint Builder</h1>
+            <p class="subtitle">Build your operations blueprint—map departments, processes, tools, and changes</p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="toolbar">
+            <button onclick="exportJSON()">📥 Export as JSON</button>
+            <button onclick="importJSON()" class="secondary">📤 Import JSON</button>
+            <button onclick="downloadExample()" class="secondary">📄 Load Example</button>
+            <button onclick="resetBlueprint()" class="secondary">🔄 Reset</button>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="switchTab('meta')">Metadata</button>
+            <button class="tab-button" onclick="switchTab('departments')">Departments</button>
+            <button class="tab-button" onclick="switchTab('processes')">Processes</button>
+            <button class="tab-button" onclick="switchTab('tools')">Tools</button>
+            <button class="tab-button" onclick="switchTab('changes')">Changes</button>
+            <button class="tab-button" onclick="switchTab('roadmap')">Roadmap</button>
+            <button class="tab-button" onclick="switchTab('dashboard')">Dashboard</button>
+        </div>
+
+        <!-- Metadata Tab -->
+        <div id="meta" class="tab-content active">
+            <div class="form-section">
+                <h2>Organization Information</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Organization Name *</label>
+                        <input type="text" id="metaName" placeholder="e.g., TradeCo" onchange="updateMetadata()">
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="metaOwner" placeholder="e.g., Alice Chen" onchange="updateMetadata()">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="metaDesc" placeholder="Overview of your organization..." onchange="updateMetadata()"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Version</label>
+                        <input type="text" id="metaVersion" value="1.0" onchange="updateMetadata()">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Departments Tab -->
+        <div id="departments" class="tab-content">
+            <div class="form-section">
+                <h2 id="deptFormTitle">Add Department</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Department Name *</label>
+                        <input type="text" id="deptName" placeholder="e.g., Research & Strategy">
+                    </div>
+                    <div class="form-group">
+                        <label>Department Lead *</label>
+                        <input type="text" id="deptOwner" placeholder="e.g., Bob Martinez">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Number of Members</label>
+                        <input type="number" id="deptMembers" min="1" value="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="deptDesc" placeholder="What does this department do?"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Processes it runs</label>
+                        <div class="tool-picker" id="deptProcPicker"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tools it uses</label>
+                        <div class="tool-picker" id="deptToolPicker"></div>
+                    </div>
+                </div>
+                <button id="deptSubmit" onclick="addDepartment()">Add Department</button>
+                <button id="deptCancel" class="secondary" style="display:none" onclick="cancelEdit('dept')">Cancel</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Departments</h2>
+                <div id="deptList"></div>
+                <div id="deptEmpty" class="empty-state">No departments yet. Add one above.</div>
+            </div>
+        </div>
+
+        <!-- Processes Tab -->
+        <div id="processes" class="tab-content">
+            <div id="procMain">
+            <div class="form-section">
+                <h2 id="procFormTitle">Add Process</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Process Name *</label>
+                        <input type="text" id="procName" placeholder="e.g., Live Trade Execution">
+                    </div>
+                    <div class="form-group">
+                        <label>Process Owner *</label>
+                        <input type="text" id="procOwner" placeholder="e.g., Carol Zhang">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <select id="procCategory">
+                            <option value="inbound">Inbound (customer input)</option>
+                            <option value="internal">Internal (operations)</option>
+                            <option value="outbound">Outbound (customer output)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Frequency</label>
+                        <input type="text" id="procFreq" placeholder="e.g., daily, per-transaction">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="procDesc" placeholder="What does this process do?"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>KPI — what is measured</label>
+                        <input type="text" id="procKpiMetric" placeholder="e.g., Execution slippage (avg)">
+                    </div>
+                    <div class="form-group">
+                        <label>Target</label>
+                        <input type="text" id="procKpiTarget" placeholder="e.g., &lt; 1 bp">
+                    </div>
+                    <div class="form-group">
+                        <label>Currently</label>
+                        <input type="text" id="procKpiCurrent" placeholder="e.g., 0.8 bp">
+                    </div>
+                </div>
+                <button id="procSubmit" onclick="addProcess()">Add Process</button>
+                <button id="procCancel" class="secondary" style="display:none" onclick="cancelEdit('proc')">Cancel</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Processes</h2>
+                <div id="procList"></div>
+                <div id="procEmpty" class="empty-state">No processes yet. Add one above.</div>
+            </div>
+            </div>
+
+            <!-- Step editor: one process at a time, so a step has room for its
+                 branches without the list around it going to soup -->
+            <div id="stepEditor" style="display:none">
+                <div class="form-section">
+                    <div class="subview-head">
+                        <button class="secondary sm" onclick="closeSteps()">&larr; Back to processes</button>
+                        <h2 id="stepEditorTitle">Steps</h2>
+                    </div>
+                    <div class="checks" id="stepChecks"></div>
+                    <div id="stepList"></div>
+                    <div id="stepEmpty" class="empty-state">
+                        No steps yet. Start with the trigger &mdash; the thing that kicks this process off.
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2 id="stepFormTitle">Add Step</h2>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Title *</label>
+                            <input type="text" id="stepTitle" placeholder="e.g., Review and approve trade signals">
+                            <div class="help-text">Verb-first, roughly four to eight words.</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Kind</label>
+                            <select id="stepKind" onchange="onStepKindChange()">
+                                <option value="task">Task</option>
+                                <option value="decision">Decision (forks the flow)</option>
+                                <option value="delay">Wait</option>
+                                <option value="end">End (terminator)</option>
+                                <option value="goto">Go to (jumps back)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Executor</label>
+                            <select id="stepExecutor">
+                                <option value="person">Person</option>
+                                <option value="automation">Automation</option>
+                                <option value="ai">AI agent</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Owner</label>
+                            <input type="text" id="stepOwner" placeholder="e.g., Execution Lead">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Duration</label>
+                            <input type="text" id="stepDuration" placeholder="e.g., 10 minutes">
+                            <div class="help-text">How long one run takes, not how often it runs.</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Times per month</label>
+                            <input type="text" id="stepFrequency" placeholder="e.g., 40">
+                            <div class="help-text">Duration &times; frequency is what turns this into a cost.</div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="stepGotoGroup" style="display:none">
+                        <label>Jumps back to</label>
+                        <select id="stepGoto"></select>
+                        <div class="help-text">A go-to step ends its branch here; the flow resumes at the step named above.</div>
+                    </div>
+                    <div class="form-group" id="stepBranchGroup" style="display:none">
+                        <label>Branches</label>
+                        <div id="branchRows"></div>
+                        <button class="sm secondary" onclick="addBranchRow()">+ Add branch</button>
+                        <div class="help-text">Every way out of a fork gets a label, one to three words. Send a branch that stops to &ldquo;Ends here&rdquo;.</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tools</label>
+                        <div class="tool-picker" id="stepTools"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea id="stepNotes" placeholder="Purpose / Inputs / Procedure / Output"></textarea>
+                    </div>
+                    <button id="stepSubmit" onclick="saveStep()">Add Step</button>
+                    <button id="stepCancel" class="secondary" style="display:none" onclick="cancelStepEdit()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tools Tab -->
+        <div id="tools" class="tab-content">
+            <div class="form-section">
+                <h2 id="toolFormTitle">Add Tool</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Tool Name *</label>
+                        <input type="text" id="toolName" placeholder="e.g., Slack">
+                    </div>
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <input type="text" id="toolCategory" placeholder="e.g., Communication">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Purpose *</label>
+                    <input type="text" id="toolPurpose" placeholder="What is this tool used for?">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="toolOwner" placeholder="e.g., David Lee">
+                    </div>
+                    <div class="form-group">
+                        <label>Criticality</label>
+                        <select id="toolCrit">
+                            <option value="essential">Essential</option>
+                            <option value="important">Important</option>
+                            <option value="nice-to-have">Nice-to-have</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Cost (USD)</label>
+                        <input type="number" id="toolCost" min="0" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Billing Frequency</label>
+                        <select id="toolFreq">
+                            <option value="one-time">One-time</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                            <option value="per-transaction">Per-transaction</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Users</label>
+                    <input type="text" id="toolUsers" placeholder="e.g., Carol Zhang, Execution Operator">
+                    <div class="help-text">Comma separated. Who touches it, by name or by role.</div>
+                </div>
+                <button id="toolSubmit" onclick="addTool()">Add Tool</button>
+                <button id="toolCancel" class="secondary" style="display:none" onclick="cancelEdit('tool')">Cancel</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Tools</h2>
+                <div id="toolList"></div>
+                <div id="toolEmpty" class="empty-state">No tools yet. Add one above.</div>
+            </div>
+        </div>
+
+        <!-- Changes Tab -->
+        <div id="changes" class="tab-content">
+            <div class="form-section">
+                <h2>Log a Change</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Change Title *</label>
+                        <input type="text" id="chgTitle" placeholder="e.g., Implemented automated risk monitoring">
+                    </div>
+                    <div class="form-group">
+                        <label>Date *</label>
+                        <input type="date" id="chgDate">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <select id="chgCategory">
+                            <option value="process">Process</option>
+                            <option value="tool">Tool</option>
+                            <option value="department">Department</option>
+                            <option value="workflow">Workflow</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="chgStatus">
+                            <option value="completed">Completed</option>
+                            <option value="in-progress">In-Progress</option>
+                            <option value="planned">Planned</option>
+                            <option value="rolled-back">Rolled-back</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="chgDesc" placeholder="What changed and why?"></textarea>
+                </div>
+                <button id="changeSubmit" onclick="addChange()">Log Change</button>
+                <button id="changeCancel" class="secondary" style="display:none" onclick="cancelEdit('change')">Cancel</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Change History</h2>
+                <div id="chgList"></div>
+                <div id="chgEmpty" class="empty-state">No changes logged yet.</div>
+            </div>
+        </div>
+
+        <!-- Roadmap Tab -->
+        <div id="roadmap" class="tab-content">
+            <div class="form-section">
+                <h2 id="roadFormTitle">Add Roadmap Item</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Title *</label>
+                        <input type="text" id="rmTitle" placeholder="e.g., Automate daily P&L reporting">
+                    </div>
+                    <div class="form-group">
+                        <label>Owner *</label>
+                        <input type="text" id="rmOwner" placeholder="e.g., David Lee">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Category *</label>
+                        <input type="text" id="rmCategory" placeholder="e.g., process automation">
+                    </div>
+                    <div class="form-group">
+                        <label>Priority</label>
+                        <select id="rmPriority">
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Target Date</label>
+                        <input type="date" id="rmDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select id="rmStatus">
+                            <option value="backlog">Backlog</option>
+                            <option value="planned">Planned</option>
+                            <option value="in-progress">In-Progress</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="rmDesc" placeholder="Why and how?"></textarea>
+                </div>
+                <button id="roadSubmit" onclick="addRoadmapItem()">Add Roadmap Item</button>
+                <button id="roadCancel" class="secondary" style="display:none" onclick="cancelEdit('road')">Cancel</button>
+            </div>
+
+            <div class="form-section">
+                <h2>Roadmap</h2>
+                <div id="rmList"></div>
+                <div id="rmEmpty" class="empty-state">No roadmap items yet.</div>
+            </div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content">
+            <div class="summary" id="dashboardSummary"></div>
+            <div class="dashboard" id="dashboardContent"></div>
+        </div>
+    </div>
+
+    <script src="process-grammar.js"></script>
+    <script>
+        const PG = window.ProcessGrammar;
+
+        let blueprint = {
+            meta: { name: '', version: '1.0', owner: '', description: '', created: new Date().toISOString(), lastModified: new Date().toISOString() },
+            departments: [],
+            processes: [],
+            tools: [],
+            changes: [],
+            roadmap: []
+        };
+
+        // ---------------------------------------------------------------
+        // Working state
+        // ---------------------------------------------------------------
+        // The builder used to hold the blueprint in memory only, so a refresh
+        // threw the lot away. It autosaves now; export is for handing the file
+        // somewhere else, not for not losing it.
+        const STORE_KEY = 'blueprint-builder-v1';
+
+        function save() {
+            try { localStorage.setItem(STORE_KEY, JSON.stringify(blueprint)); } catch (e) {}
+        }
+
+        function loadStored() {
+            try {
+                const raw = localStorage.getItem(STORE_KEY);
+                if (!raw) return null;
+                const data = JSON.parse(raw);
+                if (!data || typeof data !== 'object' || !data.meta) return null;
+                ['departments', 'processes', 'tools', 'changes', 'roadmap'].forEach(k => {
+                    if (!Array.isArray(data[k])) data[k] = [];
+                });
+                return data;
+            } catch (e) { return null; }
+        }
+
+        function esc(value) {
+            return String(value === undefined || value === null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function slug(name) {
+            return String(name).toLowerCase().replace(/\s/g, '-');
+        }
+
+        function syncMetaFields() {
+            document.getElementById('metaName').value = blueprint.meta.name || '';
+            document.getElementById('metaOwner').value = blueprint.meta.owner || '';
+            document.getElementById('metaDesc').value = blueprint.meta.description || '';
+            document.getElementById('metaVersion').value = blueprint.meta.version || '1.0';
+        }
+
+        function renderAll() {
+            renderDepartments();
+            renderProcesses();
+            renderTools();
+            renderChanges();
+            renderRoadmap();
+            refreshDeptPickers();
+        }
+
+        // the pickers list whatever exists right now, so adding a process has
+        // to reach them or a department can never be pointed at it
+        function refreshDeptPickers() {
+            renderDeptPickers(readPicker('deptProcPicker'), readPicker('deptToolPicker'));
+        }
+
+        // ---------------------------------------------------------------
+        // Editing existing entries
+        // ---------------------------------------------------------------
+        // Every list was add-and-delete only, so fixing a typo meant deleting
+        // the row — which, for a process, took its steps with it.
+        let editing = { dept: null, proc: null, tool: null, change: null, road: null };
+
+        const FORM_LABELS = {
+            dept:   { add: 'Add Department',   edit: 'Save Department',   title: 'Department' },
+            proc:   { add: 'Add Process',      edit: 'Save Process',      title: 'Process' },
+            tool:   { add: 'Add Tool',         edit: 'Save Tool',         title: 'Tool' },
+            change: { add: 'Log Change',       edit: 'Save Change',       title: null },
+            road:   { add: 'Add Roadmap Item', edit: 'Save Roadmap Item', title: 'Roadmap Item' }
+        };
+
+        const FORM_INPUTS = {
+            dept:   ['deptName', 'deptOwner', 'deptDesc', 'deptMembers'],
+            proc:   ['procName', 'procOwner', 'procDesc', 'procFreq', 'procCategory',
+                     'procKpiMetric', 'procKpiTarget', 'procKpiCurrent'],
+            tool:   ['toolName', 'toolOwner', 'toolPurpose', 'toolCategory', 'toolCost',
+                     'toolCrit', 'toolFreq', 'toolUsers'],
+            change: ['chgTitle', 'chgDate', 'chgDesc', 'chgCategory', 'chgStatus'],
+            road:   ['rmTitle', 'rmOwner', 'rmCategory', 'rmDesc', 'rmDate', 'rmPriority', 'rmStatus']
+        };
+
+        function setFormMode(key, index) {
+            editing[key] = index;
+            const on = index !== null;
+            const labels = FORM_LABELS[key];
+            document.getElementById(key + 'Submit').textContent = on ? labels.edit : labels.add;
+            document.getElementById(key + 'Cancel').style.display = on ? '' : 'none';
+            const heading = document.getElementById(key + 'FormTitle');
+            if (heading && labels.title) {
+                heading.textContent = (on ? 'Edit ' : 'Add ') + labels.title;
+            }
+        }
+
+        function clearForm(key) {
+            FORM_INPUTS[key].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (el.tagName === 'SELECT') el.selectedIndex = 0;
+                else el.value = '';
+            });
+            if (key === 'dept') {
+                document.getElementById('deptMembers').value = 1;
+                renderDeptPickers([], []);
+            }
+        }
+
+        // A department that owns nothing is the reason the dashboard's
+        // department cards came up empty: these two lists were never filled in.
+        function renderPicker(boxId, items, chosen) {
+            const box = document.getElementById(boxId);
+            if (!box) return;
+            box.innerHTML = '';
+            if (!items.length) {
+                const hint = document.createElement('span');
+                hint.className = 'help-text';
+                hint.textContent = 'Nothing to pick yet.';
+                box.appendChild(hint);
+                return;
+            }
+            items.forEach(item => {
+                const label = document.createElement('label');
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = item.id;
+                input.checked = (chosen || []).indexOf(item.id) > -1;
+                const span = document.createElement('span');
+                span.textContent = item.name || item.id;
+                label.appendChild(input);
+                label.appendChild(span);
+                box.appendChild(label);
+            });
+        }
+
+        function readPicker(boxId) {
+            return Array.prototype.filter
+                .call(document.querySelectorAll('#' + boxId + ' input'), c => c.checked)
+                .map(c => c.value);
+        }
+
+        function renderDeptPickers(processes, tools) {
+            renderPicker('deptProcPicker', blueprint.processes, processes);
+            renderPicker('deptToolPicker', blueprint.tools, tools);
+        }
+
+        function cancelEdit(key) {
+            setFormMode(key, null);
+            clearForm(key);
+        }
+
+        // deleting a row shifts every index after it, so an edit in flight has
+        // to be dropped rather than left pointing at whatever moved up
+        function dropEditIfActive(key) {
+            if (editing[key] !== null) cancelEdit(key);
+        }
+
+        // ---------------------------------------------------------------
+        // Step grammar
+        // ---------------------------------------------------------------
+        // The rules live in process-grammar.js, shared with the canvas and
+        // held against check_process() in tools/blueprint_converter.py by
+        // tests/test_process_grammar.py. Adding a rule means adding it there.
+        const STEP_KINDS = PG.STEP_KINDS;
+        const KIND_LABEL = PG.KIND_LABEL;
+        const EXECUTOR_LABEL = PG.EXECUTOR_LABEL;
+
+        function stepChecks(proc) {
+            const findings = PG.checks(PG.fromProcess(proc || {}));
+            return {
+                errors: findings.filter(f => f.severity === "error"),
+                warnings: findings.filter(f => f.severity === "warning"),
+            };
+        }
+
+        function renumberSteps(proc) {
+            PG.renumber(proc.steps || []);
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            if (tabName === 'dashboard') renderDashboard();
+        }
+
+        function updateMetadata() {
+            blueprint.meta.name = document.getElementById('metaName').value;
+            blueprint.meta.owner = document.getElementById('metaOwner').value;
+            blueprint.meta.description = document.getElementById('metaDesc').value;
+            blueprint.meta.version = document.getElementById('metaVersion').value;
+            blueprint.meta.lastModified = new Date().toISOString();
+            save();
+        }
+
+        function addDepartment() {
+            const name = document.getElementById('deptName').value;
+            const owner = document.getElementById('deptOwner').value;
+            if (!name || !owner) { alert('Name and Owner are required'); return; }
+            const data = {
+                name, owner,
+                members: parseInt(document.getElementById('deptMembers').value) || 1,
+                description: document.getElementById('deptDesc').value,
+                processes: readPicker('deptProcPicker'),
+                tools: readPicker('deptToolPicker')
+            };
+            if (editing.dept === null) {
+                blueprint.departments.push(Object.assign({ id: `dept-${slug(name)}` }, data));
+            } else {
+                // the id stays put on a rename: it is what everything else
+                // in the file points at
+                Object.assign(blueprint.departments[editing.dept], data);
+            }
+            cancelEdit('dept');
+            renderDepartments();
+            save();
+        }
+
+        function editDepartment(i) {
+            const d = blueprint.departments[i];
+            document.getElementById('deptName').value = d.name || '';
+            document.getElementById('deptOwner').value = d.owner || '';
+            document.getElementById('deptMembers').value = d.members || 1;
+            document.getElementById('deptDesc').value = d.description || '';
+            renderDeptPickers(d.processes || [], d.tools || []);
+            setFormMode('dept', i);
+            document.getElementById('deptFormTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function renderDepartments() {
+            const list = document.getElementById('deptList');
+            const empty = document.getElementById('deptEmpty');
+            if (blueprint.departments.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.departments.map((d, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${d.name}</div>
+                            <div class="list-item-desc">Lead: ${d.owner} | ${d.members} members</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm secondary" onclick="editDepartment(${i})">Edit</button>
+                            <button class="sm danger" onclick="removeDepartment(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeDepartment(i) {
+            blueprint.departments.splice(i, 1);
+            dropEditIfActive('dept');
+            renderDepartments();
+            save();
+        }
+
+        function addProcess() {
+            const name = document.getElementById('procName').value;
+            const owner = document.getElementById('procOwner').value;
+            const category = document.getElementById('procCategory').value;
+            if (!name || !owner) { alert('Name and Owner are required'); return; }
+            const data = {
+                name, owner, category,
+                description: document.getElementById('procDesc').value,
+                frequency: document.getElementById('procFreq').value,
+                kpi: {
+                    metric: document.getElementById('procKpiMetric').value,
+                    target: document.getElementById('procKpiTarget').value,
+                    current: document.getElementById('procKpiCurrent').value
+                }
+            };
+            if (editing.proc === null) {
+                blueprint.processes.push(Object.assign({ id: `proc-${slug(name)}` },
+                    data, { steps: [] }));
+            } else {
+                // merge rather than replace: the steps and the id are not in
+                // this form, and renaming a process must not throw them away
+                Object.assign(blueprint.processes[editing.proc], data);
+            }
+            cancelEdit('proc');
+            renderProcesses();
+            save();
+        }
+
+        function editProcess(i) {
+            const proc = blueprint.processes[i];
+            document.getElementById('procName').value = proc.name || '';
+            document.getElementById('procOwner').value = proc.owner || '';
+            document.getElementById('procCategory').value = proc.category || 'internal';
+            document.getElementById('procDesc').value = proc.description || '';
+            document.getElementById('procFreq').value = proc.frequency || '';
+            const kpi = proc.kpi || {};
+            document.getElementById('procKpiMetric').value = kpi.metric || '';
+            document.getElementById('procKpiTarget').value = kpi.target || '';
+            document.getElementById('procKpiCurrent').value = kpi.current || '';
+            setFormMode('proc', i);
+            document.getElementById('procFormTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function renderProcesses() {
+            refreshDeptPickers();
+            const list = document.getElementById('procList');
+            const empty = document.getElementById('procEmpty');
+            if (blueprint.processes.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.processes.map((p, i) => {
+                    const count = (p.steps || []).length;
+                    const issues = stepChecks(p);
+                    let badge = '';
+                    if (issues.errors.length) {
+                        badge = '<span class="issue-badge issue-err">' +
+                                issues.errors.length + ' to fix</span>';
+                    } else if (issues.warnings.length) {
+                        badge = '<span class="issue-badge issue-warn">' +
+                                issues.warnings.length + ' to look at</span>';
+                    }
+                    return `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${esc(p.name)}${badge}</div>
+                            <div class="list-item-desc">${esc(p.category)} | Owner: ${esc(p.owner)} | ${count} step${count === 1 ? '' : 's'}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm" onclick="openSteps(${i})">Steps (${count})</button>
+                            <button class="sm secondary" onclick="editProcess(${i})">Edit</button>
+                            <button class="sm danger" onclick="removeProcess(${i})">Delete</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        function removeProcess(i) {
+            blueprint.processes.splice(i, 1);
+            dropEditIfActive('proc');
+            renderProcesses();
+            save();
+        }
+
+        function addTool() {
+            const name = document.getElementById('toolName').value;
+            const owner = document.getElementById('toolOwner').value;
+            const purpose = document.getElementById('toolPurpose').value;
+            if (!name || !owner || !purpose) { alert('Name, Owner, and Purpose are required'); return; }
+            const data = {
+                name, owner, purpose,
+                category: document.getElementById('toolCategory').value,
+                criticality: document.getElementById('toolCrit').value,
+                cost: {
+                    amount: parseFloat(document.getElementById('toolCost').value) || 0,
+                    currency: 'USD',
+                    frequency: document.getElementById('toolFreq').value
+                },
+                users: document.getElementById('toolUsers').value
+                    .split(',').map(u => u.trim()).filter(Boolean)
+            };
+            if (editing.tool === null) {
+                blueprint.tools.push(Object.assign({ id: `tool-${slug(name)}` }, data));
+            } else {
+                // steps point at tools by id, so the id survives a rename
+                Object.assign(blueprint.tools[editing.tool], data);
+            }
+            cancelEdit('tool');
+            renderTools();
+            save();
+        }
+
+        function editTool(i) {
+            const t = blueprint.tools[i];
+            document.getElementById('toolName').value = t.name || '';
+            document.getElementById('toolOwner').value = t.owner || '';
+            document.getElementById('toolPurpose').value = t.purpose || '';
+            document.getElementById('toolCategory').value = t.category || '';
+            document.getElementById('toolCrit').value = t.criticality || 'important';
+            document.getElementById('toolCost').value = (t.cost && t.cost.amount) || '';
+            document.getElementById('toolFreq').value = (t.cost && t.cost.frequency) || 'monthly';
+            document.getElementById('toolUsers').value = (t.users || []).join(', ');
+            setFormMode('tool', i);
+            document.getElementById('toolFormTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function renderTools() {
+            refreshDeptPickers();
+            const list = document.getElementById('toolList');
+            const empty = document.getElementById('toolEmpty');
+            if (blueprint.tools.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.tools.map((t, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${t.name}</div>
+                            <div class="list-item-desc">${t.category} | $${t.cost.amount}/${t.cost.frequency} | Owner: ${t.owner}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <span class="status-badge status-${t.criticality}">${t.criticality}</span>
+                            <button class="sm secondary" onclick="editTool(${i})">Edit</button>
+                            <button class="sm danger" onclick="removeTool(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeTool(i) {
+            blueprint.tools.splice(i, 1);
+            dropEditIfActive('tool');
+            renderTools();
+            save();
+        }
+
+        function addChange() {
+            const title = document.getElementById('chgTitle').value;
+            const date = document.getElementById('chgDate').value;
+            if (!title || !date) { alert('Title and Date are required'); return; }
+            const data = {
+                title, date,
+                category: document.getElementById('chgCategory').value,
+                status: document.getElementById('chgStatus').value,
+                description: document.getElementById('chgDesc').value
+            };
+            if (editing.change === null) {
+                blueprint.changes.push(Object.assign({ id: `chg-${Date.now()}` }, data, { author: '' }));
+            } else {
+                Object.assign(blueprint.changes[editing.change], data);
+            }
+            cancelEdit('change');
+            renderChanges();
+            save();
+        }
+
+        function editChange(i) {
+            const c = blueprint.changes[i];
+            document.getElementById('chgTitle').value = c.title || '';
+            document.getElementById('chgDate').value = c.date || '';
+            document.getElementById('chgCategory').value = c.category || '';
+            document.getElementById('chgStatus').value = c.status || 'completed';
+            document.getElementById('chgDesc').value = c.description || '';
+            setFormMode('change', i);
+            document.getElementById('chgTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function renderChanges() {
+            const list = document.getElementById('chgList');
+            const empty = document.getElementById('chgEmpty');
+            if (blueprint.changes.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.changes.map((c, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${c.title}</div>
+                            <div class="list-item-desc">${c.date} | ${c.category} | ${c.status}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm secondary" onclick="editChange(${i})">Edit</button>
+                            <button class="sm danger" onclick="removeChange(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeChange(i) {
+            blueprint.changes.splice(i, 1);
+            dropEditIfActive('change');
+            renderChanges();
+            save();
+        }
+
+        function addRoadmapItem() {
+            const title = document.getElementById('rmTitle').value;
+            const owner = document.getElementById('rmOwner').value;
+            if (!title || !owner) { alert('Title and Owner are required'); return; }
+            const data = {
+                title, owner,
+                category: document.getElementById('rmCategory').value,
+                priority: document.getElementById('rmPriority').value,
+                targetDate: document.getElementById('rmDate').value,
+                status: document.getElementById('rmStatus').value,
+                description: document.getElementById('rmDesc').value
+            };
+            if (editing.road === null) {
+                blueprint.roadmap.push(Object.assign({ id: `roadmap-${Date.now()}` }, data));
+            } else {
+                Object.assign(blueprint.roadmap[editing.road], data);
+            }
+            cancelEdit('road');
+            renderRoadmap();
+            save();
+        }
+
+        function editRoadmapItem(i) {
+            const r = blueprint.roadmap[i];
+            document.getElementById('rmTitle').value = r.title || '';
+            document.getElementById('rmOwner').value = r.owner || '';
+            document.getElementById('rmCategory').value = r.category || '';
+            document.getElementById('rmPriority').value = r.priority || 'medium';
+            document.getElementById('rmDate').value = r.targetDate || '';
+            document.getElementById('rmStatus').value = r.status || 'backlog';
+            document.getElementById('rmDesc').value = r.description || '';
+            setFormMode('road', i);
+            document.getElementById('roadFormTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function renderRoadmap() {
+            const list = document.getElementById('rmList');
+            const empty = document.getElementById('rmEmpty');
+            if (blueprint.roadmap.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+            } else {
+                empty.style.display = 'none';
+                list.innerHTML = blueprint.roadmap.map((r, i) => `
+                    <div class="list-item">
+                        <div class="list-item-content">
+                            <div class="list-item-title">${r.title}</div>
+                            <div class="list-item-desc">${r.targetDate || 'TBD'} | ${r.priority} priority | Owner: ${r.owner}</div>
+                        </div>
+                        <div class="list-item-actions">
+                            <button class="sm secondary" onclick="editRoadmapItem(${i})">Edit</button>
+                            <button class="sm danger" onclick="removeRoadmapItem(${i})">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function removeRoadmapItem(i) {
+            blueprint.roadmap.splice(i, 1);
+            dropEditIfActive('road');
+            renderRoadmap();
+            save();
+        }
+
+        function renderDashboard() {
+            const summary = document.getElementById('dashboardSummary');
+            const content = document.getElementById('dashboardContent');
+            const toolCost = blueprint.tools.reduce((sum, t) => sum + (t.cost.frequency === 'yearly' ? t.cost.amount : t.cost.frequency === 'monthly' ? t.cost.amount * 12 : 0), 0);
+
+            summary.innerHTML = `
+                <div class="summary-card">
+                    <div class="summary-label">Departments</div>
+                    <div class="summary-value">${blueprint.departments.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Processes</div>
+                    <div class="summary-value">${blueprint.processes.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Tools</div>
+                    <div class="summary-value">${blueprint.tools.length}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-label">Annual Tool Cost</div>
+                    <div class="summary-value">$${toolCost.toFixed(0)}</div>
+                </div>
+            `;
+
+            content.innerHTML = `
+                <div class="card">
+                    <div class="card-title">Top 5 Most Expensive Tools</div>
+                    ${blueprint.tools.sort((a, b) => b.cost.amount - a.cost.amount).slice(0, 5).map(t => `
+                        <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                            <strong>${t.name}</strong> - $${t.cost.amount}/${t.cost.frequency}
+                        </div>
+                    `).join('') || '<p style="color: var(--gray-600);">No tools yet</p>'}
+                </div>
+                <div class="card">
+                    <div class="card-title">Critical Tools</div>
+                    ${blueprint.tools.filter(t => t.criticality === 'essential').map(t => `
+                        <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                            <strong>${t.name}</strong><br>
+                            <span style="font-size: 0.9em; color: var(--gray-600);">${t.category}</span>
+                        </div>
+                    `).join('') || '<p style="color: var(--gray-600);">No essential tools yet</p>'}
+                </div>
+                <div class="card">
+                    <div class="card-title">Active Roadmap</div>
+                    ${blueprint.roadmap.filter(r => r.status !== 'completed').length > 0 ? `
+                        ${blueprint.roadmap.filter(r => r.status !== 'completed').slice(0, 5).map(r => `
+                            <div style="padding: 10px 0; border-bottom: 1px solid var(--gray-300);">
+                                <strong>${r.title}</strong><br>
+                                <span style="font-size: 0.9em; color: var(--gray-600);">${r.priority} priority | ${r.status}</span>
+                            </div>
+                        `).join('')}
+                    ` : '<p style="color: var(--gray-600);">No active roadmap items</p>'}
+                </div>
+            `;
+        }
+
+        // ---------------------------------------------------------------
+        // Step editor
+        // ---------------------------------------------------------------
+        // One process at a time. A step carries nine fields and a branch list,
+        // which does not fit under a row in the process list without turning
+        // the page into soup.
+        let stepProc = null;       // index of the process being edited
+        let stepEditIndex = null;  // index of the step being edited, or null
+
+        function currentProc() {
+            return stepProc === null ? null : blueprint.processes[stepProc];
+        }
+
+        function openSteps(i) {
+            stepProc = i;
+            document.getElementById('procMain').style.display = 'none';
+            document.getElementById('stepEditor').style.display = '';
+            resetStepForm();
+            renderStepEditor();
+            window.scrollTo(0, 0);
+        }
+
+        function closeSteps() {
+            stepProc = null;
+            stepEditIndex = null;
+            document.getElementById('stepEditor').style.display = 'none';
+            document.getElementById('procMain').style.display = '';
+            renderProcesses();
+        }
+
+        function renderStepEditor() {
+            const proc = currentProc();
+            if (!proc) return;
+            document.getElementById('stepEditorTitle').textContent =
+                'Steps — ' + (proc.name || 'Untitled process');
+            renderStepList();
+            renderStepChecks();
+        }
+
+        function resetStepForm() {
+            stepEditIndex = null;
+            document.getElementById('stepTitle').value = '';
+            document.getElementById('stepKind').value = 'task';
+            document.getElementById('stepExecutor').value = 'person';
+            document.getElementById('stepOwner').value = '';
+            document.getElementById('stepDuration').value = '';
+            document.getElementById('stepFrequency').value = '';
+            document.getElementById('stepNotes').value = '';
+            document.getElementById('branchRows').innerHTML = '';
+            document.getElementById('stepSubmit').textContent = 'Add Step';
+            document.getElementById('stepCancel').style.display = 'none';
+            document.getElementById('stepFormTitle').textContent = 'Add Step';
+            renderToolPicker([]);
+            onStepKindChange();
+        }
+
+        function cancelStepEdit() {
+            resetStepForm();
+            renderStepEditor();
+        }
+
+        function onStepKindChange() {
+            const kind = document.getElementById('stepKind').value;
+            document.getElementById('stepBranchGroup').style.display = kind === 'decision' ? '' : 'none';
+            document.getElementById('stepGotoGroup').style.display = kind === 'goto' ? '' : 'none';
+            // a fork has at least two ways out, so start it with two
+            if (kind === 'decision' && !document.getElementById('branchRows').children.length) {
+                addBranchRow();
+                addBranchRow();
+            }
+            refreshDestinations();
+        }
+
+        // Destinations are the sibling steps, never the step itself.
+        function destinationOptions(selected, includeEnd) {
+            const proc = currentProc();
+            const steps = (proc && proc.steps) || [];
+            const self = stepEditIndex === null ? null : steps[stepEditIndex];
+            let html = '<option value="">(pick a step)</option>';
+            if (includeEnd) {
+                html += '<option value="end"' + (selected === 'end' ? ' selected' : '') + '>Ends here</option>';
+            }
+            steps.forEach(st => {
+                if (self && st.number === self.number) return;
+                const on = String(selected) === String(st.number) ? ' selected' : '';
+                html += '<option value="' + st.number + '"' + on + '>' +
+                        st.number + ' — ' + esc(st.title || '') + '</option>';
+            });
+            return html;
+        }
+
+        function refreshDestinations() {
+            const target = document.getElementById('stepGoto');
+            target.innerHTML = destinationOptions(target.value, false);
+            Array.prototype.forEach.call(
+                document.querySelectorAll('#branchRows select'),
+                sel => { sel.innerHTML = destinationOptions(sel.value, true); }
+            );
+        }
+
+        function addBranchRow(label, to) {
+            const row = document.createElement('div');
+            row.className = 'branch-row';
+            row.innerHTML = '<input type="text" placeholder="e.g., Approved">' +
+                            '<select></select>' +
+                            '<button class="sm danger" type="button">Remove</button>';
+            row.querySelector('input').value = label === undefined ? '' : label;
+            row.querySelector('select').innerHTML =
+                destinationOptions(to === undefined ? '' : to, true);
+            row.querySelector('button').onclick = function () { row.remove(); };
+            document.getElementById('branchRows').appendChild(row);
+        }
+
+        function readBranchRows() {
+            const out = [];
+            Array.prototype.forEach.call(
+                document.querySelectorAll('#branchRows .branch-row'),
+                row => {
+                    const label = row.querySelector('input').value.trim();
+                    const raw = row.querySelector('select').value;
+                    if (!label && !raw) return;   // an untouched row is not a branch
+                    out.push({
+                        label: label,
+                        to: raw === 'end' ? 'end' : (raw === '' ? null : parseInt(raw, 10))
+                    });
+                }
+            );
+            return out;
+        }
+
+        function renderToolPicker(selected) {
+            const box = document.getElementById('stepTools');
+            const chosen = selected || [];
+            box.innerHTML = '';
+            if (!blueprint.tools.length) {
+                const hint = document.createElement('span');
+                hint.className = 'help-text';
+                hint.textContent = 'No tools yet — add them on the Tools tab and they will appear here.';
+                box.appendChild(hint);
+                return;
+            }
+            blueprint.tools.forEach(t => {
+                const label = document.createElement('label');
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = t.id;
+                input.checked = chosen.indexOf(t.id) > -1;
+                const span = document.createElement('span');
+                span.textContent = t.name || t.id;
+                label.appendChild(input);
+                label.appendChild(span);
+                box.appendChild(label);
+            });
+        }
+
+        function readToolPicker() {
+            return Array.prototype.filter
+                .call(document.querySelectorAll('#stepTools input'), c => c.checked)
+                .map(c => c.value);
+        }
+
+        function saveStep() {
+            const proc = currentProc();
+            if (!proc) return;
+            const title = document.getElementById('stepTitle').value.trim();
+            if (!title) { alert('A step needs a title.'); return; }
+            if (!Array.isArray(proc.steps)) proc.steps = [];
+
+            const kind = document.getElementById('stepKind').value;
+            const freqRaw = document.getElementById('stepFrequency').value.trim();
+            const freq = freqRaw === '' ? NaN : parseFloat(freqRaw);
+            const step = {
+                number: stepEditIndex === null
+                    ? proc.steps.length + 1
+                    : proc.steps[stepEditIndex].number,
+                title: title,
+                kind: kind,
+                executor: document.getElementById('stepExecutor').value
+            };
+            const owner = document.getElementById('stepOwner').value.trim();
+            if (owner) step.owner = owner;
+            const duration = document.getElementById('stepDuration').value.trim();
+            if (duration) step.duration = duration;
+            if (isFinite(freq) && freq > 0) step.frequency = freq;
+            const tools = readToolPicker();
+            if (tools.length) step.tools = tools;
+            if (kind === 'decision') {
+                const branches = readBranchRows();
+                if (branches.length) step.branches = branches;
+            }
+            if (kind === 'goto') {
+                const raw = document.getElementById('stepGoto').value;
+                step.goto = raw === '' ? null : parseInt(raw, 10);
+            }
+            const notes = document.getElementById('stepNotes').value.trim();
+            if (notes) step.notes = notes;
+
+            if (stepEditIndex === null) proc.steps.push(step);
+            else proc.steps[stepEditIndex] = step;
+            renumberSteps(proc);
+            resetStepForm();
+            renderStepEditor();
+            save();
+        }
+
+        function editStep(i) {
+            const proc = currentProc();
+            if (!proc) return;
+            const st = proc.steps[i];
+            stepEditIndex = i;
+            document.getElementById('stepTitle').value = st.title || '';
+            document.getElementById('stepKind').value =
+                STEP_KINDS.indexOf(st.kind) > -1 ? st.kind : 'task';
+            document.getElementById('stepExecutor').value = st.executor || 'person';
+            document.getElementById('stepOwner').value = st.owner || '';
+            document.getElementById('stepDuration').value = st.duration || '';
+            document.getElementById('stepFrequency').value =
+                st.frequency === undefined || st.frequency === null ? '' : String(st.frequency);
+            document.getElementById('stepNotes').value = st.notes || '';
+            renderToolPicker(st.tools || []);
+
+            const rows = document.getElementById('branchRows');
+            rows.innerHTML = '';
+            (st.branches || []).forEach(br => {
+                addBranchRow(br.label || '', br.to === null || br.to === undefined ? '' : br.to);
+            });
+
+            document.getElementById('stepSubmit').textContent = 'Save Step';
+            document.getElementById('stepCancel').style.display = '';
+            document.getElementById('stepFormTitle').textContent = 'Edit Step ' + st.number;
+            onStepKindChange();
+            document.getElementById('stepGoto').innerHTML = destinationOptions(
+                st.goto === undefined || st.goto === null ? '' : st.goto, false);
+            renderStepList();
+            document.getElementById('stepFormTitle').scrollIntoView({ block: 'center' });
+        }
+
+        function deleteStep(i) {
+            const proc = currentProc();
+            if (!proc) return;
+            const st = proc.steps[i];
+            if (!confirm('Delete step ' + st.number + ', "' + (st.title || '') +
+                         '"? Anything branching to it will be left pointing nowhere.')) return;
+            proc.steps.splice(i, 1);
+            renumberSteps(proc);
+            resetStepForm();
+            renderStepEditor();
+            save();
+        }
+
+        function moveStep(i, direction) {
+            const proc = currentProc();
+            if (!proc) return;
+            const j = i + direction;
+            if (j < 0 || j >= proc.steps.length) return;
+            const held = proc.steps[i];
+            proc.steps[i] = proc.steps[j];
+            proc.steps[j] = held;
+            renumberSteps(proc);
+            resetStepForm();
+            renderStepEditor();
+            save();
+        }
+
+        function renderStepList() {
+            const proc = currentProc();
+            const list = document.getElementById('stepList');
+            const empty = document.getElementById('stepEmpty');
+            const steps = (proc && proc.steps) || [];
+            if (!steps.length) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            list.innerHTML = steps.map((st, i) => {
+                const kind = st.kind || 'task';
+                const meta = [EXECUTOR_LABEL[st.executor || 'person'] || 'Person'];
+                if (st.owner) meta.push(esc(st.owner));
+                const time = [st.duration || '', st.frequency ? '×' + st.frequency + '/mo' : '']
+                    .filter(Boolean).join(' ');
+                if (time) meta.push(esc(time));
+                if (st.tools && st.tools.length) {
+                    meta.push(st.tools.length + ' tool' + (st.tools.length === 1 ? '' : 's'));
+                }
+
+                let flow = '';
+                if (kind === 'goto') {
+                    flow = '↩ jumps to ' + (st.goto ? 'step ' + st.goto : 'nowhere yet');
+                } else if (st.branches && st.branches.length) {
+                    flow = st.branches.map(br =>
+                        esc(br.label || '(unlabelled)') + ' → ' +
+                        (br.to === 'end' ? 'ends' : (br.to ? 'step ' + br.to : 'nowhere'))
+                    ).join(' · ');
+                }
+
+                return '<div class="step-row' + (stepEditIndex === i ? ' is-editing' : '') + '">' +
+                    '<div class="step-num">' + st.number + '</div>' +
+                    '<div class="step-body">' +
+                        '<div class="step-title">' + esc(st.title || '') +
+                        (kind !== 'task'
+                            ? ' <span class="kind-badge kind-' + kind + '">' + KIND_LABEL[kind] + '</span>'
+                            : '') +
+                        '</div>' +
+                        '<div class="step-meta">' +
+                            meta.map(m => '<span>' + m + '</span>').join('') +
+                        '</div>' +
+                        (flow ? '<div class="step-branches">' + flow + '</div>' : '') +
+                    '</div>' +
+                    '<div class="step-actions">' +
+                        '<button class="sm secondary" onclick="moveStep(' + i + ', -1)"' +
+                            (i === 0 ? ' disabled' : '') + '>↑</button>' +
+                        '<button class="sm secondary" onclick="moveStep(' + i + ', 1)"' +
+                            (i === steps.length - 1 ? ' disabled' : '') + '>↓</button>' +
+                        '<button class="sm secondary" onclick="editStep(' + i + ')">Edit</button>' +
+                        '<button class="sm danger" onclick="deleteStep(' + i + ')">Delete</button>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        function renderStepChecks() {
+            const box = document.getElementById('stepChecks');
+            const result = stepChecks(currentProc());
+            let html = '<div class="checks-title">Checks</div>';
+            if (!result.errors.length && !result.warnings.length) {
+                html += '<div class="ok">✓ Nothing outstanding.</div>';
+            } else {
+                const line = f => (f.step === null ? '' : 'Step ' + f.step + ' ') + f.message;
+                result.errors.forEach(f => { html += '<div class="err">' + esc(line(f)) + '</div>'; });
+                result.warnings.forEach(f => { html += '<div class="warn">' + esc(line(f)) + '</div>'; });
+            }
+            box.innerHTML = html;
+        }
+
+        function exportJSON() {
+            blueprint.meta.lastModified = new Date().toISOString();
+            const json = JSON.stringify(blueprint, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${blueprint.meta.name.replace(/\s/g, '-').toLowerCase()}-blueprint.json`;
+            a.click();
+        }
+
+        function importJSON() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/json';
+            input.onchange = e => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = evt => {
+                    try {
+                        blueprint = JSON.parse(evt.target.result);
+                        adoptBlueprint();
+                        alert('Blueprint imported successfully!');
+                    } catch (error) {
+                        alert('Error importing JSON: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        // Anything that swaps the whole blueprint out lands here, so the
+        // meta fields, the lists, the step editor and storage cannot drift
+        // apart from each other.
+        function adoptBlueprint() {
+            ['dept', 'proc', 'tool', 'change', 'road'].forEach(k => cancelEdit(k));
+            closeSteps();
+            ['departments', 'processes', 'tools', 'changes', 'roadmap'].forEach(k => {
+                if (!Array.isArray(blueprint[k])) blueprint[k] = [];
+            });
+            if (!blueprint.meta) blueprint.meta = {};
+            syncMetaFields();
+            renderAll();
+            save();
+        }
+
+        function downloadExample() {
+            // the example lives in docs/, not beside this file; note that a
+            // page opened from file:// cannot fetch at all, so Import JSON is
+            // the route that always works
+            fetch('../docs/blueprint-example.json')
+                .then(r => r.json())
+                .then(data => {
+                    blueprint = data;
+                    adoptBlueprint();
+                    alert('Example blueprint loaded!');
+                })
+                .catch(err => alert('Could not load the example (' + err.message +
+                    '). Opened from file://? Use Import JSON and pick docs/blueprint-example.json.'));
+        }
+
+        function resetBlueprint() {
+            if (confirm('Are you sure? This will clear all data.')) {
+                blueprint = {
+                    meta: { name: '', version: '1.0', owner: '', description: '', created: new Date().toISOString(), lastModified: new Date().toISOString() },
+                    departments: [],
+                    processes: [],
+                    tools: [],
+                    changes: [],
+                    roadmap: []
+                };
+                try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+                adoptBlueprint();
+            }
+        }
+
+        // Initialize
+        const storedBlueprint = loadStored();
+        if (storedBlueprint) blueprint = storedBlueprint;
+        syncMetaFields();
+        renderAll();
+    </script>
+</body>
+</html>

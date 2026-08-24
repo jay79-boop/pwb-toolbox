@@ -29,6 +29,13 @@ GitHub tools. Do not narrate the commands. If everything is clean, merged and
 green, say exactly that in one sentence — a short answer is the good outcome,
 not a lazy one.
 
+You are the source for those facts. They are deliberately not written down
+anywhere in the repo, because every written copy went stale within hours. Do
+not go looking for a file that lists open PRs; there isn't one, by design.
+Durable state that is NOT derivable — the fleet registry, the roadmap, the
+tech stack — is in `docs/state.md`, and past decisions are one-per-file in
+`docs/decisions/`. Read either only when the task actually needs it.
+
 Then stop and wait. The catch-up is an offer, not a gate: if the owner opened
 with a real request, answer that first and fold the state into a single line.
 
@@ -40,3 +47,16 @@ Two standing rules for this owner, expanded on in the gexio-machine skill:
   - Describe outcomes back to them, not procedures. They ask for goals; the
     steps are yours to work out.
 ORIENT
+
+# The night lab's morning verdict, if it found anything worth saying.
+#
+# `verdict --quiet` prints nothing when nothing broke, which is the point:
+# a night that found nothing should not add a line to the catch-up. So this
+# block is silent on a quiet night and speaks only when there is a finding.
+# Failure here must never break orientation, hence the guards.
+if [ -f night_lab/verdict.json ]; then
+  VERDICT="$(python tools/night_lab.py verdict --quiet 2>/dev/null || true)"
+  if [ -n "$VERDICT" ]; then
+    printf '\n%s\n%s\n' "The night lab has findings from its last run — lead with these:" "$VERDICT"
+  fi
+fi

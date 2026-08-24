@@ -1,0 +1,130 @@
+# Spend safety: what can actually reach the bank account
+
+Written after the 2026-08-24 window drain (`docs/token-drain-2026-08-24.md`),
+which cost nothing but raised the right question: *if that same runaway had
+happened on a service that bills per use, what would have stopped it?*
+
+The honest answer for most of the surfaces below is **nothing yet**. This
+document is the inventory and the layered fix.
+
+## First, the forensics: nothing was trying to charge
+
+There is no transaction to find, and no failed or pending charge, because none
+was ever created. `cost_usd` in session metadata is computed for display by the
+Claude Code harness; it never touches a payment processor. It reports what the
+traffic **would** have cost at pay-as-you-go rates.
+
+**What actually protected the account was a hard rejection.** When the five-hour
+window ran out, sessions came back `status: "rejected"` — refused, not billed.
+Had usage-based billing been enabled, that same traffic would have kept running
+and kept charging, and the first signal would have been a statement.
+
+That distinction is the whole lesson:
+
+> A limit that **refuses** is safe. A limit that **bills** is a number with no
+> upper bound attached to your card.
+
+The protection here was a default, not a decision. Everything below is about
+not depending on that again.
+
+## The inventory, ranked by worst case
+
+### Tier 1 — can move real money with no meter involved
+
+These do not bill per token. They move funds or take positions directly, and a
+runaway costs whatever the account can bear.
+
+| Surface | What it can do | Bounded by |
+| --- | --- | --- |
+| `pwb_toolbox/execution/ib_connector.py` | `place_orders` / `execute_orders` → `ib.placeOrder`. Live brokerage orders, market and limit. **On `main` today.** | Account equity and margin. Nothing else. |
+| TradingView CDP debug port | Unauthenticated by design — any process on the machine can drive the logged-in chart, including the order ticket | A broker-free login, if one was established |
+| `mcp__Windsor_ai__execute_action` | Campaign, ad, **budget** and bidding writes on Meta / Google / TikTok / LinkedIn / Bing Ads | The card on file at each ad platform. A daily budget is a number an agent can set. |
+| `mcp__Blotato__blotato_buy_credits` | Purchases credits. That is the tool's entire purpose. | Whatever the vendor allows |
+
+### Tier 2 — metered per use, bills to a card
+
+| Surface | Current state |
+| --- | --- |
+| Anthropic usage-based billing / extra credits | **OFF** — proven by the rejection above, not assumed |
+| 21st.dev MCP | ~$0.01/request |
+| Alpha Vantage | Tiered; the spec-desk watch calls it 2x/day |
+| Shutterstock | `search` is free; licensing is not |
+| ElevenLabs / Voice.ai / Blotato | Credit balances, already tracked by a monthly Routine |
+
+### Tier 3 — flat subscriptions, inherently bounded
+
+Interactive Brokers market data (~$10/mo), Canva, Hugging Face. A runaway cannot
+make these cost more. They need no safeguard beyond knowing they exist.
+
+## The gap that is open right now
+
+`.claude/settings.json` on `main` has **one allow entry and zero deny entries.**
+
+The 72-allow / 12-deny permission model — the one that reasons carefully about
+`ui_evaluate` being able to press the Buy button, and puts the dangerous tools in
+`deny` rather than merely omitting them from `allow` so a later blanket grant
+cannot silently restore them — exists only on the unmerged, currently conflicted
+branch behind PR #78.
+
+So the risk analysis has been done and paid for, and **is not in effect.** That
+is a larger exposure than the token drain ever was: token metering can cost a
+window, while `place_orders` shipped on `main` with no permission guardrail can
+cost a position.
+
+## The five layers
+
+Order matters. Each one catches what the one above it missed, and the lower
+layers keep working when you forget about a service entirely.
+
+**L1 — Provider: choose refusal over billing.**
+Leave usage-based billing, auto-recharge and auto-top-up **off** everywhere.
+This is the single highest-leverage setting in this entire document, because it
+converts every possible runaway from unbounded into merely annoying. Where a
+provider offers hard cap versus soft cap, always hard. Set spend alerts at every
+threshold offered — they cost nothing and they are the only warning that arrives
+before the wall.
+
+**L2 — Payment: bound the blast radius at the instrument.**
+A dedicated virtual card with a low monthly limit for all API and AI services.
+Never a debit card, never the account that ordinary bills come out of. This is
+the layer that works even against a service nobody remembered was connected, and
+it is the only one that does. Ideally one card per tier, so a Tier 2 mistake
+cannot reach a Tier 1 budget.
+
+**L3 — Permission: deny the tools that spend.**
+Put money-capable tools in the `deny` list, not merely absent from `allow` —
+absent means a future broad grant re-enables them silently. Starting candidates:
+`blotato_buy_credits`, `Windsor_ai execute_action`, and everything under
+`pwb_toolbox.execution` for any unattended context. Merging PR #78 brings the
+already-reasoned version of this for the TradingView surface.
+
+**L4 — Agent: unattended work gets the smallest surface.**
+Nobody is watching a scheduled job, so it gets the tightest permissions, not the
+loosest. Fresh session per fire, never a persistent one. No prompt that schedules
+its own successor. Paper or sandbox mode as the default, with live access
+requiring a deliberate human step rather than a config flag someone can flip.
+
+**L5 — Observability: see the meter before the wall.**
+The 2026-08-24 drain was invisible until it hit 100%. Nothing warned at 50% or
+80%, and by the time anything was noticeable the window was already gone. Watch
+the *trajectory*, not the threshold — "spending faster than usual" is the useful
+alert, and "already spent" is not an alert at all.
+
+## Before starting any project that touches a paid service
+
+1. **List every surface that can spend**, before writing code. If it is not on a
+   list it cannot be protected, and this is the step that gets skipped.
+2. **Confirm what the provider does at the limit** — refuse or bill? If it bills,
+   that is a Tier 2 surface and needs L1 and L2 in place before first use.
+3. **Confirm auto-recharge is off.** Check it; do not assume it.
+4. **Point it at the limited card**, never the main account.
+5. **Write the deny list before the first unattended run**, not after the first
+   incident.
+6. **Decide what "too fast" looks like** and set the alert while you still
+   remember the number.
+
+## The principle, in one line
+
+Anything unattended must be **incapable** of a large mistake, not merely
+instructed to avoid one. Instructions are followed by a model; capability limits
+are enforced by a system. Only the second kind survives a hiccup.
