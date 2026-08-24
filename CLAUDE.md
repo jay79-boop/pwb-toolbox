@@ -136,6 +136,20 @@ A worked example, for this repo's 21st MCP key:
   `static/flow-canvas.html` imports one (each process renders as a chain of
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
+- `tools/ai_company.py` — the one-person AI company, made checkable. Its
+  subject is `docs/blueprint-one-person-ai-company.json`, a whole local
+  service business as a blueprint — every stage of the loop, every step,
+  every executor named — and the doctrine
+  is `docs/one-person-ai-company.md`. Derives the agent roster **from the
+  map** rather than keeping a list beside it; convicts any AI step that
+  commits money with no person step in front of it (`commits: true` on a
+  step is the declaration, and reading a payment system is not committing
+  through one); prices the person steps; runs the loop economics; and gates
+  repricing on sample size before drift, so "not enough jobs yet" is a
+  first-class answer. `page` regenerates `docs/one-person-ai-company.html`
+  from the blueprint — edit the blueprint, never that file. It is the
+  reference target for phase 7 of the readiness framework, stamped into an
+  engagement by `engagement.py seed-target`
 - `tools/backtest_lab.py` — runs one strategy across instruments and vendors and
   says whether the result clears its own noise floor. Reads a feed's timezone
   correctly (see "Backtesting" below), normalises to basis points, and compares
@@ -383,6 +397,8 @@ python tools/prop_sim.py evaluate --risk 200  # price a prop eval (demo rules)
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/build_profit_planner.py --out planner.xlsx  # crypto exit-planning workbook
 python tools/engagement.py list   # readiness engagements and where each stands
+python tools/ai_company.py gates  # can any agent commit money unsupervised?
+python tools/ai_company.py roster --expansion  # agent roles, and the fan-out that isn't built
 python -m tools.desk_agent.runlog summary --last 20   # is the agent actually working
 python -m tools.desk_agent.runlog review  --last 40   # what the weekly review reads
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
