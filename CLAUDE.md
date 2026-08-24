@@ -699,10 +699,31 @@ peer's memory. Keep it current or the watchdogs are chasing ghosts.
 
 | Role | Session | Heartbeat Routine | Fires |
 | --- | --- | --- | --- |
-| Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | hourly at :28 |
-| Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | hourly at :58 |
+| Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | `28 */4 * * *` |
+| Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | `58 2-22/4 * * *` |
 
-**The two heartbeats are staggered 30 minutes on purpose.** Both were created
+**A heartbeat costs about $3.30–$4.30, and that killed the hourly cadence.**
+Measured on the first wake of each lead: A $3.29, B $4.29, for a round that
+mostly just read the ledger and looked at PRs. Hourly for two leads is ~$180/day
+standing, before a single IC does any work — against an account that hit its
+usage limit twice on 2026-08-24. Cadence was cut to every 4 hours, alternating
+(~$45/day, a lead awake roughly every two hours). To go back to hourly:
+`update_trigger` with `28 * * * *` and `58 * * * *`. Do not restore hourly
+without a reason that is worth $135/day.
+
+The lesson generalises past this repo: a heartbeat that "does nothing" is not
+free, because reading the ledger and listing PRs is most of the cost. If the
+fleet needs tighter liveness than 4 hours, the cheap fix is a smaller check
+(one `list_sessions` call, no repo read) rather than a more frequent full wake.
+
+**Connector inheritance: confirmed working.** Both leads were fired manually at
+01:32 UTC and came back having read GitHub PRs and session state, so a Routine
+firing into a *persistent* session does inherit that session's MCP tools even
+though the Routine itself stores no connector grants. The warning at creation
+time is real but does not bite in mode 2. It would bite a
+`create_new_session_on_fire` Routine.
+
+**The two heartbeats are staggered on purpose.** Both were created
 at `0 * * * *`, which the server anchors to the creation minute — so both
 landed on :28 and would have woken in the same second. Simultaneous watchdog
 wakes are the correlated-failure pattern this whole design exists to avoid,
