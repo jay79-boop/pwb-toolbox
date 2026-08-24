@@ -86,6 +86,8 @@ it still gets repeated in the block. The block is the checklist of record.
 - `pine/` — TradingView strategies kept as reviewable source; nothing under
   `pwb_toolbox/` imports them
 - `docs/` — manuals, field notes, and the decision log
+- `.claude/skills/` — the procedures worth not retyping. `docs/skills.md` is the
+  bar for adding one and the rule for retiring one; read it before writing a skill
 
 **`docs/layout.md` is the full inventory** — every tool, what it does, and the
 reasoning behind it. Read it when you need to know whether something already
@@ -134,6 +136,7 @@ black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
+pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
@@ -300,6 +303,11 @@ the traps that cost real days.
 - **`docs/decisions/`** — one file per decision, newest first in
   `docs/decisions/README.md`. Append a new file; never rewrite an old one. A
   correction is a new entry that supersedes.
+- **`.claude/skills/` + `docs/skills.md`** — the *procedure* for a job done often
+  enough to be worth not retyping; the doc carries the bar for adding one, the
+  two homes a skill can live in, and the retirement rule. Rationale stays in
+  `docs/`, behaviour stays in `tools/` — a skill that restates either goes stale
+  silently, because only `tests/test_skills.py` reads a skill at all.
 - **Nowhere at all** — open pull requests, their CI, what `main` points at, and
   any count of them. **Derive those from git and the GitHub tools at read time.**
   They were written down for months and were wrong within hours every time.

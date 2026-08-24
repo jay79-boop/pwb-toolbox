@@ -217,7 +217,10 @@ top-level directories and points here for the detail.
   and on which account — the CDP threat model, the two-login rule, and what was
   actually verified about the open-source bridge by reading its source),
   `agent-fleet.md` (critique and design of the owner's multi-agent fleet — the
-  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`)
+  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`),
+  `skills.md` (the bar for turning a repeated job into a skill, the two homes a
+  skill can live in, and the retirement rule — with `prompts/` as its staging
+  area for long prompts not yet packaged),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that
