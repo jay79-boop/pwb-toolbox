@@ -12,6 +12,12 @@ follow-up pull request to add it.
 The standard exists to answer one question: **would this tool tell me I was
 wrong?** A lab that can only confirm is not a lab.
 
+## Before you build one: check it does not exist
+
+`docs/layout.md` is the full inventory — every tool here, what it decides and
+what it refuses to claim. A dozen of these labs overlap at the edges, and the
+cheaper move is usually a flag on an existing one. Read it first.
+
 ## The eight things
 
 ### 1. Pure core, dirty edge

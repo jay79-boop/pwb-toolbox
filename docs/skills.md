@@ -27,12 +27,17 @@ the problem, and it gets worse faster than the token cost does.
 
 The same split the ledger uses, applied to skills:
 
-| Where | Holds | Changes |
+| Where | Holds | Worked example |
 |---|---|---|
-| `CLAUDE.md` | The warning that must be in scope *without* a trigger | Rarely |
-| `docs/<topic>.md` | The rationale, the evidence, the incident | On the order of weeks |
-| `.claude/skills/<name>/` | The **procedure** — what to run, in what order | When the procedure changes |
-| `tools/`, `pwb_toolbox/` | The behaviour, with tests holding it honest | Continuously |
+| `CLAUDE.md` | The warning that must be in scope *without* a trigger | "a non-zero crash count is a converter bug" |
+| `docs/<topic>.md` | The rationale, the evidence, the incident | `docs/backtesting.md`, `docs/converter-corpus.md` |
+| `.claude/skills/<name>/` | The **procedure** — what to run, in what order, how to read what it prints | `backtest-trust`, `pine-converter` |
+| `tools/`, `pwb_toolbox/` | The behaviour, with tests holding it honest | `verify_timezone`, `noise_floor` |
+
+`backtest-trust` is the split working: `docs/backtesting.md` carries the two
+incidents and the numbers, the skill carries how to run `verify_timezone` twice
+and what a peak that never sharpens means, and `tests/test_backtest_lab.py`
+holds the functions themselves honest. None of the three repeats another.
 
 A skill that restates what a tool does will go stale silently, because nothing
 in CI reads it. A skill that says *when to reach for the tool and in what
