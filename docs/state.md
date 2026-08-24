@@ -200,6 +200,13 @@ under "(PR #87)". If you find yourself about to rebuild something, read
 - [ ] Add position limit enforcement (reject trades that violate caps)
 - [ ] Success: Can trade all three strategies without blowing up
 
+*VWAP lab (PR #111):*
+- [x] `SessionVwap` + `VwapStrategy` (fade / pullback / cross-as-control) + confirms
+- [x] `tools/vwap_lab.py` — costs, bps, per-setup two-vendor noise floor
+- [x] `pine/vwap_strategy.pine` for TradingView paper trading
+- [ ] Run on real ES bars from both vendors (owner's machine — feeds live there)
+- [ ] Success: fade clears the noise floor and the crossover control fails
+
 *15-Minute Reversal (PR #71):*
 - [ ] Finish strategy logic (entry, exit, hold conditions)
 - [ ] Backtest on 6 months of data

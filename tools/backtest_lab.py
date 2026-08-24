@@ -146,6 +146,10 @@ class Result:
     net: float
     #: Mean close over the run, which is what ``bps`` is a fraction of.
     price: float
+    #: The strategy instance the run produced, for callers that need more than
+    #: the counts -- ``tools/vwap_lab.py`` reads its trade log for the night
+    #: lab export. Never compared or serialised.
+    strategy: object = None
 
     @property
     def bps(self):
@@ -234,6 +238,7 @@ def backtest(
         wins=sum(1 for x in pnl if x > 0),
         net=sum(pnl),
         price=float(frame["close"].mean()),
+        strategy=strat,
     )
 
 
