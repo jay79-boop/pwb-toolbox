@@ -130,6 +130,14 @@ there, passing `-RepoRoot` explicitly. The launcher then always exists whatever 
 checkout is doing, so it always runs, so a bad run always leaves evidence. Re-run
 the registration script after changing `run_job.ps1` — the copy is what executes.
 
+**The launcher knows where the repo is; it does not guess.** Registration writes
+`repo_root.txt` beside the installed copy. The original code derived the root by
+walking two directories up from itself — correct while it lived in the repo, and
+wrong the moment it moved, at which point it decided the repository was
+`C:\Users\<you>\AppData` and broke the log path, the branch read and the Python
+import together, none of which named the real cause. `-RepoRoot` wins, then the
+pointer file, then the old guess for anyone running it straight out of a checkout.
+
 **Logs are written outside the repository too**, to
 `%LOCALAPPDATA%\pwb-desk-agent\logs\`, and the launcher refuses to start against a
 checkout that lacks `playbook.md` or the job file: it names the branch, says the

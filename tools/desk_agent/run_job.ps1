@@ -35,8 +35,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $RepoRoot) { $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
+# Where the repository is. Guessing from $PSScriptRoot only worked while this
+# script lived inside the repo; installed to %LOCALAPPDATA% it walks up into
+# AppData and finds nothing, which then breaks the log path, the git branch
+# read, and the python import all at once. So: the explicit parameter wins, then
+# a pointer file written at install time, and only then the old guess -- which
+# is still correct when running this straight out of a checkout.
+if (-not $RepoRoot) {
+  $pointer = Join-Path $PSScriptRoot 'repo_root.txt'
+  if (Test-Path -LiteralPath $pointer) {
+    $RepoRoot = (Get-Content -LiteralPath $pointer -Raw).Trim()
+  } else {
+    $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+  }
+}
 if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "Repo root not found: $RepoRoot" }
+if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git'))) {
+  throw "Not a git checkout: $RepoRoot -- pass -RepoRoot, or re-run register_desk_agent.ps1 to write the pointer file."
+}
 
 # Logs live OUTSIDE the repo on purpose. A checkout sitting on the wrong branch
 # has no tools/desk_agent/ at all -- which is precisely the case where the

@@ -92,8 +92,16 @@ if (-not (Test-Path -LiteralPath $installDir)) {
 }
 $runner = Join-Path $installDir 'run_job.ps1'
 Copy-Item -LiteralPath $source -Destination $runner -Force
+
+# Write the repo location beside the launcher. Without it, a launcher invoked
+# with no -RepoRoot walks up from %LOCALAPPDATA% and decides the repository is
+# C:\Users\<you>\AppData, which fails in three places at once and none of them
+# name the real cause.
+[IO.File]::WriteAllText((Join-Path $installDir 'repo_root.txt'), $RepoRoot, (New-Object Text.UTF8Encoding $false))
+
 Write-Host ("Launcher installed at: " + $runner)
-Write-Host ("  (copied from " + $source + "; re-run this script after changing it)")
+Write-Host ("  repo root: " + $RepoRoot + "  (written to repo_root.txt beside it)")
+Write-Host ("  copied from " + $source + " -- re-run this script after changing it)")
 
 # StartWhenAvailable is the flag whose absence silently eats overnight runs on a
 # machine that was asleep at the scheduled minute. AllowStartIfOnBatteries and
@@ -182,7 +190,7 @@ Write-Host ''
 Write-Host ("Registered " + $ok + " of " + $jobs.Count + " tasks.")
 Write-Host ''
 Write-Host 'To test one right now without waiting for its trigger:'
-Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job premarket')
+Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job premarket -RepoRoot "' + $RepoRoot + '"')
 Write-Host ''
 Write-Host 'To remove them all:'
 Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $RepoRoot 'tools\register_desk_agent.ps1') + '" -Remove')
