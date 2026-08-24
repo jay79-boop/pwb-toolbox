@@ -754,17 +754,27 @@ peer's memory. Keep it current or the watchdogs are chasing ghosts.
 | Fleet lead A — portfolio, assignments | `session_01Wm3BaXEEuPpnMtYxQS5tqi` | `trig_013xjbYAWMedmDmSqcEiEWao` | `28 */4 * * *` |
 | Fleet lead B — ledger accuracy, decision cross-check | `session_019HEb7SbiKqKJ5pbpkP84d7` | `trig_01LEMGfXYU3Ngdw4sdqVH4QB` | `58 2-22/4 * * *` |
 
-**A heartbeat costs about $3.30–$4.30, and that killed the hourly cadence.**
-Measured on the first wake of each lead: A $3.29, B $4.29, for a round that
-mostly just read the ledger and looked at PRs. Hourly for two leads is ~$180/day
-standing, before a single IC does any work — against an account that hit its
-usage limit twice on 2026-08-24. Cadence was cut to every 4 hours, alternating
-(~$45/day, a lead awake roughly every two hours). To go back to hourly:
-`update_trigger` with `28 * * * *` and `58 * * * *`. Do not restore hourly
-without a reason that is worth $135/day.
+**A heartbeat wake re-reads about 3M tokens, and that killed the hourly
+cadence — though not for the reason first recorded here.** The `$3.29` and
+`$4.29` measured on the leads' first wakes are **not charges**. Claude Code
+computes that figure locally from token counts priced at API list rates, and
+this account is on a subscription: every session `list_sessions` returns
+reports `isUsingOverage: false`, and the sessions that died on 2026-08-24 died
+with `status: "rejected"` — *blocked*, not billed. Nothing in claude.ai billing
+will ever match those numbers. See the 2026-08-24 decision-log entry "The
+dollars were never dollars".
+
+What the figure is good for is **volume**. Lead B's wake was 2.78M cache-read
+tokens against 18K of output; lead A's, 2.95M against 12K. The real currency is
+the five-hour window, which this account hit twice on 2026-08-24 — so two leads
+waking hourly is 48 wakes a day, each re-reading ~3M tokens, against a window
+shared with every other session and with claude.ai. **The 4-hourly cadence
+stands.** To go back to hourly: `update_trigger` with `28 * * * *` and
+`58 * * * *` — but "it costs nothing" is not a reason to, because it never cost
+dollars in the first place and the window is tighter than the wallet.
 
 The lesson generalises past this repo: a heartbeat that "does nothing" is not
-free, because reading the ledger and listing PRs is most of the cost. If the
+free, because reading the ledger and listing PRs is most of the tokens. If the
 fleet needs tighter liveness than 4 hours, the cheap fix is a smaller check
 (one `list_sessions` call, no repo read) rather than a more frequent full wake.
 
@@ -795,12 +805,20 @@ them): spec-desk stop/target watch, the PR #78 check-in, the desk-agent weekly
 review, the daily Grok merge, the monthly credit check. The fleet's wakes are
 additive to those — see the budget note in the skill.
 
-**The big burn is long-running sessions, not Routines.** Two were still running
-when the fleet was armed: the Ollama/night-lab session at roughly $266 and the
-Kronos/spec-desk watcher at roughly $154. Either dwarfs the whole fleet's
-standing cost, so "is a Routine worth its burn" is the wrong first question —
-"is a session still running that should have finished" is the right one. Check
-`list_sessions` for long-lived sessions before trimming schedules.
+**The big burn is long-running sessions, not Routines — and both named here
+have since stopped.** When the fleet was armed, the Ollama/night-lab session
+read ~$266 and the Kronos/spec-desk watcher ~$154, in the same notional unit as
+above and charged to nobody. Re-checked 2026-08-24: the Ollama session is
+**archived** at 290.6 after PR #117 merged, and the Kronos session is **idle and
+disconnected** at 154.3, its last turn rejected on the session limit. Neither is
+running; the "both still running" this block asserted was stale within hours.
+
+What made the Ollama session the outlier was **68.3M cache-read tokens against
+180K of output — 379:1**, where healthy sessions in the same listing run 80–100:1.
+That is one conversation never cleared, re-read in full on every turn. So the
+first question stays "is a session still running that should have finished", and
+the second is `cache_read / output`: a ratio in the hundreds means `/clear` was
+owed hours ago. `list_sessions` carries both in its `usage` blob.
 
 **#87 and #90 are different jobs and both landed.** The lab asks whether one
 strategy's edge survives the data — one strategy, many instruments, two vendor
@@ -858,6 +876,41 @@ When the count here disagrees with GitHub, believe GitHub and fix this.
 - Interactive Brokers: live execution + account data
 
 ## Decision Log
+
+### [2026-08-24] The dollars were never dollars
+**Decision:** Stop pricing this account's work in dollars. Every figure this
+ledger has quoted as a cost — $3.29 and $4.29 per fleet heartbeat, $266 and
+$154 for the two long sessions, ~$180/day for hourly leads — is Claude Code's
+**locally computed estimate at API list prices**, not money charged. The
+documentation is explicit on both halves: the session cost figure "isn't
+relevant for billing purposes" for Pro and Max subscribers, and Claude Code
+"computes the dollar figure locally from token counts priced at standard list
+rates".
+**Confirmed, not assumed:** every session `list_sessions` returns carries
+`rate_limit_info.isUsingOverage: false`, and usage credits — drawing past the
+plan limit at real per-token rates — are the *only* mechanism by which a
+subscription incurs a dollar charge. The sessions that failed on 2026-08-24
+failed with `status: "rejected"` and "You've hit your session limit", which is
+the blocking outcome, not the billing one. You cannot both be stopped at the
+limit and be silently billed past it; those are the two exclusive branches.
+**Why it matters past the accounting:** a wrong unit produced a real decision.
+The heartbeat cadence was cut on a $180/day figure that does not exist. The
+cadence was still right — the binding constraint is the five-hour window, which
+this account hit twice that day — so the conclusion survives and the argument
+under it is replaced. **Do not read the reverse into this.** "Not charged" is
+not "free": the window is the scarcer resource, and it is shared with claude.ai
+and every other session on the account.
+**The unit to use instead** is tokens, from `list_sessions`' `usage` blob, and
+specifically `cache_read / output`. One fleet wake is ~3M cache reads. The $290
+session was 68.3M cache reads against 180K output — 379:1, against 80–100:1 for
+well-behaved sessions in the same listing. That ratio names a session that
+needed `/clear`, and it needs no currency at all.
+**Where a real charge could still hide** — one place only: usage credits, at
+claude.ai → Settings → Usage → Usage credits. Credits off, or $0 spent this
+month, means nothing has been charged. A Console API key would bill at
+platform.claude.com/usage instead, but this account authenticates by
+subscription: five-hour windows are subscription behaviour, an API key gets
+429s.
 
 ### [2026-08-24] The stream's second haul: the night, the timeframe, the model
 **Decision:** Three more things from the same live stream, chosen by the
@@ -924,7 +977,9 @@ cannot catch a merge with nothing to notice. So the fix is structural — derive
 the volatile facts from GitHub at read time, or split into an append-only log
 plus a small hand-edited summary — and it is the owner's call, not a passing
 session's.
-**Measured while arming:** a lead's heartbeat wake costs $3.29–$4.29, almost
+**Measured while arming** (in the notional unit corrected by the entry above —
+these are list-price estimates, not charges): a lead's heartbeat wake reads
+$3.29–$4.29, almost
 all of it reading the ledger and listing PRs. Two leads hourly is ~$180/day
 standing before any IC works, which is why the cadence went to 4-hourly (#115)
 before the pause. But two long-running sessions ($266 and $154) each dwarfed
