@@ -1,0 +1,244 @@
+"""The drain detector, exercised on synthetic snapshots.
+
+The load-bearing test is the last one: a single snapshot must never produce a
+rate. Session metadata reports a *lifetime* metered total, so deriving a burn
+rate from one file silently turns a figure accumulated over a day into an
+apparent hourly one -- which is exactly the misreading the incident this tool
+was written for produced twice.
+"""
+
+from datetime import datetime, timezone
+
+import pytest
+
+from tools.spend_watch import (
+    FIVE_HOURS,
+    audit,
+    cache_reads,
+    find_concurrency,
+    find_fat_sessions,
+    find_persistent_triggers,
+    find_rate,
+    find_self_rearming,
+    metered,
+    parse_time,
+    render,
+    window_start,
+)
+
+RESET = 1787594400  # 2026-08-24 18:00 UTC
+
+
+def session(sid, *, updated, cost=1.0, reads=0, resets=RESET, title=None):
+    return {
+        "id": sid,
+        "title": title or sid,
+        "updated_at": updated,
+        "external_metadata": {
+            "rate_limit_info": {"resetsAt": resets},
+            "usage": {"cost_usd": cost, "cache_read_tokens": reads},
+        },
+    }
+
+
+def trigger(tid, prompt, *, persistent=None, name=None):
+    t = {
+        "id": tid,
+        "name": name or tid,
+        "job_config": {"ccr": {"events": [{"data": {"message": {"content": prompt}}}]}},
+    }
+    if persistent:
+        t["persistent_session_id"] = persistent
+    return t
+
+
+# --- timestamp parsing ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-08-24T15:02:14Z",
+        "2026-08-24T15:02:14.502834Z",
+        "2026-08-24T15:02:14.502834981Z",  # more than six digits
+        "2026-08-24T15:02:14+00:00",
+    ],
+)
+def test_parse_time_accepts_real_shapes(text):
+    parsed = parse_time(text)
+    assert parsed is not None and parsed.tzinfo is not None
+
+
+@pytest.mark.parametrize("text", [None, "", "not a date"])
+def test_parse_time_rejects_junk(text):
+    assert parse_time(text) is None
+
+
+# --- the self-re-arming pattern -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "If nothing changed, re-arm this check-in about an hour out.",
+        "re-arm another check-in ~3 hours out silently",
+        "Otherwise schedule the next check for later.",
+        "Please REARM yourself tomorrow.",
+    ],
+)
+def test_self_rearming_detected(prompt):
+    findings = find_self_rearming([trigger("t1", prompt, persistent="s1")])
+    assert [f.code for f in findings] == ["self-rearming-persistent"]
+    assert findings[0].severity == "high"
+
+
+def test_rearm_without_persistent_binding_is_not_high():
+    """A cron that re-arms is odd but cheap; the cost comes from persistence."""
+
+    assert find_self_rearming([trigger("t1", "re-arm in an hour")]) == []
+
+
+def test_persistent_without_rearm_is_medium():
+    findings = find_persistent_triggers(
+        [trigger("t1", "Check CI and stop.", persistent="s1")]
+    )
+    assert [f.severity for f in findings] == ["medium"]
+
+
+def test_a_trigger_is_never_reported_twice():
+    """The high finding supersedes the medium one for the same Routine."""
+
+    triggers = [trigger("t1", "re-arm an hour out", persistent="s1")]
+    codes = [
+        f.code
+        for f in find_self_rearming(triggers) + find_persistent_triggers(triggers)
+    ]
+    assert codes == ["self-rearming-persistent"]
+
+
+def test_plain_cron_trigger_is_clean():
+    triggers = [trigger("t1", "Check CI. Do not re-arm yourself.")]
+    assert find_persistent_triggers(triggers) == []
+
+
+# --- fat sessions ---------------------------------------------------------
+
+
+def test_fat_session_flagged_above_threshold():
+    findings = find_fat_sessions(
+        [session("s1", updated="2026-08-24T15:00:00Z", reads=68_000_000)]
+    )
+    assert findings and findings[0].code == "expensive-to-wake"
+    assert "68.0M" in findings[0].title
+
+
+def test_small_session_not_flagged():
+    assert (
+        find_fat_sessions([session("s1", updated="2026-08-24T15:00:00Z", reads=5_000)])
+        == []
+    )
+
+
+# --- concurrency ----------------------------------------------------------
+
+
+def test_concurrency_flagged_when_many_sessions_are_live():
+    cutoff = datetime(2026, 8, 24, 13, 0, tzinfo=timezone.utc)
+    sessions = [session(f"s{i}", updated="2026-08-24T14:00:00Z") for i in range(8)]
+    findings = find_concurrency(sessions, cutoff)
+    assert findings and findings[0].severity == "high"
+    assert len(findings[0].subjects) == 8
+
+
+def test_sessions_outside_the_window_do_not_count():
+    cutoff = datetime(2026, 8, 24, 13, 0, tzinfo=timezone.utc)
+    sessions = [session(f"s{i}", updated="2026-08-20T01:00:00Z") for i in range(8)]
+    assert find_concurrency(sessions, cutoff) == []
+
+
+def test_window_start_is_five_hours_before_the_reset():
+    start = window_start([session("s1", updated="2026-08-24T15:00:00Z")])
+    assert start == datetime.fromtimestamp(RESET, tz=timezone.utc) - FIVE_HOURS
+
+
+def test_window_start_is_none_without_rate_limit_info():
+    assert window_start([{"id": "s1"}]) is None
+
+
+# --- malformed input ------------------------------------------------------
+
+
+def test_missing_usage_reads_as_zero_not_a_crash():
+    assert metered({"id": "s1"}) == 0.0
+    assert cache_reads({"id": "s1"}) == 0
+
+
+def test_non_numeric_usage_reads_as_zero():
+    bad = {
+        "external_metadata": {"usage": {"cost_usd": "oops", "cache_read_tokens": None}}
+    }
+    assert metered(bad) == 0.0
+    assert cache_reads(bad) == 0
+
+
+def test_audit_tolerates_empty_payload():
+    assert audit({}) == []
+    assert "No findings" in render([])
+
+
+# --- the rule that matters ------------------------------------------------
+
+
+def test_a_single_snapshot_never_produces_a_rate():
+    """Lifetime totals cannot become a rate without something to diff against."""
+
+    sessions = [
+        session(f"s{i}", updated="2026-08-24T14:00:00Z", cost=290.0) for i in range(9)
+    ]
+    findings = audit({"sessions": sessions})
+    assert findings, "structural findings should still fire"
+    assert not any(f.code == "growth" for f in findings)
+
+
+def test_rate_appears_only_with_a_baseline():
+    before = [session("s1", updated="2026-08-24T13:00:00Z", cost=10.0)]
+    after = [session("s1", updated="2026-08-24T14:00:00Z", cost=25.5)]
+    findings = find_rate(after, before)
+    assert [f.code for f in findings] == ["growth"]
+    assert "15.50" in findings[0].title
+
+
+def test_unchanged_sessions_report_no_growth():
+    snap = [session("s1", updated="2026-08-24T14:00:00Z", cost=10.0)]
+    assert find_rate(snap, snap) == []
+
+
+def test_a_new_session_counts_its_whole_total_as_growth():
+    after = [session("new", updated="2026-08-24T14:00:00Z", cost=4.0)]
+    findings = find_rate(after, [])
+    assert findings and "4.00" in findings[0].title
+
+
+# --- ordering and rendering -----------------------------------------------
+
+
+def test_findings_are_ordered_most_severe_first():
+    payload = {
+        "sessions": [
+            session(f"s{i}", updated="2026-08-24T14:00:00Z", reads=20_000_000)
+            for i in range(7)
+        ],
+        "triggers": [trigger("t1", "re-arm in an hour", persistent="s1")],
+    }
+    severities = [f.severity for f in audit(payload)]
+    assert severities == sorted(
+        severities, key=lambda s: {"high": 0, "medium": 1, "low": 2}[s]
+    )
+
+
+def test_render_truncates_long_subject_lists():
+    payload = {
+        "sessions": [session(f"s{i}", updated="2026-08-24T14:00:00Z") for i in range(9)]
+    }
+    text = render(audit(payload))
+    assert "and 5 more" in text
