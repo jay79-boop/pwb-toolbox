@@ -1,6 +1,7 @@
 """Option pricing and hold-time analytics for long single-leg positions."""
 
 from .greeks import Greeks, black_scholes, expected_move, implied_vol
+from .probability import finish_probability, touch_probability
 from .decay import (
     DropDead,
     Recovery,
@@ -9,6 +10,7 @@ from .decay import (
     drop_dead,
     hurdle_ratio,
     recovery,
+    shot_clock,
 )
 from .checks import (
     FAIL,
@@ -32,6 +34,8 @@ __all__ = [
     "black_scholes",
     "expected_move",
     "implied_vol",
+    "finish_probability",
+    "touch_probability",
     "Recovery",
     "DropDead",
     "hurdle_ratio",
@@ -39,6 +43,7 @@ __all__ = [
     "recovery",
     "drop_dead",
     "decay_schedule",
+    "shot_clock",
     "Check",
     "PASS",
     "FAIL",

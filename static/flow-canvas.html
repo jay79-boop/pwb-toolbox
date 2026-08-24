@@ -84,6 +84,12 @@
     cursor:crosshair; opacity:0; transition:opacity .12s;
   }
   .node:hover .port, .node.sel .port { opacity:1; }
+  .node.goto, .node.end { border-style:dashed; background:transparent; box-shadow:none; }
+  .node.goto::before, .node.end::before { display:none; }
+  .node.goto .nt, .node.end .nt { color:var(--muted); font-weight:600; }
+  .node.goto .nt b { color:var(--ink); }
+  .node.delay { border-style:dotted; }
+  .node.tgt { border-color:var(--accent); box-shadow:0 0 0 3px var(--sel); }
 
   .elabel {
     position:absolute; font-size:10px; font-weight:600; color:var(--muted);
@@ -125,6 +131,15 @@
     color:var(--danger); background:var(--danger-bg);
   }
   .empty { color:var(--muted); font-size:12px; line-height:1.5; padding:4px 0; }
+  .load { border-radius:10px; padding:9px 11px; background:var(--well); margin-top:8px; }
+  .load b { display:block; font-size:19px; }
+  .load span { font-size:10.5px; color:var(--muted); }
+  .checks { font-size:11.5px; line-height:1.45; }
+  .checks div { display:flex; gap:7px; padding:3px 0; color:var(--muted); }
+  .checks div b { flex:none; font-variant-numeric:tabular-nums; }
+  .checks .err b { color:var(--danger); }
+  .checks .warn b { color:var(--st-working); }
+  .checks .ok { color:var(--st-live); }
 </style>
 </head>
 <body data-theme="slate">
@@ -156,13 +171,17 @@
   <input type="file" id="fileIn" accept=".json,application/json" style="display:none">
 </div>
 
+<script src="process-grammar.js"></script>
 <script>
 "use strict";
+var PG = window.ProcessGrammar;
 var STORE_KEY = "flow-canvas-v1";
 var STATUSES = ["draft", "working", "testing", "live"];
 var STATUS_LABEL = { draft:"Draft", working:"Working", testing:"Testing", live:"Live" };
 var OWNERS = ["person", "ai", "auto"];
 var OWNER_LABEL = { person:"Person", ai:"AI agent", auto:"Automation" };
+var KINDS = ["step", "delay", "end", "goto"];
+var KIND_LABEL = { step:"Step", delay:"Wait", end:"End", goto:"Go to" };
 var NODE_W = 180, NODE_H = 66;
 
 var state = load() || seed();
@@ -204,24 +223,50 @@ function find(s) {
 function uid() { return "id" + Math.random().toString(36).slice(2, 9); }
 
 function seed() {
-  var a = uid(), b = uid(), c = uid(), d = uid(), e = uid();
+  var a = uid(), b = uid(), c = uid(), d = uid(), e = uid(), f = uid();
   return {
     theme: "slate",
     nodes: [
-      { id:a, title:"Assess AI readiness",     status:"live",    owner:"person", dur:"60m",  decision:false, notes:"", x:60,  y:300 },
-      { id:b, title:"Prioritise improvements", status:"working", owner:"person", dur:"45m",  decision:true,  notes:"", x:300, y:300 },
-      { id:c, title:"Implement quick wins",    status:"testing", owner:"auto",   dur:"120m", decision:false, notes:"", x:540, y:180 },
-      { id:d, title:"Design new process",      status:"draft",   owner:"ai",     dur:"180m", decision:false, notes:"", x:540, y:420 },
-      { id:e, title:"Present findings",        status:"draft",   owner:"person", dur:"60m",  decision:false, notes:"", x:780, y:300 }
+      { id:a, title:"Assess AI readiness",     kind:"step", status:"live",    owner:"person", dur:"60m",  freq:2,    decision:false, notes:"", x:60,  y:300 },
+      { id:b, title:"Prioritise improvements", kind:"step", status:"working", owner:"person", dur:"45m",  freq:2,    decision:true,  notes:"", x:300, y:300 },
+      { id:c, title:"Implement quick wins",    kind:"step", status:"testing", owner:"auto",   dur:"120m", freq:null, decision:false, notes:"", x:540, y:180 },
+      { id:d, title:"Design new process",      kind:"step", status:"draft",   owner:"ai",     dur:"180m", freq:null, decision:false, notes:"", x:540, y:420 },
+      { id:e, title:"Present findings",        kind:"step", status:"draft",   owner:"person", dur:"60m",  freq:1,    decision:false, notes:"", x:780, y:300 },
+      { id:f, title:"Go to: Assess AI readiness", kind:"goto", target:a, status:"draft", owner:"person",
+        dur:"", freq:null, decision:false, x:1020, y:300,
+        notes:"Returns to the first step for the next cycle. Five steps back, so it is a go-to step rather than a wire dragged across the map." }
     ],
     edges: [
       { id:uid(), from:a, to:b, label:"" },
       { id:uid(), from:b, to:c, label:"quick win" },
       { id:uid(), from:b, to:d, label:"full build" },
       { id:uid(), from:c, to:e, label:"" },
-      { id:uid(), from:d, to:e, label:"" }
+      { id:uid(), from:d, to:e, label:"" },
+      { id:uid(), from:e, to:f, label:"next cycle" }
     ]
   };
+}
+
+// ---------- costing + checks ----------
+// The rules live in process-grammar.js, shared with the blueprint builder and
+// held against the Python validator by tests/test_process_grammar.py. The
+// canvas converts itself and asks.
+function graph() { return PG.fromCanvas(state); }
+function isGoto(n) { return n.kind === "goto"; }
+function isDelay(n) { return n.kind === "delay"; }
+function isEnd(n) { return n.kind === "end"; }
+
+// A go-to card is named after where it goes, so its title is derived rather
+// than typed — otherwise renaming the target leaves the jump lying.
+function syncGotos() {
+  var changed = false;
+  state.nodes.forEach(function (n) {
+    if (!isGoto(n)) return;
+    var t = n.target ? nodeById(n.target) : null;
+    var want = "Go to: " + (t ? t.title : "(pick a step)");
+    if (n.title !== want) { n.title = want; changed = true; }
+  });
+  if (changed) save();
 }
 
 // ---------- rendering ----------
@@ -279,29 +324,102 @@ function drawEdges() {
   });
 }
 
+// "60m" + 2/month reads as one line on the card, because the pair is the
+// point: a short step run often is where the month actually goes.
+function metaLine(n) {
+  var f = typeof n.freq === "number" && n.freq ? "\u00d7" + n.freq + "/mo" : "";
+  return n.dur && f ? n.dur + " " + f : n.dur || f;
+}
+
 function drawNodes() {
+  syncGotos();
+  var hi = null;
+  if (sel && sel.type === "node") {
+    var s0 = nodeById(sel.id);
+    if (s0 && isGoto(s0) && s0.target) hi = s0.target;
+  }
   nodeLayer.innerHTML = "";
   state.nodes.forEach(function (n) {
     var div = document.createElement("div");
-    div.className = "node" + (sel && sel.type === "node" && sel.id === n.id ? " sel" : "");
+    div.className = "node" + (sel && sel.type === "node" && sel.id === n.id ? " sel" : "") +
+                    (n.kind && n.kind !== "step" ? " " + n.kind : "") +
+                    (hi === n.id ? " tgt" : "");
     div.style.left = n.x + "px"; div.style.top = n.y + "px";
     div.style.setProperty("--st", "var(--st-" + n.status + ")");
+    if (isGoto(n)) {
+      // A go-to step is the end of its branch on the canvas — no output port,
+      // no wire back. The jump is the card, which is the whole point of it.
+      var t = n.target ? nodeById(n.target) : null;
+      div.innerHTML = '<span class="badge">GO TO</span><div class="nt">\u21a9 Go to <b></b></div>';
+      div.querySelector(".nt b").textContent = t ? t.title : "(pick a step)";
+      div.addEventListener("pointerdown", function (ev) { onNodeDown(ev, n, div); });
+      nodeLayer.appendChild(div);
+      return;
+    }
+    if (isEnd(n)) {
+      // A branch that stops gets a card saying so, rather than an arrow into
+      // nothing that the next reader has to interpret.
+      div.innerHTML = '<span class="badge">END</span><div class="nt"></div>';
+      div.querySelector(".nt").textContent = n.title;
+      div.addEventListener("pointerdown", function (ev) { onNodeDown(ev, n, div); });
+      nodeLayer.appendChild(div);
+      return;
+    }
+    var meta = metaLine(n);
     div.innerHTML =
       (n.decision ? '<span class="badge">DECISION</span>' : "") +
+      (isDelay(n) ? '<span class="badge">WAIT</span>' : "") +
       '<div class="nt"></div>' +
       '<div class="nm"><span class="chip" style="--ow:var(--ow-' + n.owner + ')"></span>' +
       '<span class="pill"></span>' +
-      (n.dur ? '<span class="dur"></span>' : "") + "</div>" +
+      (meta ? '<span class="dur"></span>' : "") + "</div>" +
       '<div class="port" title="Drag to connect"></div>';
     div.querySelector(".nt").textContent = n.title;
     div.querySelector(".chip").textContent = OWNER_LABEL[n.owner];
     div.querySelector(".pill").textContent = STATUS_LABEL[n.status].toUpperCase();
-    if (n.dur) div.querySelector(".dur").textContent = n.dur;
+    if (meta) div.querySelector(".dur").textContent = meta;
     div.addEventListener("pointerdown", function (ev) { onNodeDown(ev, n, div); });
     div.querySelector(".port").addEventListener("pointerdown", function (ev) {
       ev.stopPropagation(); startConnect(ev, n);
     });
     nodeLayer.appendChild(div);
+  });
+}
+
+// Load and checks redraw on their own so typing in a field can update them
+// without rebuilding the panel out from under the cursor.
+function drawLoad() {
+  var box = document.getElementById("loadBox");
+  if (!box) return;
+  var load = PG.monthlyLoad(graph());
+  var v = load.minutes >= 60 ? (Math.round(load.minutes / 6) / 10) + " h" : Math.round(load.minutes) + " min";
+  box.innerHTML = "<b></b><span></span>";
+  box.querySelector("b").textContent = v;
+  box.querySelector("span").textContent =
+    "person time per month" + (load.unpriced ? " \u00b7 " + load.unpriced + " unpriced" : "");
+}
+
+function drawChecks() {
+  var box = document.getElementById("checksBox");
+  if (!box) return;
+  var list = PG.checks(graph());
+  box.innerHTML = "";
+  if (!list.length) {
+    var ok = document.createElement("div");
+    ok.className = "ok";
+    ok.textContent = "\u2713 Nothing outstanding.";
+    box.appendChild(ok);
+    return;
+  }
+  list.forEach(function (f) {
+    var row = document.createElement("div");
+    row.className = f.severity === "error" ? "err" : "warn";
+    var b = document.createElement("b");
+    b.textContent = f.severity === "error" ? "\u2715" : "!";
+    var sp = document.createElement("span");
+    sp.textContent = f.title ? f.title + " " + f.message : f.message;
+    row.appendChild(b); row.appendChild(sp);
+    box.appendChild(row);
   });
 }
 
@@ -311,9 +429,11 @@ function drawPanel() {
   var total = state.nodes.length || 1;
   var h = "";
   h += "<h1>Flow Canvas</h1>";
-  h += '<div class="hint">Double-click the canvas to add a step. Drag a card’s blue dot onto another card to connect. Ctrl+Z undoes.</div>';
+  h += '<div class="hint">Double-click the canvas to add a step. Drag a card’s blue dot onto another card to connect. Ctrl+Z undoes. ' +
+       'Set a step’s kind to <b>Go to</b> for a loop-back more than three steps upstream, and give every person step a duration and a monthly count so the load figure means something.</div>';
   h += '<div class="counts"><div class="count"><b>' + state.nodes.length + "</b><span>steps</span></div>" +
        '<div class="count"><b>' + state.edges.length + "</b><span>links</span></div></div>";
+  h += '<div class="load" id="loadBox"></div>';
   h += '<div class="pt">Status</div><div class="sbar">';
   STATUSES.forEach(function (st) {
     if (counts[st]) h += '<span style="flex:' + (counts[st] / total) + ';background:var(--st-' + st + ')"></span>';
@@ -324,19 +444,39 @@ function drawPanel() {
     h += "<span><i style=\"background:var(--st-" + st + ')"></i>' + STATUS_LABEL[st] + " " + counts[st] + "</span>";
   });
   h += "</div>";
+  h += '<div class="pt">Checks</div><div class="checks" id="checksBox"></div>';
 
   var obj = find(sel);
   if (sel && sel.type === "node" && obj) {
+    var go = isGoto(obj);
     h += '<div class="pt">Selected step</div><div class="editor" id="ed">';
-    h += '<label>Title</label><input type="text" id="fTitle">';
-    h += '<label>Status</label><select id="fStatus">' + STATUSES.map(function (st) {
-      return '<option value="' + st + '"' + (obj.status === st ? " selected" : "") + ">" + STATUS_LABEL[st] + "</option>";
+    h += '<label>Kind</label><select id="fKind">' + KINDS.map(function (k) {
+      return '<option value="' + k + '"' + ((go ? "goto" : "step") === k ? " selected" : "") + ">" + KIND_LABEL[k] + "</option>";
     }).join("") + "</select>";
-    h += '<label>Owner</label><select id="fOwner">' + OWNERS.map(function (ow) {
-      return '<option value="' + ow + '"' + (obj.owner === ow ? " selected" : "") + ">" + OWNER_LABEL[ow] + "</option>";
-    }).join("") + "</select>";
-    h += '<label>Duration</label><input type="text" id="fDur" placeholder="e.g. 45m">';
-    h += '<div class="chk"><input type="checkbox" id="fDec"' + (obj.decision ? " checked" : "") + '><span>Decision point</span></div>';
+    if (go) {
+      // option text is filled in below with textContent — titles are user text
+      h += '<label>Destination</label><select id="fTarget"><option value="">(pick a step)</option>';
+      state.nodes.forEach(function (n) {
+        if (n.id === obj.id || isGoto(n)) return;
+        h += '<option value="' + n.id + '"' + (obj.target === n.id ? " selected" : "") + "></option>";
+      });
+      h += "</select>";
+    } else if (isEnd(obj)) {
+      h += '<label>Title</label><input type="text" id="fTitle">';
+    } else {
+      h += '<label>Title</label><input type="text" id="fTitle">';
+      h += '<label>Status</label><select id="fStatus">' + STATUSES.map(function (st) {
+        return '<option value="' + st + '"' + (obj.status === st ? " selected" : "") + ">" + STATUS_LABEL[st] + "</option>";
+      }).join("") + "</select>";
+      h += '<label>Owner</label><select id="fOwner">' + OWNERS.map(function (ow) {
+        return '<option value="' + ow + '"' + (obj.owner === ow ? " selected" : "") + ">" + OWNER_LABEL[ow] + "</option>";
+      }).join("") + "</select>";
+      h += '<label>Duration</label><input type="text" id="fDur" placeholder="e.g. 45m, 1h30m, 2d">';
+      h += '<label>Times per month</label><input type="text" id="fFreq" placeholder="e.g. 20">';
+      if (!isDelay(obj)) {
+        h += '<div class="chk"><input type="checkbox" id="fDec"' + (obj.decision ? " checked" : "") + '><span>Decision point</span></div>';
+      }
+    }
     h += '<label>Notes</label><textarea id="fNotes"></textarea>';
     h += '<button class="btn-del" id="fDel">Delete step…</button>';
     h += "</div>";
@@ -349,34 +489,88 @@ function drawPanel() {
     h += '<div class="pt">Selected</div><div class="empty">Nothing selected. Click a step or a link to edit it here. Deleting only happens from this panel, and always asks first.</div>';
   }
   panel.innerHTML = h;
+  drawLoad();
+  drawChecks();
 
   if (sel && obj) {
     if (sel.type === "node") {
-      var t = document.getElementById("fTitle"); t.value = obj.title;
-      var du = document.getElementById("fDur"); du.value = obj.dur || "";
       var no = document.getElementById("fNotes"); no.value = obj.notes || "";
-      t.addEventListener("input", function () { snapOnce(); obj.title = t.value; save(); drawNodes(); });
-      du.addEventListener("input", function () { snapOnce(); obj.dur = du.value; save(); drawNodes(); });
       no.addEventListener("input", function () { snapOnce(); obj.notes = no.value; save(); });
-      document.getElementById("fStatus").addEventListener("change", function (ev) {
+      document.getElementById("fKind").addEventListener("change", function (ev) {
+        snapshot();
+        var kind = ev.target.value;
+        obj.kind = kind;
+        if (kind !== "goto") obj.target = null;
+        if (kind === "goto" || kind === "end") {
+          // neither is work, and both are the end of their branch, so no time
+          // on them and nothing flowing out of them
+          obj.dur = ""; obj.freq = null; obj.decision = false;
+          state.edges = state.edges.filter(function (e2) { return e2.from !== obj.id; });
+        }
+        if (kind === "delay") obj.decision = false;
+        if (kind !== "goto" && /^Go to/.test(obj.title)) obj.title = "New step";
+        save(); render();
+      });
+      var tg = document.getElementById("fTarget");
+      if (tg) {
+        // titles are user text, so they go in as textContent, never as markup
+        var opts = tg.options;
+        for (var oi = 1; oi < opts.length; oi++) {
+          var on = nodeById(opts[oi].value);
+          opts[oi].textContent = on ? on.title : "(missing)";
+        }
+        tg.addEventListener("change", function (ev) {
+          snapshot(); obj.target = ev.target.value || null; save(); render();
+        });
+      }
+      var t = document.getElementById("fTitle");
+      if (t) {
+        t.value = obj.title;
+        t.addEventListener("input", function () { snapOnce(); obj.title = t.value; save(); drawNodes(); });
+      }
+      var du = document.getElementById("fDur");
+      if (du) {
+        du.value = obj.dur || "";
+        du.addEventListener("input", function () {
+          snapOnce(); obj.dur = du.value; save(); drawNodes(); drawLoad(); drawChecks();
+        });
+      }
+      var fq = document.getElementById("fFreq");
+      if (fq) {
+        fq.value = typeof obj.freq === "number" && obj.freq ? String(obj.freq) : "";
+        fq.addEventListener("input", function () {
+          snapOnce();
+          var x = parseFloat(fq.value);
+          obj.freq = isFinite(x) && x > 0 ? x : null;
+          save(); drawNodes(); drawLoad(); drawChecks();
+        });
+      }
+      var stSel = document.getElementById("fStatus");
+      if (stSel) stSel.addEventListener("change", function (ev) {
         snapshot(); obj.status = ev.target.value; save(); render();
       });
-      document.getElementById("fOwner").addEventListener("change", function (ev) {
-        snapshot(); obj.owner = ev.target.value; save(); drawNodes();
+      var owSel = document.getElementById("fOwner");
+      if (owSel) owSel.addEventListener("change", function (ev) {
+        snapshot(); obj.owner = ev.target.value; save(); drawNodes(); drawLoad(); drawChecks();
       });
-      document.getElementById("fDec").addEventListener("change", function (ev) {
-        snapshot(); obj.decision = ev.target.checked; save(); drawNodes();
+      var dec = document.getElementById("fDec");
+      if (dec) dec.addEventListener("change", function (ev) {
+        snapshot(); obj.decision = ev.target.checked; save(); drawNodes(); drawChecks();
       });
       document.getElementById("fDel").addEventListener("click", function () {
         if (!confirm('Delete step "' + obj.title + '" and its links?')) return;
         snapshot();
         state.nodes = state.nodes.filter(function (n) { return n.id !== obj.id; });
         state.edges = state.edges.filter(function (e2) { return e2.from !== obj.id && e2.to !== obj.id; });
+        // a go-to step pointing at what just went away would keep a dead name
+        state.nodes.forEach(function (n) { if (isGoto(n) && n.target === obj.id) n.target = null; });
         sel = null; save(); render();
       });
     } else {
       var la = document.getElementById("fLabel"); la.value = obj.label || "";
-      la.addEventListener("input", function () { snapOnce(); obj.label = la.value; save(); drawEdges(); });
+      la.addEventListener("input", function () {
+        snapOnce(); obj.label = la.value; save(); drawEdges(); drawChecks();
+      });
       document.getElementById("fDel").addEventListener("click", function () {
         if (!confirm("Delete this link?")) return;
         snapshot();
@@ -469,7 +663,8 @@ viewport.addEventListener("dblclick", function (ev) {
 
 function addStep(x, y) {
   snapshot();
-  var n = { id:uid(), title:"New step", status:"draft", owner:"person", dur:"", decision:false, notes:"",
+  var n = { id:uid(), title:"New step", kind:"step", target:null, status:"draft", owner:"person",
+            dur:"", freq:null, decision:false, notes:"",
             x:Math.max(0, Math.round(x)), y:Math.max(0, Math.round(y)) };
   state.nodes.push(n);
   sel = { type:"node", id:n.id };
@@ -482,23 +677,7 @@ function addStep(x, y) {
 function tidy() {
   if (!state.nodes.length) return;
   snapshot();
-  var rank = {}, indeg = {};
-  state.nodes.forEach(function (n) { rank[n.id] = 0; indeg[n.id] = 0; });
-  state.edges.forEach(function (e2) { if (indeg[e2.to] !== undefined) indeg[e2.to]++; });
-  var queue = state.nodes.filter(function (n) { return indeg[n.id] === 0; }).map(function (n) { return n.id; });
-  if (!queue.length) queue = [state.nodes[0].id]; // cycle fallback
-  var seen = {}, guard = 0;
-  while (queue.length && guard++ < 10000) {
-    var id = queue.shift();
-    if (seen[id]) continue;
-    seen[id] = true;
-    state.edges.forEach(function (e2) {
-      if (e2.from === id && rank[e2.to] !== undefined) {
-        if (rank[e2.to] < rank[id] + 1) { rank[e2.to] = rank[id] + 1; }
-        if (!seen[e2.to]) queue.push(e2.to);
-      }
-    });
-  }
+  var rank = PG.ranks(graph());
   var cols = {};
   state.nodes.forEach(function (n) {
     var r = rank[n.id] || 0;
@@ -542,28 +721,77 @@ document.getElementById("btnImport").addEventListener("click", function () {
 });
 // A business-blueprint file (docs/blueprint-schema.json) also imports here:
 // each process becomes a left-to-right chain of its steps, one row per
-// process. Blueprint documents the process as it currently runs, so steps
-// come in as "live"; the process name and step role land in the notes.
+// process. Blueprint documents the process as it currently runs, so steps come
+// in as "live"; the process name and step role land in the notes. Branches,
+// waits and go-to jumps come across as they are — a fork that flattens into a
+// straight line on import is worse than not importing it.
+var EXEC_OWNER = { person:"person", automation:"auto", ai:"ai" };
+var BP_KIND = { decision:"step", delay:"delay", end:"end", goto:"goto", task:"step" };
+
 function fromBlueprint(bp) {
-  var nodes = [], edges = [];
+  var nodes = [], edges = [], rowY = 80;
   (bp.processes || []).forEach(function (proc, pi) {
-    var prev = null;
-    (proc.steps || []).forEach(function (st, si) {
-      var id = (proc.id || "proc" + pi) + "-s" + (st.number || si + 1);
-      nodes.push({
-        id: id,
-        title: st.title || "Step " + (si + 1),
-        status: "live",
-        owner: "person",
-        dur: st.duration || "",
-        decision: false,
-        notes: (proc.name || "") + (st.owner ? " — " + st.owner : ""),
-        x: 60 + si * 240,
-        y: 80 + pi * 160
-      });
-      if (prev) edges.push({ id: "e-" + prev + "-" + id, from: prev, to: id, label: "" });
-      prev = id;
+    var prefix = proc.id || "proc" + pi;
+    var steps = (proc.steps || []).slice().sort(function (a, b) {
+      return (a.number || 0) - (b.number || 0);
     });
+    var idOf = {};
+    steps.forEach(function (st, si) { idOf[st.number || si + 1] = prefix + "-s" + (st.number || si + 1); });
+
+    steps.forEach(function (st, si) {
+      var num = st.number || si + 1;
+      var note = (proc.name || "") + (st.owner ? " — " + st.owner : "");
+      if (st.notes) note += (note ? "\n\n" : "") + st.notes;
+      nodes.push({
+        id: idOf[num],
+        title: st.title || "Step " + num,
+        kind: BP_KIND[st.kind] || "step",
+        target: st.kind === "goto" ? (idOf[st.goto] || null) : null,
+        status: "live",
+        owner: EXEC_OWNER[st.executor] || "person",
+        dur: st.duration || "",
+        freq: typeof st.frequency === "number" ? st.frequency : null,
+        decision: st.kind === "decision",
+        notes: note,
+        x: 60 + si * 240,
+        y: rowY
+      });
+    });
+
+    var terminators = 0;
+    steps.forEach(function (st, si) {
+      var num = st.number || si + 1, from = idOf[num];
+      if (st.kind === "goto" || st.kind === "end") return;   // both end their branch
+      var branches = st.branches || [];
+      if (!branches.length) {
+        var next = steps[si + 1];
+        if (next) edges.push({ id:"e-" + from + "-" + idOf[next.number || si + 2], from:from,
+                               to:idOf[next.number || si + 2], label:"" });
+        return;
+      }
+      branches.forEach(function (br, bi) {
+        var label = br.label || "";
+        if (br.to === "end") {
+          // a terminal branch gets a card that says it ends, not a missing arrow
+          var endId = from + "-end" + bi;
+          nodes.push({
+            id: endId, title: "End — " + (label || "terminal"), kind:"end", target:null,
+            status:"live", owner:"person", dur:"", freq:null, decision:false,
+            notes: "Terminal branch of \u201c" + (st.title || "step " + num) + "\u201d. The process stops here.",
+            x: 60 + si * 240, y: rowY + 110 + terminators * 90
+          });
+          terminators++;
+          edges.push({ id:"e-" + from + "-" + endId, from:from, to:endId, label:label });
+          return;
+        }
+        var to = idOf[br.to];
+        if (to) edges.push({ id:"e-" + from + "-" + to + "-" + bi, from:from, to:to, label:label });
+      });
+    });
+
+    // the next process starts below this one's terminator cards, not on top
+    // of them
+    rowY += 200 + terminators * 90;
   });
   if (!nodes.length) throw new Error("blueprint has no process steps");
   return { nodes: nodes, edges: edges };

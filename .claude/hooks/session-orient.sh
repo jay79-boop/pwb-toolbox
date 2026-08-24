@@ -40,3 +40,16 @@ Two standing rules for this owner, expanded on in the gexio-machine skill:
   - Describe outcomes back to them, not procedures. They ask for goals; the
     steps are yours to work out.
 ORIENT
+
+# The night lab's morning verdict, if it found anything worth saying.
+#
+# `verdict --quiet` prints nothing when nothing broke, which is the point:
+# a night that found nothing should not add a line to the catch-up. So this
+# block is silent on a quiet night and speaks only when there is a finding.
+# Failure here must never break orientation, hence the guards.
+if [ -f night_lab/verdict.json ]; then
+  VERDICT="$(python tools/night_lab.py verdict --quiet 2>/dev/null || true)"
+  if [ -n "$VERDICT" ]; then
+    printf '\n%s\n%s\n' "The night lab has findings from its last run — lead with these:" "$VERDICT"
+  fi
+fi
