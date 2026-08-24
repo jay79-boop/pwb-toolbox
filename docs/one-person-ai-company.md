@@ -155,17 +155,29 @@ baseline behind it.
 **No repricing off noise.** The self-repricing loop is the most attractive part
 of the pitch and the easiest to get wrong. A one-van shop closes ~38 jobs a
 month across several job types, so most types have too few jobs in any month to
-tell a margin drift from an ordinary run of hard jobs. So `reprice` gates
-twice — sample size first, then whether the drift interval excludes zero — and
-"not enough jobs yet" is a first-class outcome that says how many more are
-needed:
+tell a margin drift from an ordinary run of hard jobs. So `reprice` gates three
+times, and "leave the price alone" is a first-class outcome at every one:
+
+1. **Sample size** — below the floor in `rules.md`, the type is not tested at
+   all, and the report says how many more jobs it needs.
+2. **Its own evidence** — a drift that is not distinguishable from job-to-job
+   variance is reported and dropped.
+3. **The family** — repricing tests every job type, every month, so it is a
+   grid scan and is charged as one: Benjamini-Hochberg across the types that
+   cleared the sample gate. At twelve job types and an uncorrected 5%
+   threshold you would expect to "discover" a price change in roughly one
+   clean month in two, and then move a real price on it. This is the same
+   charge `season_scan` and `calibration_audit` pay.
+
 
 ```bash
 python tools/ai_company.py reprice jobs.csv --target-margin 0.42
 ```
 
-The test that matters refuses a **22-point** margin gap on four jobs. A gate
-that only declines when the evidence is also weak is not a gate.
+Two tests carry this. One refuses a **22-point** margin gap on four jobs — a
+gate that only declines when the evidence is also weak is not a gate. The
+other takes a drift that clears on its own, puts eleven ordinary job types
+beside it, and requires the verdict to flip to "not against the family".
 
 **No invented costs.** Every tool in the blueprint has no `cost` field, and
 every KPI reads `unmeasured`. Phase 1 of the readiness framework fills those

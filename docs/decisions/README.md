@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-24 | [Deleting a merged head branch orphans any PR stacked on it](2026-08-24-deleting-a-merged-head-branch-orphans-any-pr-stacked-on-it.md) |
 | 2026-08-24 | [VWAP lab: the fade as candidate, the crossover as control (PR #111)](2026-08-24-vwap-lab-the-fade-as-candidate-the-crossover-as-control.md) |
 | 2026-08-24 | [Guard the irreversible path, not the whole surface](2026-08-24-guard-the-irreversible-path-not-the-whole-surface.md) |
 | 2026-08-24 | [A $290 session that did no work, and the cap that follows](2026-08-24-a-290-session-that-did-no-work-and-the-cap-that-follows.md) |

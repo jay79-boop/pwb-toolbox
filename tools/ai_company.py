@@ -533,6 +533,109 @@ def t_critical(df: int) -> float:
     return _T95.get(df, 1.960)
 
 
+# The interval above is what a reader looks at. The conviction is made on a
+# p-value corrected across every job type in the run, because repricing scans
+# a grid -- one test per job type, every month -- and a grid is a fishing
+# expedition whether or not it was meant as one. At twelve job types and an
+# uncorrected 5% threshold you would expect to "discover" a price change in
+# roughly one clean month in two. Same charge tools/season_scan.py and
+# tools/calibration_audit.py pay, same implementation.
+
+
+#: Continued fraction for the incomplete beta, by the modified Lentz method.
+def _betacf(a: float, b: float, x: float) -> float:
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 3e-16:
+            break
+    return h
+
+
+def _betainc(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta I_x(a, b)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    front = math.exp(
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log1p(-x)
+    )
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return (
+        1.0
+        - math.exp(
+            math.lgamma(a + b)
+            - math.lgamma(a)
+            - math.lgamma(b)
+            + b * math.log1p(-x)
+            + a * math.log(x)
+        )
+        * _betacf(b, a, 1.0 - x)
+        / b
+    )
+
+
+def t_two_sided_p(t: float, df: int) -> float:
+    """Two-sided p for a t statistic. Stdlib only, like the other labs here."""
+    if df < 1:
+        return 1.0
+    if t == 0.0:
+        return 1.0
+    return min(1.0, _betainc(df / 2.0, 0.5, df / (df + t * t)))
+
+
+#: Family-wise error rate the repricing run is held to across its job types.
+FDR_Q = 0.05
+
+
+def bh_fdr(pvalues: List[float], q: float = FDR_Q) -> List[bool]:
+    """Benjamini-Hochberg across the job types of one run."""
+    n = len(pvalues)
+    if n == 0:
+        return []
+    order = sorted(range(n), key=lambda i: pvalues[i])
+    threshold_rank = 0
+    for rank, idx in enumerate(order, start=1):
+        if pvalues[idx] <= q * rank / n:
+            threshold_rank = rank
+    passing = [False] * n
+    for rank, idx in enumerate(order, start=1):
+        if rank <= threshold_rank:
+            passing[idx] = True
+    return passing
+
+
 #: Below this many jobs of a type, no price moves. The reference architecture
 #: keeps the real figure in the business's ``rules.md``; this is the default
 #: the tool argues for.
@@ -579,18 +682,24 @@ def reprice(
     rows: Sequence[dict],
     target_margin: float,
     min_jobs: int = DEFAULT_MIN_JOBS,
+    q: float = FDR_Q,
 ) -> List[dict]:
     """Per job type: realized margin, its interval, and whether a price may move.
 
-    Three outcomes, and two of them are "leave it alone":
+    Four outcomes, and three of them are "leave it alone":
 
     ``too_few``       fewer than ``min_jobs`` of this type. The correct answer
                       most months, and it says how many more are needed.
-    ``inside_noise``  enough jobs, but the drift interval straddles zero, so
-                      the observed gap is not distinguishable from variance.
-    ``reprice``       enough jobs and an interval clear of zero. Carries the
-                      exact price multiplier that restores the target margin,
-                      since cost is fixed and price = cost / (1 - margin).
+    ``inside_noise``  enough jobs, but the drift is not distinguishable from
+                      job-to-job variance on its own.
+    ``family_noise``  it would have cleared on its own and does not survive
+                      Benjamini-Hochberg across the other job types in this
+                      run. Repricing tests every type every month, so it is a
+                      grid scan and is charged as one.
+    ``reprice``       enough jobs, and clear of zero after that correction.
+                      Carries the exact price multiplier that restores the
+                      target margin, since cost is fixed and
+                      price = cost / (1 - margin).
     """
     if not 0 < target_margin < 1:
         raise LoopError("target margin is a fraction between 0 and 1")
@@ -613,6 +722,8 @@ def reprice(
             "drift": drift,
             "ci_low": None,
             "ci_high": None,
+            "p": None,
+            "fdr_pass": False,
             "verdict": "too_few",
             "detail": f"needs {min_jobs - n} more job(s) before a price may move",
             "price_multiplier": None,
@@ -620,26 +731,52 @@ def reprice(
         if n >= min_jobs:
             if n >= 2:
                 variance = sum((m - mean) ** 2 for m in margins) / (n - 1)
-                half = t_critical(n - 1) * math.sqrt(variance / n)
+                stderr = math.sqrt(variance / n)
             else:
-                half = math.inf
+                stderr = math.inf
+            half = t_critical(n - 1) * stderr
             result["ci_low"] = drift - half
             result["ci_high"] = drift + half
-            if result["ci_low"] <= 0 <= result["ci_high"]:
-                result["verdict"] = "inside_noise"
-                result["detail"] = (
-                    "drift interval straddles zero — observed gap is not "
-                    "distinguishable from job-to-job variance"
-                )
+            if stderr == 0:
+                # every job of this type landed on the same margin: no spread
+                # to test against, and the drift is exactly what it looks like
+                result["p"] = 0.0 if drift else 1.0
+            elif math.isinf(stderr):
+                result["p"] = 1.0
             else:
-                result["verdict"] = "reprice"
-                result["price_multiplier"] = (1 - mean) / (1 - target_margin)
-                way = "under" if drift < 0 else "over"
-                result["detail"] = (
-                    f"margin runs {abs(drift) * 100:.1f}pp {way} target across "
-                    f"{n} jobs, interval clear of zero"
-                )
+                result["p"] = t_two_sided_p(drift / stderr, n - 1)
         out.append(result)
+
+    # the correction runs across the types that actually cleared the sample
+    # gate -- a type with four jobs was never a test, and counting it would
+    # make the correction weaker for everyone else
+    tested = [r for r in out if r["p"] is not None]
+    for result, passed in zip(tested, bh_fdr([r["p"] for r in tested], q)):
+        result["fdr_pass"] = passed
+        if passed:
+            result["verdict"] = "reprice"
+            result["price_multiplier"] = (1 - result["mean_margin"]) / (
+                1 - target_margin
+            )
+            way = "under" if result["drift"] < 0 else "over"
+            result["detail"] = (
+                f"margin runs {abs(result['drift']) * 100:.1f}pp {way} target "
+                f"across {result['jobs']} jobs (p={result['p']:.4f}, clears "
+                f"Benjamini-Hochberg at q={q:g} over {len(tested)} type(s))"
+            )
+        elif result["p"] <= q:
+            result["verdict"] = "family_noise"
+            result["detail"] = (
+                f"would clear on its own (p={result['p']:.4f}) but does not "
+                f"survive the correction across {len(tested)} job type(s) "
+                "tested this run"
+            )
+        else:
+            result["verdict"] = "inside_noise"
+            result["detail"] = (
+                f"drift is not distinguishable from job-to-job variance "
+                f"(p={result['p']:.4f})"
+            )
     return out
 
 
@@ -797,25 +934,32 @@ def render_loop(economics: dict, budget: dict | None = None) -> str:
 _VERDICT_LABEL = {
     "too_few": "TOO FEW",
     "inside_noise": "NOISE",
+    "family_noise": "NOT vs FAMILY",
     "reprice": "REPRICE",
 }
 
 
 def render_reprice(results: Sequence[dict], min_jobs: int) -> str:
+    tested = sum(1 for r in results if r["p"] is not None)
     lines = [
         f"Sample-size gate: {min_jobs} jobs of a type before any price may move.",
+        f"Benjamini-Hochberg at q={FDR_Q:g} across the {tested} type(s) that "
+        "cleared it — repricing tests every type every month, and a grid is a "
+        "fishing expedition whether or not it was meant as one.",
         "",
-        f"{'JOB TYPE':22} {'N':>3} {'MARGIN':>7} {'DRIFT':>7} {'INTERVAL':>17}  VERDICT",
+        f"{'JOB TYPE':22} {'N':>3} {'MARGIN':>7} {'DRIFT':>7} {'INTERVAL':>17} "
+        f"{'P':>7}  VERDICT",
     ]
     for r in results:
         if r["ci_low"] is None:
             interval = "—"
         else:
             interval = f"[{r['ci_low'] * 100:+.1f}, {r['ci_high'] * 100:+.1f}]pp"
+        shown_p = "—" if r["p"] is None else f"{r['p']:.4f}"
         lines.append(
             f"{r['job_type'][:22]:22} {r['jobs']:>3} "
             f"{r['mean_margin'] * 100:>6.1f}% {r['drift'] * 100:>+6.1f}pp "
-            f"{interval:>17}  {_VERDICT_LABEL[r['verdict']]}"
+            f"{interval:>17} {shown_p:>7}  {_VERDICT_LABEL[r['verdict']]}"
         )
     lines.append("")
     for r in results:
@@ -829,7 +973,7 @@ def render_reprice(results: Sequence[dict], min_jobs: int) -> str:
     movable = sum(1 for r in results if r["verdict"] == "reprice")
     lines.append("")
     lines.append(
-        f"{movable} of {len(results)} job type(s) cleared both gates. "
+        f"{movable} of {len(results)} job type(s) cleared every gate. "
         "The rest keep their prices."
     )
     return "\n".join(lines)

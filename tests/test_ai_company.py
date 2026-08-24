@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT))
 from tools.ai_company import (  # noqa: E402
     COMMITTING_CATEGORIES,
     DEFAULT_MIN_JOBS,
+    bh_fdr,
     LoopError,
     audit_gates,
     build_page,
@@ -52,6 +53,7 @@ from tools.ai_company import (  # noqa: E402
     reprice,
     roster,
     successors,
+    t_two_sided_p,
 )
 from tools.blueprint_converter import check_blueprint  # noqa: E402
 
@@ -587,6 +589,9 @@ def _spread(job_type, quoted, margins):
     ]
 
 
+_margins = _spread
+
+
 def test_reprice_catches_a_planted_drift():
     rows = _spread(
         "Bathroom", 1400, [0.28, 0.31, 0.29, 0.30, 0.32, 0.27, 0.30, 0.29, 0.31, 0.30]
@@ -647,7 +652,7 @@ def test_reprice_rejects_an_impossible_target():
 def test_reprice_text_counts_what_moved():
     rows = _spread("Bathroom", 1400, [0.30] * 10) + _spread("Rewire", 2600, [0.20] * 4)
     text = render_reprice(reprice(rows, 0.42), DEFAULT_MIN_JOBS)
-    assert "1 of 2 job type(s) cleared both gates" in text
+    assert "1 of 2 job type(s) cleared every gate" in text
     assert "TOO FEW" in text
 
 
@@ -682,3 +687,102 @@ def test_page_says_what_it_does_not_know(tmp_path, blueprint):
     html = build_page(blueprint, tmp_path / "page.html").read_text(encoding="utf-8")
     assert "unmeasured" in html
     assert "refuses to produce one without a" in html
+
+
+# ------------------------------------------------ pricing the fishing trip
+
+
+def test_t_p_values_reproduce_the_table():
+    """The p-value is stdlib, so something has to check it is the right one.
+
+    Each t below is the published two-sided 5% critical value for its degrees
+    of freedom, so each must come back at 0.05.
+    """
+    for t, df in [(12.706, 1), (2.776, 4), (2.228, 10), (2.086, 20), (2.042, 30)]:
+        assert t_two_sided_p(t, df) == pytest.approx(0.05, abs=5e-5)
+    assert t_two_sided_p(0.0, 10) == 1.0
+    assert t_two_sided_p(1.0, 10) == pytest.approx(0.34089313, abs=1e-7)
+    assert t_two_sided_p(5.0, 7) == pytest.approx(0.00156528, abs=1e-7)
+
+
+def test_bh_fdr_matches_the_other_labs():
+    assert bh_fdr([0.001, 0.9, 0.8], q=0.05) == [True, False, False]
+    assert bh_fdr([0.02, 0.03], q=0.05) == [True, True]
+    assert bh_fdr([0.04], q=0.05) == [True]
+    assert bh_fdr([], q=0.05) == []
+
+
+def _noise_type(name, seed):
+    """Ten jobs whose margins sit symmetrically on target: nothing to find."""
+    offsets = [0.06, -0.06, 0.04, -0.04, 0.02, -0.02, 0.05, -0.05, 0.03, -0.03]
+    return _spread(name, 1000 + seed, [0.42 + o for o in offsets])
+
+
+#: A 3.5pp margin drift with enough job-to-job spread that its own p-value
+#: lands around 0.02 -- a finding on its own, and not one once eleven other
+#: job types are tested in the same run.
+_MODEST_DRIFT = [
+    0.4144,
+    0.3556,
+    0.4340,
+    0.3360,
+    0.4046,
+    0.3654,
+    0.4438,
+    0.3262,
+    0.3948,
+    0.3752,
+]
+
+
+def test_a_modest_drift_clears_on_its_own():
+    """The control for the pair below: tested alone, this one is a finding."""
+    (result,) = reprice(_margins("Bathroom", 1400, _MODEST_DRIFT), target_margin=0.42)
+    assert result["verdict"] == "reprice"
+    assert 0.05 / 12 < result["p"] <= 0.05
+
+
+def test_the_same_drift_does_not_survive_eleven_other_job_types():
+    """A grid is a fishing expedition whether or not it was meant as one.
+
+    Repricing tests every job type every month. At twelve types and an
+    uncorrected 5% threshold you would expect to "discover" a price change in
+    roughly one clean month in two -- and then move a real price on it.
+    """
+    rows = _margins("Bathroom", 1400, _MODEST_DRIFT)
+    for i in range(11):
+        rows += _noise_type(f"Filler {i}", i)
+    results = {r["job_type"]: r for r in reprice(rows, target_margin=0.42)}
+    bathroom = results["Bathroom"]
+    assert bathroom["p"] < 0.05, "still individually significant"
+    assert bathroom["verdict"] == "family_noise"
+    assert bathroom["price_multiplier"] is None
+    # and the eleven that were never anything stay nothing
+    assert {r["verdict"] for k, r in results.items() if k != "Bathroom"} == {
+        "inside_noise"
+    }
+
+
+def test_a_real_drift_survives_the_whole_family():
+    """The correction must not silence a finding that is genuinely there."""
+    rows = _spread(
+        "Bathroom", 1400, [0.28, 0.31, 0.29, 0.30, 0.32, 0.27, 0.30, 0.29, 0.31, 0.30]
+    )
+    for i in range(11):
+        rows += _noise_type(f"Filler {i}", i)
+    results = {r["job_type"]: r for r in reprice(rows, target_margin=0.42)}
+    assert results["Bathroom"]["verdict"] == "reprice"
+    assert results["Bathroom"]["fdr_pass"]
+
+
+def test_undersampled_types_do_not_weaken_the_correction():
+    """A type with four jobs was never a test and must not be counted as one."""
+    strong = _spread("Bathroom", 1400, [0.30] * 10)
+    thin = [r for i in range(11) for r in _spread(f"Thin {i}", 900, [0.10] * 4)]
+    results = {r["job_type"]: r for r in reprice(strong + thin, target_margin=0.42)}
+    assert results["Bathroom"]["verdict"] == "reprice"
+    assert all(
+        results[f"Thin {i}"]["verdict"] == "too_few"
+        and results[f"Thin {i}"]["p"] is None
+        for i in range(11)
+    )
