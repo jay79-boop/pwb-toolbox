@@ -66,6 +66,40 @@ def zero_volume_share(frame) -> float:
     return float((frame["volume"] <= 0).mean())
 
 
+def volume_warnings(frame, second=None, labels=("primary", "second")):
+    """Every feed too volumeless for VWAP to mean anything, named.
+
+    Checked per feed rather than once per run. The noise floor compares one
+    strategy across two vendors, so a volumeless *second* feed leaves half of
+    that comparison a TWAP result while the printed verdict still calls the
+    gap vendor disagreement -- the run then reads as a finding about data
+    sourcing when what actually differs is which indicator each side computed.
+
+    A feed carrying volume against one that does not is the worst of the three
+    cases and gets its own line: two volumeless feeds at least compare like
+    with like, but a mixed pair prices VWAP against TWAP and reports the
+    difference as a fact about the vendors.
+    """
+    feeds = [(f, l) for f, l in zip((frame, second), labels) if f is not None]
+    shares = [(zero_volume_share(f), l) for f, l in feeds]
+    out = [
+        f"WARNING: {100 * share:.0f}% of bars on the {label} feed carry zero "
+        "volume -- this VWAP is a TWAP wearing the name. Read the numbers "
+        "accordingly."
+        for share, label in shares
+        if share > 0.5
+    ]
+    if len(shares) == 2 and (shares[0][0] > 0.5) != (shares[1][0] > 0.5):
+        empty, full = sorted(shares, key=lambda s: -s[0])
+        out.append(
+            f"WARNING: the {empty[1]} feed is volumeless and the {full[1]} feed "
+            "is not, so the noise floor below compares a TWAP result against a "
+            "VWAP one. That gap is not vendor disagreement and must not be read "
+            "as any."
+        )
+    return out
+
+
 def per_year(frame, min_bars=500):
     """Split a frame by calendar year, dropping stubs too short to mean much."""
     return {
@@ -198,12 +232,12 @@ def main(argv=None) -> int:
             minutes=args.minutes,
         )
 
-    zero_share = zero_volume_share(frame)
-    if zero_share > 0.5:
-        print(
-            f"WARNING: {100 * zero_share:.0f}% of bars carry zero volume -- "
-            "this VWAP is a TWAP wearing the name. Read the numbers accordingly."
-        )
+    for line in volume_warnings(
+        frame,
+        second,
+        labels=(f"primary ({args.vendor})", f"second ({args.second_vendor})"),
+    ):
+        print(line)
 
     params = dict(
         band_k=args.band_k,

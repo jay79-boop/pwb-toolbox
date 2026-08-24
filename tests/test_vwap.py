@@ -316,6 +316,45 @@ def test_zero_volume_share_flags_a_volumeless_feed():
     assert vwap_lab.zero_volume_share(_frame([100.0] * 4)) == 0.0
 
 
+def test_volume_warning_covers_the_second_feed_not_just_the_first():
+    # The bug this pins: a volumeless SECOND feed used to pass in silence, so
+    # the noise floor compared a TWAP run against a VWAP one and reported the
+    # difference as vendor disagreement.
+    full = _frame([100.0] * 4)
+    empty = _frame([100.0] * 4, volumes=[0] * 4)
+
+    lines = vwap_lab.volume_warnings(full, empty, labels=("primary", "second"))
+    assert any("second feed carry zero volume" in line for line in lines)
+
+    lines = vwap_lab.volume_warnings(empty, full, labels=("primary", "second"))
+    assert any("primary feed carry zero volume" in line for line in lines)
+
+
+def test_a_mixed_volume_pair_says_the_gap_is_not_vendor_disagreement():
+    lines = vwap_lab.volume_warnings(
+        _frame([100.0] * 4, volumes=[0] * 4),
+        _frame([100.0] * 4),
+        labels=("primary", "second"),
+    )
+    assert any("not vendor disagreement" in line for line in lines)
+
+
+def test_two_volumeless_feeds_warn_twice_but_not_about_disagreement():
+    empty = _frame([100.0] * 4, volumes=[0] * 4)
+    lines = vwap_lab.volume_warnings(empty, empty, labels=("primary", "second"))
+    # Both are TWAP, which is at least like-for-like -- flag each feed, but do
+    # not claim the comparison itself is mixing indicators.
+    assert len(lines) == 2
+    assert not any("not vendor disagreement" in line for line in lines)
+
+
+def test_two_volumed_feeds_and_a_lone_feed_stay_quiet():
+    full = _frame([100.0] * 4)
+    assert vwap_lab.volume_warnings(full, full) == []
+    assert vwap_lab.volume_warnings(full) == []
+    assert len(vwap_lab.volume_warnings(_frame([100.0] * 4, volumes=[0] * 4))) == 1
+
+
 def test_exported_trades_carry_the_fields_the_night_lab_reads():
     result = backtest(_fade_day(), VwapStrategy, mintick=0.25, setup="fade")
     records = vwap_lab.trades_as_records(result.strategy.trade_log, "ES")
