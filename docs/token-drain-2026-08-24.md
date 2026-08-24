@@ -10,7 +10,7 @@ Seventeen sessions were active in that window. Twelve were cloud sessions on
 Opus, nine of those at `max` effort. Nothing had gone rogue — every one of them
 was doing roughly what it was asked to do. The window died of arithmetic.
 
-| Session | Effort | Last activity (UTC) | Lifetime cost | Cache reads |
+| Session | Effort | Last activity (UTC) | Metered (lifetime) | Cache reads |
 | --- | --- | --- | --- | --- |
 | Ollama trade stress testing | max | 01:59 | $290.64 | 68.3M |
 | Kronos financial analysis | max | 03:07 | $154.28 | 14.9M |
@@ -25,13 +25,23 @@ was doing roughly what it was asked to do. The window died of arithmetic.
 | Merge similar artifacts | max | 03:08 | $4.11 | 1.2M |
 | Master blueprint review | — | 03:09 | $1.90 | 8.7M |
 
-**Read that cost column carefully: it is lifetime, not in-window.** The three
-expensive sessions at the top had been accumulating for a day or more; only
-part of each belongs to this window. What *is* fully attributable is the five
-sessions created inside the window — VWAP, both fleet leads, usage analysis,
-merge artifacts — which together spent **$39.02 in about two hours**, before
-counting a single token from the three big ones that were also actively
-working the whole time.
+**These figures are not money, and no charge appears anywhere.** Confirmed with
+the owner on the day: nothing was billed. Every session in the window reports
+`isUsingOverage: false`, so the account never crossed into paid overage. The
+`cost_usd` field is an API-equivalent valuation — what the same traffic would
+have cost at pay-as-you-go rates — and on a subscription it is a **meter, not an
+invoice**. Read the column as "how much of the five-hour window this consumed",
+denominated in dollars only because that is the unit the field happens to use.
+
+What was actually spent was the window, and the window is the scarce thing: it
+resets on a clock rather than on a balance, so nothing buys it back early.
+
+**And the column is lifetime, not in-window.** The three expensive sessions at
+the top had been accumulating for a day or more; only part of each belongs here.
+What *is* fully attributable is the five sessions created inside the window —
+VWAP, both fleet leads, usage analysis, merge artifacts — which together metered
+**$39.02-equivalent in about two hours**, before counting a single token from the
+three big ones that were also working throughout.
 
 ## The mechanism: self-re-arming check-ins bound to persistent sessions
 
@@ -51,7 +61,7 @@ check-in that looks around, finds nothing changed, and goes back to sleep still
 pays to re-read all of that first. The work is free; the remembering is not.
 
 The fleet registry had already measured this and not generalised it: a
-heartbeat wake that "does nothing" costs $3.29–$4.29. Fleet lead A at $5.07 and
+heartbeat wake that "does nothing" meters $3.29–$4.29. Fleet lead A at $5.07 and
 lead B at $4.29 sit in the table above confirming the figure a second time.
 
 One of the three had already been diagnosed and replaced at 02:07 UTC by a
@@ -69,8 +79,8 @@ merge artifacts (02:22), token-drain investigation (03:04), mysterious charges
 investigation running twice in parallel, and one was still running on the
 *next* window hours later, re-deriving what the other had already found.
 
-Diagnosis is not free. A question about spending, asked four times
-concurrently at max effort, is itself a meaningful line in the bill.
+Diagnosis is not free. A question about the window, asked four times
+concurrently at max effort, consumes the very thing it is asking about.
 
 ## Rules that follow
 
@@ -83,7 +93,7 @@ concurrently at max effort, is itself a meaningful line in the bill.
    and no single place to turn it off.
 3. **Delete the old Routine in the same breath as creating its replacement.**
    Superseded-but-live is indistinguishable from intended, and it fires.
-4. **Effort level is a spending decision.** `max` on Opus is right for the hard
+4. **Effort level is a window decision.** `max` on Opus is right for the hard
    design call and wrong for "check whether CI is green" — and most scheduled
    work is the latter.
 5. **Before trimming schedules, count the live sessions.** The standing Routine
@@ -113,7 +123,7 @@ Acted on the same day, with the owner's approval:
 
 - **Interrupted** the second live investigation session. It was running Opus at
   `max` effort on the fresh window, re-deriving this same answer in parallel,
-  and had already spent $4.48 and opened a second pull request for it.
+  and had already metered $4.48-equivalent and opened a second pull request for it.
 - **Deleted `Re-check PR #111`** — self-re-armed hourly into the VWAP session,
   fire time already in the past.
 - **Deleted the old `Spec desk: XRP/DOGE stop-target watch`** — self-re-armed
