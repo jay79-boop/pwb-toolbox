@@ -123,6 +123,57 @@ alert, and "already spent" is not an alert at all.
 6. **Decide what "too fast" looks like** and set the alert while you still
    remember the number.
 
+## The auditor, and what it refuses to claim
+
+`tools/spend_watch.py` is the check behind the rules above. Two commands:
+
+```bash
+python tools/spend_watch.py audit snapshot.json          # structural findings
+python tools/spend_watch.py audit now.json --baseline earlier.json   # + growth
+python tools/spend_watch.py session <transcript>.jsonl --quiet       # am I too big?
+```
+
+`audit` takes `{"sessions": [...], "triggers": [...]}` straight from the
+`list_sessions` and `list_triggers` MCP tools. It finds: Routines that tell
+themselves to schedule a successor, Routines bound to a persistent session,
+**two enabled Routines doing the same job on the same cron**, sessions fat
+enough that waking them is expensive, and too many sessions awake at once.
+
+**It refuses to derive a burn rate from one snapshot.** Session metadata reports
+*lifetime* totals, so dividing by elapsed time turns a figure accumulated over a
+day into an apparent hourly one — the exact misreading that made $290 of
+lifetime metering read as a runaway. Rate findings appear only with `--baseline`.
+
+Three things it got wrong on 2026-08-24 and no longer does, each worth knowing
+because each failed *silently*:
+
+- **A negated mention is not an instruction.** Every Routine prompt now ends
+  with "do NOT re-arm yourself". A substring search flags precisely the
+  Routines that were fixed, and a check that fires hardest on its own cure is
+  one nobody reads.
+- **The window is whichever limit is binding.** `rateLimitType` can be
+  `seven_day`, not just `five_hour`. Assuming five hours put the window start
+  four days in the future and the concurrency check found nothing — passing
+  because it measured an empty set.
+- **Concurrency is a recency question.** It is measured over a fixed five-hour
+  horizon anchored to the newest activity in the snapshot, never over the
+  billing window, or a week of finished work reads as a crowd.
+
+### The session-size warning
+
+`session` reads a session's own transcript — the per-turn usage the harness
+already writes to disk. **No API call, so the warning never consumes the thing
+it is warning about.** That constraint is the whole design: on 2026-08-24 four
+concurrent sessions investigating the window consumed about half of it.
+
+`.claude/hooks/session-size.sh` runs it on every prompt and stays silent below
+10M cache reads. It speaks once per tier (10M / 25M / 50M) and then not again
+until the tier changes.
+
+Read cache reads, not output, when judging a session's weight. In the measured
+window they ran 183:1 against output — 96.9% of every token moved was context
+being re-read, and that is the bill a long session pays before it does anything.
+
 ## The principle, in one line
 
 Anything unattended must be **incapable** of a large mistake, not merely
