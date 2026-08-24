@@ -79,6 +79,10 @@ PROPOSALS_NAME = "proposals.jsonl"
 # bare plan would silently rebuild the record without the sim trades the
 # owner armed earlier -- dropping every shock and leak job on the floor.
 DEFAULT_SIM_NAME = "sim_trades.json"
+# Any file matching this glob in the lab dir feeds fragility jobs -- the
+# reversal sim's --fragility-out writes them, one file per instrument, and a
+# bare `plan` (what the "good night" agent runs) sweeps them all in.
+FRAGILITY_GLOB = "fragility*.json"
 # The closed record `plan` snapshotted for tonight. `run` reads this rather
 # than re-deriving the record at 1am, so the night computes on exactly the
 # state that was armed -- including sim trades merged in via --sim, which the
@@ -1187,7 +1191,28 @@ def cmd_plan(args):
         ledger = dict(ledger)
         ledger["trades"] = list(ledger.get("trades", [])) + sim_trades
 
+    fragility_paths = [Path(f).expanduser() for f in (args.fragility or [])]
+    if not fragility_paths:
+        fragility_paths = sorted(out.glob(FRAGILITY_GLOB))
+    fragility_specs: list[dict] = []
+    for path in fragility_paths:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            print(f"Unreadable fragility specs in {path}; skipping it.")
+            continue
+        for spec in loaded if isinstance(loaded, list) else []:
+            if isinstance(spec, dict) and isinstance(spec.get("sweep"), dict):
+                spec = dict(spec)
+                spec.setdefault("param", "parameter")
+                spec["param"] = (
+                    f"{path.stem.replace('fragility', '').strip('_-') or 'sim'}:{spec['param']}"
+                )
+                fragility_specs.append(spec)
+
     jobs = build_queue(ledger, shocks=args.shocks, attacks_per=args.attacks)
+    for i, spec in enumerate(fragility_specs, start=1):
+        jobs.append(make_job("fragility", spec, f"fragility-{i}-{spec['param']}"))
     if not jobs:
         print("Nothing to queue: the desk has no open positions and no closed record.")
         print("Open a trade, or feed a backtest in with --sim (see")
@@ -1331,6 +1356,13 @@ def main(argv=None):
         "repeatable; joins the record for shocks and leak-mining",
     )
     p.add_argument("--shocks", type=int, default=6, help="scenario jobs to queue")
+    p.add_argument(
+        "--fragility",
+        action="append",
+        metavar="PATH",
+        help="fragility spec JSON from reversal_15m_sim --fragility-out; "
+        f"defaults to every {FRAGILITY_GLOB} in the lab dir",
+    )
     p.add_argument("--attacks", type=int, default=8, help="attacks per open thesis")
     p.set_defaults(func=cmd_plan)
 
