@@ -35,3 +35,4 @@ from .strategies import (
     WeightedAllocationPortfolio,
 )
 from .universe import get_most_liquid_symbols, get_least_volatile_symbols
+from .vwap import SessionVwap, VwapStrategy

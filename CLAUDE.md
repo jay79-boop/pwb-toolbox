@@ -141,6 +141,15 @@ A worked example, for this repo's 21st MCP key:
   correctly (see "Backtesting" below), normalises to basis points, and compares
   two vendors of the same instrument — the check that decides whether a
   single-instrument result meant anything
+- `tools/vwap_lab.py` — runs the VWAP setups (band-fade mean reversion,
+  pullback, and the crossover kept as a control expected to fail) over one or
+  two vendor feeds through `backtest_lab`'s cost-charging and noise-floor
+  machinery. The strategy itself is `pwb_toolbox/backtesting/vwap.py`
+  (session/anchored VWAP with volume-weighted σ bands + `VwapStrategy`), the
+  TradingView reading is `pine/vwap_strategy.pine`, and the evidence behind
+  the setup choices is sourced in `docs/trading-wisdom.md`. Warns when a feed
+  carries no volume (histdata index CFDs), because VWAP silently degrades to
+  TWAP there
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
