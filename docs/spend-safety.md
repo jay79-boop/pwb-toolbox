@@ -56,20 +56,39 @@ runaway costs whatever the account can bear.
 Interactive Brokers market data (~$10/mo), Canva, Hugging Face. A runaway cannot
 make these cost more. They need no safeguard beyond knowing they exist.
 
-## The gap that is open right now
+## The gaps that were open, and what closed them
 
-`.claude/settings.json` on `main` has **one allow entry and zero deny entries.**
+Two were open at once. Both are closed on `main` now; this section records what
+they were, because the shape of each is the thing worth recognising again.
 
-The 72-allow / 12-deny permission model — the one that reasons carefully about
-`ui_evaluate` being able to press the Buy button, and puts the dangerous tools in
-`deny` rather than merely omitting them from `allow` so a later blanket grant
-cannot silently restore them — exists only on the unmerged, currently conflicted
-branch behind PR #78.
+**The permission model was written but not in effect.** `.claude/settings.json`
+on `main` had one allow entry and zero deny entries, while the model that
+reasons carefully about `ui_evaluate` being able to press the Buy button — and
+puts dangerous tools in `deny` rather than merely omitting them from `allow`, so
+a later blanket grant cannot silently restore them — sat on the unmerged branch
+behind PR #78. The analysis had been done and paid for and was protecting
+nothing. `main` now carries 85 allow / 14 deny entries, `blotato_buy_credits`
+and `Windsor execute_action` among the denied.
 
-So the risk analysis has been done and paid for, and **is not in effect.** That
-is a larger exposure than the token drain ever was: token metering can cost a
-window, while `place_orders` shipped on `main` with no permission guardrail can
-cost a position.
+**The two connectors disagreed about what "live" means.** `IBConnector` had the
+full two-key brake; `CCXTConnector.place_orders` had **no guard of any kind** —
+no code key, no environment key, no sandbox detection. The same
+`create_connector` call was fail-closed for `broker="ib"` and wide open for
+`broker="ccxt"`, submitting real orders to a real exchange on
+`PWB_CCXT_API_KEY`. The module docstring demonstrated exactly that. Crypto is
+also the side actually being traded, so the unguarded connector was the one in
+use.
+
+That asymmetry is the general lesson: **a guard is a property of a path, not of
+a package.** Writing one and calling the risk handled is how the second path
+stays open. Both connectors now share `pwb_toolbox/execution/_live_guard.py`, so
+they cannot drift on the definition again, and sandbox is read off the connected
+exchange rather than a constructor flag — a connector that merely *asked* for
+sandbox and did not get it is still treated as live.
+
+The ranking that motivated fixing this before anything else still holds: token
+metering can cost a window, while an unguarded `place_orders` can cost a
+position.
 
 ## The five layers
 
