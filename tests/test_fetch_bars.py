@@ -73,3 +73,20 @@ def test_zero_volume_share_matches_the_gauge_vwap_lab_uses():
     assert fetch_bars.zero_volume_share(fetch_bars.normalise(frame)) == 0.0
     frame.loc[:, "Volume"] = 0
     assert fetch_bars.zero_volume_share(fetch_bars.normalise(frame)) == 1.0
+
+
+def test_mintick_scales_with_the_instruments_own_quote():
+    # slip_ticks defaults to 1.0, so mintick IS the per-trade slippage in
+    # price units -- a tick borrowed from a futures example onto an
+    # instrument quoting 100x higher charges 1/100th of the cost.
+    assert fetch_bars.mintick_for_bp(640.0) == pytest.approx(0.064)
+    assert fetch_bars.mintick_for_bp(100_000.0) == pytest.approx(10.0)
+    assert fetch_bars.mintick_for_bp(100_000.0, bp=2.0) == pytest.approx(20.0)
+
+
+def test_the_docstrings_crypto_tick_would_undercharge_badly():
+    # --mintick 0.5 on BTC near 100k is 0.05bp, not the ~1-2bp a real fill
+    # costs. Pinning the arithmetic that makes that visible.
+    charged_bp = 1e4 * 0.5 / 100_000.0
+    assert charged_bp == pytest.approx(0.05)
+    assert fetch_bars.mintick_for_bp(100_000.0) / 0.5 == pytest.approx(20.0)

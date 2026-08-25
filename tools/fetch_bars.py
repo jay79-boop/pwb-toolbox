@@ -65,6 +65,19 @@ def normalise(frame):
     return out.dropna(subset=COLUMNS)
 
 
+def mintick_for_bp(price, bp=1.0):
+    """The ``--mintick`` that charges ``bp`` basis points of slippage.
+
+    ``backtest_lab.backtest`` sets slippage to ``slip_ticks * mintick`` in
+    price units, and ``slip_ticks`` defaults to 1.0 -- so mintick *is* the
+    per-trade slippage, and its cost in basis points depends entirely on the
+    instrument's quote. A tick copied from a futures example onto an
+    instrument quoting three orders of magnitude higher charges almost
+    nothing, and a frictionless run measures nothing tradeable.
+    """
+    return price * bp / 1e4
+
+
 def zero_volume_share(frame) -> float:
     """The fraction of bars carrying no volume -- the TWAP-degeneracy gauge."""
     if not len(frame):
@@ -108,9 +121,14 @@ def main(argv=None) -> int:
     bars.reset_index(names="time").to_csv(out, index=False)
 
     share = zero_volume_share(bars)
+    price = float(bars["close"].mean())
     print(f"{len(bars)} bars -> {out}")
     print(f"  {bars.index[0]} .. {bars.index[-1]}  (naive UTC)")
     print(f"  zero-volume bars: {100 * share:.1f}%")
+    print(
+        f"  mean price {price:,.2f} -> --mintick {mintick_for_bp(price):,.4g} "
+        "charges ~1bp per trade"
+    )
     if share > 0.5:
         print(
             "  WARNING: this feed would make VWAP a TWAP. Pick an instrument "
