@@ -66,6 +66,85 @@ def zero_volume_share(frame) -> float:
     return float((frame["volume"] <= 0).mean())
 
 
+#: Every confirm the CLI can request, in the order the report lists them.
+CONFIRMS = ("rvol_min", "day_type_bp", "ma_len", "rsi_len")
+
+#: The flag each one arrives as, for a report that names what was typed.
+FLAG_NAMES = {
+    "rvol_min": "--rvol-min",
+    "day_type_bp": "--day-type-bp",
+    "ma_len": "--ma-len",
+    "rsi_len": "--rsi",
+}
+
+#: Which confirms each setup's entry path actually consults, read off
+#: ``VwapStrategy``: ``_try_fade`` tests day type, rvol, MA and RSI;
+#: ``_try_pullback`` tests all but RSI; ``_try_cross`` tests the crossover and
+#: nothing else. The control is deliberately left naive -- gating a
+#: stop-and-reverse system that is always in the market would make it neither
+#: the naive strategy nor a filtered one -- so this table exists to say so
+#: rather than to change it.
+SETUP_GATES = {
+    "fade": ("day_type_bp", "rvol_min", "ma_len", "rsi_len"),
+    "pullback": ("day_type_bp", "rvol_min", "ma_len"),
+    "cross": (),
+}
+
+
+def gate_report(setups, params):
+    """Which requested confirms each setup honoured, and which it ignored.
+
+    The results table puts setups side by side under one set of flags, which
+    reads as a like-for-like comparison. Under any confirm it is not: a cross
+    row printed beneath ``--rvol-min 1.5`` is the *ungated* result, so its
+    trade count looks like a fact about how selective the setup is when it is
+    a fact about which setups read the flag. Measured on real SPY bars, three
+    stacked confirms took fade from 149 trades to 2 and cross from 316 to
+    300 -- a difference that is entirely this, and nothing about the market.
+
+    Returns ``[]`` when no confirm was requested; there is then nothing to
+    disclaim and the table already means what it looks like.
+    """
+    requested = [c for c in CONFIRMS if params.get(c)]
+    if not requested:
+        return []
+
+    lines = ["", "Confirms requested: " + ", ".join(FLAG_NAMES[c] for c in requested)]
+    for setup in setups:
+        honoured = SETUP_GATES.get(setup, ())
+        ignored = [c for c in requested if c not in honoured]
+        if not ignored:
+            lines.append(f"  {setup:<9} applies all of them")
+            continue
+        applied = [c for c in requested if c in honoured]
+        detail = (
+            "applies none of them"
+            if not applied
+            else ("applies " + ", ".join(FLAG_NAMES[c] for c in applied))
+        )
+        lines.append(
+            f"  {setup:<9} IGNORES "
+            + ", ".join(FLAG_NAMES[c] for c in ignored)
+            + f" -- {detail}"
+        )
+        if setup == "cross":
+            lines.append(
+                "            so the cross row above is the ungated result. Read "
+                "its trade count"
+            )
+            lines.append("            as a fact about the flags, not about the setup.")
+            if "day_type_bp" in ignored:
+                lines.append(
+                    "            (--day-type-bp still holds every setup back "
+                    "until the day is"
+                )
+                lines.append(
+                    "            classified, which is why the count moves a "
+                    "little even so.)"
+                )
+    return lines
+
+
 def volume_warnings(frame, second=None, labels=("primary", "second")):
     """Every feed too volumeless for VWAP to mean anything, named.
 
@@ -264,6 +343,8 @@ def main(argv=None) -> int:
         floor = row["floor"]
         verdict = str(floor) if floor is not None else "-- (one feed: unjudged)"
         print(f"{setup:<10} {r.trades:>6} {r.win_rate:>6.1f} {r.bps:>8.0f}  {verdict}")
+    for line in gate_report(setups, params):
+        print(line)
     if "cross" in results and results["cross"]["result"].bps > 0:
         print(
             "\nNote: the crossover control came out positive. The published "
