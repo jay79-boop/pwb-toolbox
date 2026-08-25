@@ -150,13 +150,18 @@ A worked example, for this repo's 21st MCP key:
   the setup choices is sourced in `docs/trading-wisdom.md`. Warns when a feed
   carries no volume (histdata index CFDs), because VWAP silently degrades to
   TWAP there
-- `tools/fetch_bars.py` — intraday OHLCV from yfinance in the shape the bar
-  labs read, stamped naive UTC so the vendor-timezone trap cannot bite.
-  `season_scan fetch` covers daily bars; this covers the intraday ones VWAP
-  needs. Yahoo caps intraday history silently (~7d of 1m, ~60d of 5m) so the
-  row count and range are printed, and the zero-volume share with them. One
-  vendor, so a file from here cannot clear the two-vendor noise floor on its
-  own — a real-volume feed to develop against, not evidence of an edge
+- `tools/fetch_bars.py` — intraday OHLCV in the shape the bar labs read,
+  stamped naive UTC so the vendor-timezone trap cannot bite. `season_scan
+  fetch` covers daily bars; this covers the intraday ones VWAP needs. Two
+  sources: yfinance, which caps intraday history silently (~7d of 1m, ~60d of
+  5m) and whose crypto bars came back 50% zero-volume; and `--exchange`
+  (ccxt), which reports matched volume and serves years. **Two exchanges
+  quoting one pair are two vendors, which is what makes `noise_floor`
+  computable** — the yfinance path alone never can be. Prints the row count,
+  range, zero-volume share, and the `--mintick` that charges 1bp on this
+  instrument, because mintick is the per-trade slippage in price units and a
+  tick copied across instruments quoting orders of magnitude apart silently
+  stops charging a real cost
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
@@ -395,6 +400,7 @@ python -m tools.desk_agent.runlog review  --last 40   # what the weekly review r
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
 python tools/night_lab.py verdict --quiet  # morning findings; silent if none
 python tools/fetch_bars.py SPY --interval 5m --period 60d --out spy.csv  # intraday bars
+python tools/fetch_bars.py BTC/USDT --exchange binance --days 365 --out a.csv  # real volume, years
 python tools/season_scan.py report  # seasonality: report + watchlist + json
 python tools/season_scan.py overnight       # overnight vs intraday, per ticker
 python tools/calibration_audit.py --symbols SPY   # is our option math calibrated?

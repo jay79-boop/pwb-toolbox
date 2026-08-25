@@ -18,10 +18,23 @@ Use ``--mintick 0.01`` for a penny-quoted equity or ETF and ``0.25`` for ES.
 Two caps worth knowing before reading a short run as a short history. Yahoo
 limits intraday history hard and *silently* -- roughly 7 days of 1m bars and
 60 days of 5m -- so asking for more returns the cap rather than an error, and
-the row count and date range are printed for the run to be read against. And
-Yahoo is a single vendor, so a file from here cannot clear the two-vendor
-noise floor on its own; it is a real-volume feed to develop against, not
-evidence that an edge survived data sourcing.
+the row count and date range are printed for the run to be read against. Its
+crypto bars are worse than that: BTC-USD came back 50% zero-volume, which
+makes a VWAP built on it a TWAP with corrupted bands.
+
+``--exchange`` switches to ccxt and fixes both. An exchange reports the
+volume it actually matched, and serves years rather than sixty days --
+and since two exchanges quoting one pair are genuinely two vendors, this is
+what makes ``noise_floor`` computable at all::
+
+    python tools/fetch_bars.py BTC/USDT --exchange binance  --days 365 --out a.csv
+    python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out b.csv
+    python tools/vwap_lab.py a.csv --vendor generic --second b.csv \
+        --crypto --mintick 6.5
+
+Read the mintick line each source prints rather than copying one: mintick is
+the per-trade slippage in price units, so a tick borrowed across instruments
+quoting orders of magnitude apart silently stops charging a real cost.
 """
 
 from __future__ import annotations
@@ -65,6 +78,78 @@ def normalise(frame):
     return out.dropna(subset=COLUMNS)
 
 
+def normalise_ccxt(rows):
+    """ccxt's ``[ms, open, high, low, close, volume]`` rows -> the labs' frame.
+
+    ccxt stamps in UTC milliseconds, the one timestamp format that cannot be
+    misread: there is no local zone to guess at and no DST to get wrong. The
+    result is the same naive-UTC index the yfinance path produces, so a file
+    from either source reads identically under ``--vendor generic``.
+    """
+    if not len(rows):
+        raise ValueError("no rows to normalise")
+    frame = pd.DataFrame(list(rows), columns=["ms", *COLUMNS])
+    frame.index = pd.to_datetime(frame["ms"], unit="ms")
+    frame = frame.drop(columns=["ms"])
+    frame = frame[~frame.index.duplicated(keep="first")].sort_index()
+    return frame.dropna(subset=COLUMNS)
+
+
+def _ccxt_client(exchange):  # pragma: no cover - import and construction guard
+    try:
+        import ccxt
+    except ImportError:
+        raise SystemExit("--exchange needs ccxt:  python -m pip install ccxt")
+    if not hasattr(ccxt, exchange):
+        raise SystemExit(f"ccxt has no exchange named {exchange!r}")
+    return getattr(ccxt, exchange)({"enableRateLimit": True})
+
+
+def fetch_ccxt(
+    symbol,
+    exchange="binance",
+    timeframe="5m",
+    days=365,
+    limit=1000,
+    client=None,
+    progress=None,
+):
+    """Paginated OHLCV from one exchange, as the labs' naive-UTC frame.
+
+    Exchanges serve a bounded window per call, so years of 5-minute bars mean
+    walking forward a batch at a time. ``client`` is injectable precisely so
+    that walk -- the loop, the dedup across overlapping batches, and the two
+    ways it has to terminate -- is tested without a network call, the same way
+    ``pwb_toolbox.scraping`` tests its HTTP.
+
+    Termination is on *fresh rows*, not on a row count: an exchange that keeps
+    answering with bars already collected would otherwise spin forever, and
+    that is the failure a bad ``since`` actually produces.
+    """
+    ex = client if client is not None else _ccxt_client(exchange)
+    step = ex.parse_timeframe(timeframe) * 1000
+    now = ex.milliseconds()
+    since = now - int(days * 86_400_000)
+
+    rows, seen = [], set()
+    while since < now:
+        batch = ex.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
+        if not batch:
+            break
+        fresh = [r for r in batch if r[0] not in seen]
+        if not fresh:
+            break
+        seen.update(r[0] for r in fresh)
+        rows.extend(fresh)
+        if progress is not None:
+            progress(len(rows))
+        since = batch[-1][0] + step
+
+    if not rows:
+        raise SystemExit(f"no bars came back for {symbol} on {exchange}")
+    return normalise_ccxt(rows)
+
+
 def mintick_for_bp(price, bp=1.0):
     """The ``--mintick`` that charges ``bp`` basis points of slippage.
 
@@ -106,18 +191,44 @@ def fetch(symbol, interval="5m", period="60d"):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("symbol", help="a Yahoo ticker, e.g. SPY or ES=F")
+    ap.add_argument("symbol", help="a Yahoo ticker (SPY) or ccxt pair (BTC/USDT)")
+    ap.add_argument(
+        "--exchange",
+        default=None,
+        help="a ccxt exchange (binance, coinbase, kraken). Switches source off "
+        "yfinance: real matched volume, years of history, and a second one of "
+        "these is a genuine second vendor for the noise floor",
+    )
     ap.add_argument(
         "--interval", default="5m", help="1m, 2m, 5m, 15m, 30m or 60m (default 5m)"
     )
     ap.add_argument(
-        "--period", default="60d", help="Yahoo caps this per interval (default 60d)"
+        "--period", default="60d", help="yfinance only; Yahoo caps it per interval"
+    )
+    ap.add_argument(
+        "--days", type=float, default=365.0, help="--exchange only (default 365)"
     )
     ap.add_argument("--out", default=None, help="CSV path (default <symbol>.csv)")
     args = ap.parse_args(argv)
 
-    bars = fetch(args.symbol, args.interval, args.period)
-    out = Path(args.out or f"{args.symbol}.csv")
+    if args.exchange:
+        seen = [0]
+
+        def progress(n):
+            if n - seen[0] >= 20_000:
+                seen[0] = n
+                print(f"  ...{n:,} bars", flush=True)
+
+        bars = fetch_ccxt(
+            args.symbol,
+            exchange=args.exchange,
+            timeframe=args.interval,
+            days=args.days,
+            progress=progress,
+        )
+    else:
+        bars = fetch(args.symbol, args.interval, args.period)
+    out = Path(args.out or f"{args.symbol.replace('/', '-')}.csv")
     bars.reset_index(names="time").to_csv(out, index=False)
 
     share = zero_volume_share(bars)
