@@ -1,21 +1,32 @@
 ---
 name: steward
-description: Repo-specific cap on pull-request stewardship for pwb-toolbox. Read automatically before acting on any CI or review event on a PR you opened or drive for its author. Sets how proactive a session may be about watching a PR, and forbids the self-re-arming check-in pattern that cost this account $290 in a single session on 2026-08-24.
+description: Repo-specific cap on pull-request stewardship for pwb-toolbox. Read automatically before acting on any CI or review event on a PR you opened or drive for its author. Sets how proactive a session may be about watching a PR, and forbids the self-re-arming check-in pattern that helped exhaust a five-hour usage window on 2026-08-24.
 ---
 
 # PR stewardship in this repository
 
 This file exists because of a measured incident, not a preference.
 
-On 2026-08-24 a session titled "Ollama trade stress testing" was archived after
-19 hours with **$290.64 billed, 68,334,097 cache-read tokens, and 180,373 output
+On 2026-08-24 a five-hour usage window was exhausted. A session titled "Ollama
+trade stress testing" was archived after 19 hours having metered **$290.64 of
+API-equivalent usage across 68,334,097 cache-read tokens against 180,373 output
 tokens** — a 379:1 read-to-write ratio. It had finished its actual work (the
 night lab), opened PR #117, and then spent the rest of its life re-reading its
-own 19-hour context roughly hourly to re-check that PR. A second session doing
-the same on other PRs added $18.44. Across the account, ~56 scheduled wakes per
-day were servicing five open pull requests.
+own 19-hour context roughly hourly to re-check that PR.
 
-None of that produced trading work, and none of it was asked for.
+**Read that figure correctly: nothing was billed.** `cost_usd` is an
+API-equivalent valuation, and on a subscription it is a meter, not an invoice —
+every session reported `isUsingOverage: false`. What was spent was the window,
+which resets on a clock and cannot be bought back. The figure is also *lifetime*
+rather than in-window, so only part of it belongs to that night. An earlier
+version of this file called it "billed", which was wrong and is corrected here;
+`docs/token-drain-2026-08-24.md` carries the full forensics.
+
+Nor was it one runaway session: seventeen were active in that window, twelve on
+Opus and nine of those at `max` effort. The window died of arithmetic. But the
+self-re-arming check-in is the part of that arithmetic this file can prevent —
+roughly 56 scheduled wakes a day were servicing five open pull requests, and
+none of it produced trading work or was asked for.
 
 **The default PR-steward behaviour is correct for a shared repository with human
 reviewers who show up on their own schedule. This is not that repository.** It
@@ -65,6 +76,27 @@ the owner sees the state without anything having to stay awake to tell them.
 If a PR truly needs unattended attention — a release that must land overnight, a
 long CI matrix — ask first, and build it as a fresh-session Routine with a fixed
 schedule and an explicit "do not re-arm yourself" instruction in the prompt.
+
+## Effort level is a window decision
+
+`max` effort on Opus is for the hard design call. Checking whether CI is green
+is not that, and most scheduled or reactive PR work is the cheap kind. Running a
+routine check at `max` spends the window at the highest rate available for work
+that would read identically at a lower tier.
+
+## Where the rest of this lives
+
+This file governs PR stewardship only. The wider rules it is one instance of:
+
+- `docs/token-drain-2026-08-24.md` — the measured forensics of the incident
+  above, and the six rules that came out of it.
+- The `spend-safety` skill — the five layers, the two-key pattern for
+  irreversible actions, and the pre-flight checklist for any paid service. It
+  is the authority on scheduled jobs and money-capable surfaces; where this file
+  and that one appear to disagree, that one wins and this one should be fixed.
+- `tools/spend_watch.py` — the auditor that detects these patterns from a
+  `list_sessions` / `list_triggers` snapshot, plus the per-prompt session-size
+  warning wired through `.claude/hooks/session-size.sh`.
 
 ## Conflicts on CLAUDE.md
 

@@ -14,6 +14,10 @@ point of the directory; a single shared list is what used to collide.
 | Date | Decision |
 | --- | --- |
 | 2026-08-25 | [VWAP measured against the noise floor: no tradeable edge (PR #127)](2026-08-25-vwap-measured-against-the-noise-floor-no-tradeable-edge.md) |
+| 2026-08-25 | [The brake was on the connector, not on the path](2026-08-25-the-brake-was-on-the-connector-not-the-path.md) |
+| 2026-08-25 | [The one-person AI company as a checkable reference](2026-08-25-the-one-person-ai-company-as-a-checkable-reference.md) |
+| 2026-08-24 | [A written rule with no check behind it lasted eight hours](2026-08-24-a-written-rule-with-no-check-behind-it-lasted-eight-hours.md) |
+| 2026-08-24 | [Deleting a merged head branch orphans any PR stacked on it](2026-08-24-deleting-a-merged-head-branch-orphans-any-pr-stacked-on-it.md) |
 | 2026-08-24 | [VWAP lab: the fade as candidate, the crossover as control (PR #111)](2026-08-24-vwap-lab-the-fade-as-candidate-the-crossover-as-control.md) |
 | 2026-08-24 | [Guard the irreversible path, not the whole surface](2026-08-24-guard-the-irreversible-path-not-the-whole-surface.md) |
 | 2026-08-24 | [A $290 session that did no work, and the cap that follows](2026-08-24-a-290-session-that-did-no-work-and-the-cap-that-follows.md) |

@@ -20,12 +20,20 @@ Either key may be omitted. Usage::
 
     python tools/spend_watch.py audit snapshot.json
     python tools/spend_watch.py audit now.json --baseline an-hour-ago.json
+
+The ``session`` command answers a different question -- "is the session I am in
+right now getting expensive?" -- from the transcript the harness already writes
+to disk. It needs no API call, so the warning never consumes the thing it is
+warning about::
+
+    python tools/spend_watch.py session ~/.claude/projects/<proj>/<id>.jsonl --quiet
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 import json
 import re
@@ -36,16 +44,77 @@ from typing import Any, Dict, Iterable, List, Optional
 # pattern that has no visible cadence in the Routine list and no single place
 # to switch off.
 _REARM = re.compile(
-    r"re-?arm|schedule (?:another|the next)|check.{0,12}in .{0,20}(?:hours?|hour) out",
+    r"re-?arm(?:s|ed|ing)?"
+    r"|schedule (?:another|the next)"
+    r"|check.{0,12}in .{0,20}(?:hours?|hour) out",
     re.I,
 )
+
+# Text immediately before a re-arm mention that makes it a *prohibition* or a
+# *history lesson* rather than an instruction.
+#
+# This is not decoration. On 2026-08-24 every Routine prompt on the account was
+# edited to end with "do NOT re-arm yourself", and several also explain that
+# "an earlier version re-armed itself every ~3 hours". A bare substring search
+# therefore fires hardest on exactly the Routines that were fixed -- the check
+# would cry wolf on its own cure, and a check that always fires is one nobody
+# reads.
+_NOT_A_DIRECTIVE = re.compile(
+    r"\b(?:not|never|n't|no|nor|stop|avoid|without|instead of"
+    r"|previous|previously|earlier|prior|former|old|original"
+    r"|was|were|had|used to|removed|deprecated|replaced)\b[^.;\n]{0,60}$",
+    re.I,
+)
+
+# How far back to look for that negation. Long enough to span "Do NOT create a
+# follow-up check-in and do NOT re-arm yourself", short enough not to reach
+# into an unrelated preceding sentence -- which the trailing [^.;\n] guard
+# also prevents.
+_NEGATION_LOOKBACK = 80
+
+
+def _rearms(prompt: str) -> bool:
+    """True only for a prompt that *tells* a session to schedule its successor.
+
+    Mentions that are forbidden ("do NOT re-arm yourself") or historical ("an
+    earlier version re-armed itself") do not count. Getting this wrong in the
+    permissive direction is worse than missing one: a detector that flags the
+    remediation as the disease trains its reader to ignore it.
+    """
+
+    for match in _REARM.finditer(prompt):
+        before = prompt[max(0, match.start() - _NEGATION_LOOKBACK) : match.start()]
+        if _NOT_A_DIRECTIVE.search(before):
+            continue
+        return True
+    return False
+
 
 # Defaults chosen from the incident: twelve cloud sessions were live at once,
 # and the two most expensive carried tens of millions of cached tokens.
 CONCURRENCY_ALERT = 6
 FAT_SESSION_CACHE_READS = 10_000_000
 
+# Two Routine prompts this similar, on the same cron, are the same job.
+# Set from the real pair: the spec-desk watch and its replacement differed
+# only in a few sentences of preamble.
+DUPLICATE_PROMPT_RATIO = 0.75
+
 FIVE_HOURS = timedelta(hours=5)
+
+# The account is not always limited by the same clock. ``rate_limit_info``
+# names which one is binding, and assuming the five-hour window when a
+# seven-day one is in force puts the inferred window start *in the future* --
+# after which every check filtered by it silently measures an empty set.
+WINDOW_SPANS = {
+    "five_hour": timedelta(hours=5),
+    "seven_day": timedelta(days=7),
+}
+
+# "How many sessions are awake at once" is a question about recency, not about
+# whichever billing clock happens to be binding. Widening it to seven days
+# would count a week of finished work as concurrency.
+CONCURRENCY_HORIZON = timedelta(hours=5)
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -131,7 +200,7 @@ def find_self_rearming(triggers: Iterable[Dict[str, Any]]) -> List[Finding]:
     for t in triggers:
         prompt = _prompt_of(t)
         persistent = t.get("persistent_session_id")
-        rearms = bool(_REARM.search(prompt))
+        rearms = _rearms(prompt)
         if not (persistent and rearms):
             continue
         findings.append(
@@ -158,7 +227,7 @@ def find_persistent_triggers(triggers: Iterable[Dict[str, Any]]) -> List[Finding
     for t in triggers:
         if not t.get("persistent_session_id"):
             continue
-        if _REARM.search(_prompt_of(t)):
+        if _rearms(_prompt_of(t)):
             continue  # already reported at high severity
         findings.append(
             Finding(
@@ -187,6 +256,65 @@ def _prompt_of(trigger: Dict[str, Any]) -> str:
         if isinstance(message, str):
             parts.append(message)
     return "\n".join(parts)
+
+
+def _normalised(prompt: str) -> str:
+    """Prompt text reduced to what a duplicate check should compare."""
+
+    return " ".join(prompt.lower().split())
+
+
+def find_duplicate_triggers(
+    triggers: Iterable[Dict[str, Any]],
+    similarity: float = DUPLICATE_PROMPT_RATIO,
+) -> List[Finding]:
+    """Two enabled Routines on the same cron doing near-identical work.
+
+    "Delete the old Routine in the same breath as creating its replacement" was
+    already a written rule and had nothing behind it. On 2026-08-24 a
+    superseded spec-desk watch and its own replacement were both live on
+    ``0 2,14 * * *``, firing sixty-two seconds apart -- one of them bound to a
+    persistent session.
+
+    Only Routines *explicitly* marked enabled are compared. A missing flag is
+    treated as disabled rather than assumed live, so this reports double-fires
+    that are really happening instead of pairs that merely could.
+    """
+
+    live = [
+        t
+        for t in triggers
+        if t.get("enabled") and (t.get("cron_expression") or "").strip()
+    ]
+    findings = []
+    for i, first in enumerate(live):
+        for second in live[i + 1 :]:
+            if first.get("cron_expression") != second.get("cron_expression"):
+                continue
+            ratio = SequenceMatcher(
+                None, _normalised(_prompt_of(first)), _normalised(_prompt_of(second))
+            ).ratio()
+            if ratio < similarity:
+                continue
+            findings.append(
+                Finding(
+                    severity="high",
+                    code="duplicate-trigger",
+                    title=(
+                        f"Routines {first.get('name') or first.get('id')!r} and "
+                        f"{second.get('name') or second.get('id')!r} are the same job"
+                    ),
+                    detail=(
+                        f"Both are enabled on {first.get('cron_expression')!r} and "
+                        f"their prompts are {ratio:.0%} identical, so every firing "
+                        "happens twice. A superseded Routine left live alongside "
+                        "its replacement is indistinguishable from an intended one. "
+                        "Delete whichever is obsolete."
+                    ),
+                    subjects=[str(first.get("id")), str(second.get("id"))],
+                )
+            )
+    return findings
 
 
 def find_fat_sessions(
@@ -230,7 +358,7 @@ def find_concurrency(
         Finding(
             severity="high",
             code="concurrency",
-            title=f"{len(live)} sessions active in the current window",
+            title=f"{len(live)} sessions active in the same {int(CONCURRENCY_HORIZON.total_seconds() // 3600)}-hour span",
             detail=(
                 f"They carry {total:,.2f} in lifetime metered total (not a charge, "
                 "and not all of it in this window). Concurrency, not any single "
@@ -241,8 +369,52 @@ def find_concurrency(
     ]
 
 
+def limit_type(sessions: Iterable[Dict[str, Any]]) -> Optional[str]:
+    """Which rate-limit clock the account is currently being held to."""
+
+    for s in sessions:
+        info = (s.get("external_metadata") or {}).get("rate_limit_info") or {}
+        kind = info.get("rateLimitType")
+        if isinstance(kind, str) and kind:
+            return kind
+    return None
+
+
+def window_span(sessions: Iterable[Dict[str, Any]]) -> timedelta:
+    """The length of the window currently in force.
+
+    Defaults to five hours when the payload does not say, because that is the
+    shorter and therefore safer assumption: it under-reports how much history
+    belongs to the window rather than sweeping in a week of finished work.
+    """
+
+    return WINDOW_SPANS.get(limit_type(sessions) or "", FIVE_HOURS)
+
+
+def latest_activity(sessions: Iterable[Dict[str, Any]]) -> Optional[datetime]:
+    """The most recent ``updated_at`` in the snapshot.
+
+    Stands in for "now" so the module needs no clock, which is what lets every
+    check be tested on a fixed synthetic payload.
+    """
+
+    latest = None
+    for s in sessions:
+        seen = parse_time(s.get("updated_at"))
+        if seen is not None and (latest is None or seen > latest):
+            latest = seen
+    return latest
+
+
 def window_start(sessions: Iterable[Dict[str, Any]]) -> Optional[datetime]:
-    """Infer the current five-hour window's start from any session's reset time."""
+    """Infer the current window's start from any session's reset time.
+
+    Reads ``rateLimitType`` rather than assuming five hours. On 2026-08-24 the
+    binding limit was ``seven_day``; subtracting five hours from that reset
+    returned a cutoff four days in the *future*, so the concurrency check found
+    zero live sessions and passed. A check that passes because it measured
+    nothing is worse than no check.
+    """
 
     latest = None
     for s in sessions:
@@ -255,7 +427,7 @@ def window_start(sessions: Iterable[Dict[str, Any]]) -> Optional[datetime]:
             latest = end
     if latest is None:
         return None
-    return latest.replace(microsecond=0) - FIVE_HOURS
+    return latest.replace(microsecond=0) - window_span(sessions)
 
 
 def find_rate(
@@ -287,6 +459,108 @@ def find_rate(
     ]
 
 
+# Cache reads are what a session re-pays on every single turn, so they -- not
+# output -- are what makes one expensive to keep going. The first tier matches
+# FAT_SESSION_CACHE_READS deliberately: the point at which this tool already
+# calls a session expensive to wake is the point at which its owner should be
+# told it is getting big.
+SESSION_SIZE_TIERS = (
+    (50_000_000, "high", "very large -- start a fresh session for the next task"),
+    (25_000_000, "medium", "large -- finish the current thread, then start fresh"),
+    (10_000_000, "low", "getting big -- worth splitting the next task out"),
+)
+
+
+def transcript_usage(records: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+    """Total the per-turn usage a session transcript already records.
+
+    Costs nothing to compute: the numbers are written to disk by the harness as
+    the session runs, so a size check needs no API call and no tokens. That is
+    the whole reason this reads a transcript rather than calling
+    ``list_sessions`` -- a warning that itself consumes the window is not a
+    warning worth having.
+    """
+
+    totals = {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "turns": 0,
+    }
+    for record in records:
+        usage = (record.get("message") or {}).get("usage")
+        if not isinstance(usage, dict):
+            continue
+        totals["turns"] += 1
+        for src, dst in (
+            ("cache_read_input_tokens", "cache_read_tokens"),
+            ("cache_creation_input_tokens", "cache_write_tokens"),
+            ("input_tokens", "input_tokens"),
+            ("output_tokens", "output_tokens"),
+        ):
+            value = usage.get(src)
+            if isinstance(value, int):
+                totals[dst] += value
+    return totals
+
+
+def find_session_size(usage: Dict[str, int]) -> List[Finding]:
+    """Warn once the session's own accumulated context is worth acting on.
+
+    Silent below the first tier, by design. A warning that prints on every
+    session is wallpaper; this one exists to interrupt exactly when the answer
+    to "should I keep going in here?" has changed.
+    """
+
+    reads = usage.get("cache_read_tokens", 0)
+    for threshold, severity, advice in SESSION_SIZE_TIERS:
+        if reads < threshold:
+            continue
+        out = usage.get("output_tokens", 0)
+        ratio = f"{reads // out}:1" if out else "n/a"
+        return [
+            Finding(
+                severity=severity,
+                code="session-size",
+                title=f"This session has re-read {reads / 1e6:.1f}M tokens of context",
+                detail=(
+                    f"Across {usage.get('turns', 0)} turns it has produced "
+                    f"{out:,} tokens of output, a read-to-write ratio of {ratio}. "
+                    "Every further turn re-reads the whole conversation before "
+                    f"doing anything, and that price only goes up -- {advice}."
+                ),
+            )
+        ]
+    return []
+
+
+def read_transcript(path: str) -> List[Dict[str, Any]]:
+    """Load a JSONL session transcript, skipping anything unparseable.
+
+    A malformed or half-written line is dropped rather than repaired: this runs
+    from a hook on every prompt, and a size check that crashes the session it
+    was meant to protect is a worse outcome than one that under-counts.
+    """
+
+    records = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+    except OSError:
+        return []
+    return records
+
+
 def audit(
     payload: Dict[str, Any],
     baseline: Optional[Dict[str, Any]] = None,
@@ -299,11 +573,15 @@ def audit(
     findings: List[Finding] = []
     findings += find_self_rearming(triggers)
     findings += find_persistent_triggers(triggers)
+    findings += find_duplicate_triggers(triggers)
     findings += find_fat_sessions(sessions)
 
-    start = window_start(sessions)
-    if start is not None:
-        findings += find_concurrency(sessions, start)
+    # Anchored to the newest activity in the snapshot rather than to the rate
+    # limit's reset, so the answer means "awake at the same time" whichever
+    # clock is currently binding.
+    seen = latest_activity(sessions)
+    if seen is not None:
+        findings += find_concurrency(sessions, seen - CONCURRENCY_HORIZON)
 
     if baseline is not None:
         findings += find_rate(sessions, baseline.get("sessions") or [])
@@ -349,7 +627,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     audit_cmd.add_argument("--json", action="store_true", help="emit JSON")
 
+    size_cmd = sub.add_parser(
+        "session", help="warn if this session's own context has grown expensive"
+    )
+    size_cmd.add_argument("transcript", help="path to the session's .jsonl transcript")
+    size_cmd.add_argument(
+        "--quiet",
+        action="store_true",
+        help="print nothing below the first tier (for hook use)",
+    )
+    size_cmd.add_argument("--json", action="store_true", help="emit JSON")
+
     args = parser.parse_args(argv)
+
+    if args.command == "session":
+        usage = transcript_usage(read_transcript(args.transcript))
+        findings = find_session_size(usage)
+        if args.json:
+            print(
+                json.dumps(
+                    {"usage": usage, "findings": [f.as_dict() for f in findings]},
+                    indent=2,
+                )
+            )
+        elif findings:
+            print(render(findings))
+        elif not args.quiet:
+            print(
+                f"{usage['cache_read_tokens'] / 1e6:.1f}M cache reads over "
+                f"{usage['turns']} turns. Nothing worth acting on yet."
+            )
+        return 0
+
     payload = _load(args.snapshot)
     baseline = _load(args.baseline) if args.baseline else None
     findings = audit(payload, baseline)
