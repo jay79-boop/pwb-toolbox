@@ -66,6 +66,119 @@ def zero_volume_share(frame) -> float:
     return float((frame["volume"] <= 0).mean())
 
 
+#: Every confirm the CLI can request, in the order the report lists them.
+CONFIRMS = ("rvol_min", "day_type_bp", "ma_len", "rsi_len")
+
+#: The flag each one arrives as, for a report that names what was typed.
+FLAG_NAMES = {
+    "rvol_min": "--rvol-min",
+    "day_type_bp": "--day-type-bp",
+    "ma_len": "--ma-len",
+    "rsi_len": "--rsi",
+}
+
+#: Which confirms each setup's entry path actually consults, read off
+#: ``VwapStrategy``: ``_try_fade`` tests day type, rvol, MA and RSI;
+#: ``_try_pullback`` tests all but RSI; ``_try_cross`` tests the crossover and
+#: nothing else. The control is deliberately left naive -- gating a
+#: stop-and-reverse system that is always in the market would make it neither
+#: the naive strategy nor a filtered one -- so this table exists to say so
+#: rather than to change it.
+SETUP_GATES = {
+    "fade": ("day_type_bp", "rvol_min", "ma_len", "rsi_len"),
+    "pullback": ("day_type_bp", "rvol_min", "ma_len"),
+    "cross": (),
+}
+
+
+def gate_report(setups, params):
+    """Which requested confirms each setup honoured, and which it ignored.
+
+    The results table puts setups side by side under one set of flags, which
+    reads as a like-for-like comparison. Under any confirm it is not: a cross
+    row printed beneath ``--rvol-min 1.5`` is the *ungated* result, so its
+    trade count looks like a fact about how selective the setup is when it is
+    a fact about which setups read the flag. Measured on real SPY bars, three
+    stacked confirms took fade from 149 trades to 2 and cross from 316 to
+    300 -- a difference that is entirely this, and nothing about the market.
+
+    Returns ``[]`` when no confirm was requested; there is then nothing to
+    disclaim and the table already means what it looks like.
+    """
+    requested = [c for c in CONFIRMS if params.get(c)]
+    if not requested:
+        return []
+
+    lines = ["", "Confirms requested: " + ", ".join(FLAG_NAMES[c] for c in requested)]
+    for setup in setups:
+        honoured = SETUP_GATES.get(setup, ())
+        ignored = [c for c in requested if c not in honoured]
+        if not ignored:
+            lines.append(f"  {setup:<9} applies all of them")
+            continue
+        applied = [c for c in requested if c in honoured]
+        detail = (
+            "applies none of them"
+            if not applied
+            else ("applies " + ", ".join(FLAG_NAMES[c] for c in applied))
+        )
+        lines.append(
+            f"  {setup:<9} IGNORES "
+            + ", ".join(FLAG_NAMES[c] for c in ignored)
+            + f" -- {detail}"
+        )
+        if setup == "cross":
+            lines.append(
+                "            so the cross row above is the ungated result. Read "
+                "its trade count"
+            )
+            lines.append("            as a fact about the flags, not about the setup.")
+            if "day_type_bp" in ignored:
+                lines.append(
+                    "            (--day-type-bp still holds every setup back "
+                    "until the day is"
+                )
+                lines.append(
+                    "            classified, which is why the count moves a "
+                    "little even so.)"
+                )
+    return lines
+
+
+def volume_warnings(frame, second=None, labels=("primary", "second")):
+    """Every feed too volumeless for VWAP to mean anything, named.
+
+    Checked per feed rather than once per run. The noise floor compares one
+    strategy across two vendors, so a volumeless *second* feed leaves half of
+    that comparison a TWAP result while the printed verdict still calls the
+    gap vendor disagreement -- the run then reads as a finding about data
+    sourcing when what actually differs is which indicator each side computed.
+
+    A feed carrying volume against one that does not is the worst of the three
+    cases and gets its own line: two volumeless feeds at least compare like
+    with like, but a mixed pair prices VWAP against TWAP and reports the
+    difference as a fact about the vendors.
+    """
+    feeds = [(f, l) for f, l in zip((frame, second), labels) if f is not None]
+    shares = [(zero_volume_share(f), l) for f, l in feeds]
+    out = [
+        f"WARNING: {100 * share:.0f}% of bars on the {label} feed carry zero "
+        "volume -- this VWAP is a TWAP wearing the name. Read the numbers "
+        "accordingly."
+        for share, label in shares
+        if share > 0.5
+    ]
+    if len(shares) == 2 and (shares[0][0] > 0.5) != (shares[1][0] > 0.5):
+        empty, full = sorted(shares, key=lambda s: -s[0])
+        out.append(
+            f"WARNING: the {empty[1]} feed is volumeless and the {full[1]} feed "
+            "is not, so the noise floor below compares a TWAP result against a "
+            "VWAP one. That gap is not vendor disagreement and must not be read "
+            "as any."
+        )
+    return out
+
+
 def per_year(frame, min_bars=500):
     """Split a frame by calendar year, dropping stubs too short to mean much."""
     return {
@@ -198,12 +311,12 @@ def main(argv=None) -> int:
             minutes=args.minutes,
         )
 
-    zero_share = zero_volume_share(frame)
-    if zero_share > 0.5:
-        print(
-            f"WARNING: {100 * zero_share:.0f}% of bars carry zero volume -- "
-            "this VWAP is a TWAP wearing the name. Read the numbers accordingly."
-        )
+    for line in volume_warnings(
+        frame,
+        second,
+        labels=(f"primary ({args.vendor})", f"second ({args.second_vendor})"),
+    ):
+        print(line)
 
     params = dict(
         band_k=args.band_k,
@@ -230,6 +343,8 @@ def main(argv=None) -> int:
         floor = row["floor"]
         verdict = str(floor) if floor is not None else "-- (one feed: unjudged)"
         print(f"{setup:<10} {r.trades:>6} {r.win_rate:>6.1f} {r.bps:>8.0f}  {verdict}")
+    for line in gate_report(setups, params):
+        print(line)
     if "cross" in results and results["cross"]["result"].bps > 0:
         print(
             "\nNote: the crossover control came out positive. The published "
