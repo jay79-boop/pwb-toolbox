@@ -138,6 +138,13 @@ session's own accumulated context passes 10M, 25M and 50M cache reads. It reads
 the transcript the harness already writes, so it costs nothing — a spend warning
 that spends the window is not one worth having. Silent below the first tier.
 
+**That hook is scoped to this repository.** `tools/install_spend_hook.py` installs
+a self-contained copy into `~/.claude/` so it fires in *every* session, whatever
+project — and adds the Action Ledger rule to the user-level `CLAUDE.md` at the same
+time. It has to run **on the machine the sessions run on**: a cloud container's
+`~/.claude` is reclaimed with the container, so a cloud session cannot install it.
+Both hooks share a tier state file, so a pwb-toolbox session warns once, not twice.
+
 By hand:
 
 ```bash
@@ -172,6 +179,7 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
+python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?

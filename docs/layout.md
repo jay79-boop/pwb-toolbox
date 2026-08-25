@@ -186,6 +186,13 @@ top-level directories and points here for the detail.
   command warns — from the session's own transcript, costing no tokens — when
   the current session has itself grown expensive to keep going. Wired to every
   prompt by `.claude/hooks/session-size.sh`
+- `tools/install_spend_hook.py` — installs a self-contained copy of that size
+  warning into `~/.claude/` so it fires in every session on the machine rather
+  than only in this repo's, and adds the Action Ledger rule to the user-level
+  `CLAUDE.md`. Merges into an existing `settings.json` rather than replacing it,
+  backs up whatever it touches, and is idempotent. `--check` reports without
+  writing. Must run locally — a cloud container's `~/.claude` does not survive
+  the session (`tests/test_install_spend_hook.py`)
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
