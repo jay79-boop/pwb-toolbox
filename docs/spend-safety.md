@@ -56,20 +56,39 @@ runaway costs whatever the account can bear.
 Interactive Brokers market data (~$10/mo), Canva, Hugging Face. A runaway cannot
 make these cost more. They need no safeguard beyond knowing they exist.
 
-## The gap that is open right now
+## The gaps that were open, and what closed them
 
-`.claude/settings.json` on `main` has **one allow entry and zero deny entries.**
+Two were open at once. Both are closed on `main` now; this section records what
+they were, because the shape of each is the thing worth recognising again.
 
-The 72-allow / 12-deny permission model — the one that reasons carefully about
-`ui_evaluate` being able to press the Buy button, and puts the dangerous tools in
-`deny` rather than merely omitting them from `allow` so a later blanket grant
-cannot silently restore them — exists only on the unmerged, currently conflicted
-branch behind PR #78.
+**The permission model was written but not in effect.** `.claude/settings.json`
+on `main` had one allow entry and zero deny entries, while the model that
+reasons carefully about `ui_evaluate` being able to press the Buy button — and
+puts dangerous tools in `deny` rather than merely omitting them from `allow`, so
+a later blanket grant cannot silently restore them — sat on the unmerged branch
+behind PR #78. The analysis had been done and paid for and was protecting
+nothing. `main` now carries 85 allow / 14 deny entries, `blotato_buy_credits`
+and `Windsor execute_action` among the denied.
 
-So the risk analysis has been done and paid for, and **is not in effect.** That
-is a larger exposure than the token drain ever was: token metering can cost a
-window, while `place_orders` shipped on `main` with no permission guardrail can
-cost a position.
+**The two connectors disagreed about what "live" means.** `IBConnector` had the
+full two-key brake; `CCXTConnector.place_orders` had **no guard of any kind** —
+no code key, no environment key, no sandbox detection. The same
+`create_connector` call was fail-closed for `broker="ib"` and wide open for
+`broker="ccxt"`, submitting real orders to a real exchange on
+`PWB_CCXT_API_KEY`. The module docstring demonstrated exactly that. Crypto is
+also the side actually being traded, so the unguarded connector was the one in
+use.
+
+That asymmetry is the general lesson: **a guard is a property of a path, not of
+a package.** Writing one and calling the risk handled is how the second path
+stays open. Both connectors now share `pwb_toolbox/execution/_live_guard.py`, so
+they cannot drift on the definition again, and sandbox is read off the connected
+exchange rather than a constructor flag — a connector that merely *asked* for
+sandbox and did not get it is still treated as live.
+
+The ranking that motivated fixing this before anything else still holds: token
+metering can cost a window, while an unguarded `place_orders` can cost a
+position.
 
 ## The five layers
 
@@ -122,6 +141,57 @@ alert, and "already spent" is not an alert at all.
    incident.
 6. **Decide what "too fast" looks like** and set the alert while you still
    remember the number.
+
+## The auditor, and what it refuses to claim
+
+`tools/spend_watch.py` is the check behind the rules above. Two commands:
+
+```bash
+python tools/spend_watch.py audit snapshot.json          # structural findings
+python tools/spend_watch.py audit now.json --baseline earlier.json   # + growth
+python tools/spend_watch.py session <transcript>.jsonl --quiet       # am I too big?
+```
+
+`audit` takes `{"sessions": [...], "triggers": [...]}` straight from the
+`list_sessions` and `list_triggers` MCP tools. It finds: Routines that tell
+themselves to schedule a successor, Routines bound to a persistent session,
+**two enabled Routines doing the same job on the same cron**, sessions fat
+enough that waking them is expensive, and too many sessions awake at once.
+
+**It refuses to derive a burn rate from one snapshot.** Session metadata reports
+*lifetime* totals, so dividing by elapsed time turns a figure accumulated over a
+day into an apparent hourly one — the exact misreading that made $290 of
+lifetime metering read as a runaway. Rate findings appear only with `--baseline`.
+
+Three things it got wrong on 2026-08-24 and no longer does, each worth knowing
+because each failed *silently*:
+
+- **A negated mention is not an instruction.** Every Routine prompt now ends
+  with "do NOT re-arm yourself". A substring search flags precisely the
+  Routines that were fixed, and a check that fires hardest on its own cure is
+  one nobody reads.
+- **The window is whichever limit is binding.** `rateLimitType` can be
+  `seven_day`, not just `five_hour`. Assuming five hours put the window start
+  four days in the future and the concurrency check found nothing — passing
+  because it measured an empty set.
+- **Concurrency is a recency question.** It is measured over a fixed five-hour
+  horizon anchored to the newest activity in the snapshot, never over the
+  billing window, or a week of finished work reads as a crowd.
+
+### The session-size warning
+
+`session` reads a session's own transcript — the per-turn usage the harness
+already writes to disk. **No API call, so the warning never consumes the thing
+it is warning about.** That constraint is the whole design: on 2026-08-24 four
+concurrent sessions investigating the window consumed about half of it.
+
+`.claude/hooks/session-size.sh` runs it on every prompt and stays silent below
+10M cache reads. It speaks once per tier (10M / 25M / 50M) and then not again
+until the tier changes.
+
+Read cache reads, not output, when judging a session's weight. In the measured
+window they ran 183:1 against output — 96.9% of every token moved was context
+being re-read, and that is the bill a long session pays before it does anything.
 
 ## The principle, in one line
 

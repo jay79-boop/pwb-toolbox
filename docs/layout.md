@@ -39,6 +39,20 @@ top-level directories and points here for the detail.
   `static/flow-canvas.html` imports one (each process renders as a chain of
   steps). `docs/blueprint-example.json` is a worked example,
   `docs/blueprint-guide.md` the manual
+- `tools/ai_company.py` — the one-person AI company, made checkable. Its
+  subject is `docs/blueprint-one-person-ai-company.json`, a whole local service
+  business as a blueprint — five loop stages, every process, every step's
+  executor named — and the doctrine is `docs/one-person-ai-company.md`. Derives
+  the agent roster **from the map** rather than keeping a list beside it, so
+  the two cannot disagree; convicts any AI step that commits money with no
+  person step in front of it (`commits: true` on a step is the declaration —
+  reading a payment system and charging through one are the same tool, so it
+  cannot be inferred); prices the person steps; runs the loop economics; and
+  gates repricing on sample size before drift, so "not enough jobs yet" is a
+  first-class answer. `page` regenerates `docs/one-person-ai-company.html` from
+  the blueprint — edit the blueprint, never that file. It is the reference
+  target for phase 7 of the readiness framework, stamped into an engagement by
+  `engagement.py seed-target`
 - `tools/backtest_lab.py` — runs one strategy across instruments and vendors and
   says whether the result clears its own noise floor. Reads a feed's timezone
   correctly (see "Backtesting" below), normalises to basis points, and compares
@@ -82,7 +96,10 @@ top-level directories and points here for the detail.
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
   spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
   pot is spent until `review` runs, scores every close in R-multiples, and
-  `check` alerts when an open trade's stop or target level trades. Protocol
+  `check` alerts when an open trade's stop or target level trades. `open
+  --place` sends an option plan to the IB **paper** account after the caps have
+  accepted it — the ordering is what makes "no log, no trade" a property rather
+  than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
 - `tools/night_lab.py` — the "good night" command: unattended trade stress
@@ -174,7 +191,11 @@ top-level directories and points here for the detail.
   too many sessions live at once. It will **not** derive a burn rate from a
   single snapshot — session metadata reports lifetime totals, so a rate needs a
   `--baseline` to diff against. Pure functions, tested on synthetic snapshots
-  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`
+  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`. Also flags
+  two enabled Routines running the same job on the same cron, and its `session`
+  command warns — from the session's own transcript, costing no tokens — when
+  the current session has itself grown expensive to keep going. Wired to every
+  prompt by `.claude/hooks/session-size.sh`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
@@ -217,8 +238,28 @@ top-level directories and points here for the detail.
   behind `crypto_scan`'s signals, iron condor venue/construction facts, and
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
+- `tools/broker_costs.py` — prices the same option structure at every broker on
+  the shortlist, with platform fees in the total where they belong, because a
+  headline commission decides nothing on its own. `condor` runs the weekly
+  SPX/XSP program a year at a time across a size sweep; `spread` reports best
+  against worst, which is the only number that says whether a difference is
+  real. The finding it exists to produce: at one lot the entire spread is under
+  $200/yr, so broker choice here is a capability question and not a cost one —
+  pinned by a test, so it fails loudly if that stops being true
+- `docs/brokers.md` — which broker to execute through, scored against what the
+  desk actually trades rather than against a rate card. Ten-broker shortlist
+  with sourced fees and API terms, the incumbent setup (IB, Schwab, TradingView,
+  CCXT) it has to beat, and the finding that decides it: Schwab's Trader API is
+  live-only and cannot drive paperMoney, so the one account already holding the
+  options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
-  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks), plus
+  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
+  `page-style.md` (the standing look for any page or artifact built here —
+  light, colour-coded, validated; the rule is in `CLAUDE.md`, the tokens and
+  the checks are here),
+  `one-person-ai-company.md` (the reference target architecture that playbook's
+  phase 7 designs toward — a local service business as a loop rather than a
+  funnel, with agents on the information and people on money and risk), plus
   `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
@@ -227,7 +268,10 @@ top-level directories and points here for the detail.
   and on which account — the CDP threat model, the two-login rule, and what was
   actually verified about the open-source bridge by reading its source),
   `agent-fleet.md` (critique and design of the owner's multi-agent fleet — the
-  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`)
+  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`),
+  `skills.md` (the bar for turning a repeated job into a skill, the two homes a
+  skill can live in, and the retirement rule — with `prompts/` as its staging
+  area for long prompts not yet packaged),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that

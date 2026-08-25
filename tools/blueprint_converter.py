@@ -44,6 +44,7 @@ STEP_HEADERS = [
     "Branches",
     "Go To",
     "Notes",
+    "Commits",
 ]
 
 
@@ -113,6 +114,7 @@ def step_to_row(process_id: str, step: Dict[str, Any]) -> list:
         format_branches(step.get("branches")),
         step.get("goto", ""),
         step.get("notes", ""),
+        "yes" if step.get("commits") else "",
     ]
 
 
@@ -142,6 +144,8 @@ def row_to_step(row: Any) -> Dict[str, Any]:
         step["branches"] = branches
     if row[10] not in (None, ""):
         step["goto"] = _as_int(row[10], row[10])
+    if str(row[12] or "").strip().lower() in ("yes", "true", "1"):
+        step["commits"] = True
     return step
 
 

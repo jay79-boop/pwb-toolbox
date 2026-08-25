@@ -70,8 +70,15 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-One rule that is *not* in the skill: if a step is also explained in prose above,
-it still gets repeated in the block. The block is the checklist of record.
+Two rules that are *not* in the skill:
+
+- **If a step is also explained in prose above, it still gets repeated in the
+  block.** The block is the checklist of record.
+- **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
+  Asked for 2026-08-24: they work through the block across sittings and need to
+  see which steps are already done, because an unticked list of five items and a
+  half-finished one look identical. Sub-steps of a single item stay plain text
+  underneath it; only the things they must actually *do* get a box.
 
 ## Layout
 
@@ -83,9 +90,18 @@ it still gets repeated in the block. The block is the checklist of record.
   agent, and the operational IB scripts
 - `static/` — single-file browser tools that open from `file://` with no build
   step, plus the shared JS modules they load
+
+**Pages and artifacts are light, colour-coded, and validated, by default** —
+`docs/page-style.md` is the standing style and does not need to be asked for.
+Committed light (no dark theme), every surface and ink stated so the page holds
+on a dark host, colours run through the `dataviz` validator rather than
+eyeballed, and every number on a page derived from the data rather than typed
+into it.
 - `pine/` — TradingView strategies kept as reviewable source; nothing under
   `pwb_toolbox/` imports them
 - `docs/` — manuals, field notes, and the decision log
+- `.claude/skills/` — the procedures worth not retyping. `docs/skills.md` is the
+  bar for adding one and the rule for retiring one; read it before writing a skill
 
 **`docs/layout.md` is the full inventory** — every tool, what it does, and the
 reasoning behind it. Read it when you need to know whether something already
@@ -105,6 +121,11 @@ installs `requirements-dev.txt`, and exports `PATH`/`PYTHONPATH` so bare
 import of a third-party package fails in the first moments of a session, the
 install is most likely still running; re-run rather than treating it as a real
 failure. The hook is a no-op locally.
+
+`.claude/hooks/session-size.sh` runs on every prompt and warns once when this
+session's own accumulated context passes 10M, 25M and 50M cache reads. It reads
+the transcript the harness already writes, so it costs nothing — a spend warning
+that spends the window is not one worth having. Silent below the first tier.
 
 By hand:
 
@@ -135,16 +156,19 @@ node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
 node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
+pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
+python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
 python -m tools.strategy_lab               # live run dashboard on :8771
 python tools/reversal_15m_sim.py bars.csv --post  # send that run to it
 python tools/engagement.py list           # readiness engagements and where each stands
+python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 ```
 
@@ -303,6 +327,11 @@ the traps that cost real days.
 - **`docs/decisions/`** — one file per decision, newest first in
   `docs/decisions/README.md`. Append a new file; never rewrite an old one. A
   correction is a new entry that supersedes.
+- **`.claude/skills/` + `docs/skills.md`** — the *procedure* for a job done often
+  enough to be worth not retyping; the doc carries the bar for adding one, the
+  two homes a skill can live in, and the retirement rule. Rationale stays in
+  `docs/`, behaviour stays in `tools/` — a skill that restates either goes stale
+  silently, because only `tests/test_skills.py` reads a skill at all.
 - **Nowhere at all** — open pull requests, their CI, what `main` points at, and
   any count of them. **Derive those from git and the GitHub tools at read time.**
   They were written down for months and were wrong within hours every time.

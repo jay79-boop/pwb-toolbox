@@ -177,6 +177,11 @@
                   "type": "integer",
                   "description": "Step number this go-to step jumps back to. Required when kind is 'goto'"
                 },
+                "commits": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Whether this step commits the business: spends money, moves cash, or binds it to a contract. Declared rather than inferred from the tools a step touches, because reading a payment system and charging through one are the same tool. tools/ai_company.py gates requires a person step in front of every committing AI step"
+                },
                 "notes": {
                   "type": "string",
                   "description": "Mini-SOP for the step: purpose, inputs, procedure, output"

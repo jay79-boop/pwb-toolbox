@@ -110,6 +110,28 @@ def test_step_row_round_trips_every_field():
     assert row_to_step(step_to_row("p1", step)) == step
 
 
+def test_step_row_round_trips_a_commitment():
+    """``commits`` is what tools/ai_company.py gates reads.
+
+    It was appended to STEP_HEADERS rather than inserted so an existing Steps
+    sheet keeps every column index it already had; this pins that it survives
+    the trip in both directions.
+    """
+    step = {
+        "number": 4,
+        "title": "Apply the approved budget",
+        "executor": "ai",
+        "owner": "Pricing analyst agent",
+        "commits": True,
+    }
+    assert row_to_step(step_to_row("p1", step)) == step
+
+
+def test_a_step_that_commits_nothing_gains_no_flag():
+    step = {"number": 1, "title": "Read the calendar", "executor": "automation"}
+    assert "commits" not in row_to_step(step_to_row("p1", step))
+
+
 def test_step_row_round_trips_a_goto():
     step = {"number": 9, "title": "Go to: Review", "kind": "goto", "goto": 2}
     assert row_to_step(step_to_row("p1", step)) == step
