@@ -86,7 +86,10 @@ top-level directories and points here for the detail.
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
   spreads). Caps per-trade loss at 10% of the pot, locks the desk when the
   pot is spent until `review` runs, scores every close in R-multiples, and
-  `check` alerts when an open trade's stop or target level trades. Protocol
+  `check` alerts when an open trade's stop or target level trades. `open
+  --place` sends an option plan to the IB **paper** account after the caps have
+  accepted it — the ordering is what makes "no log, no trade" a property rather
+  than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
 - `tools/night_lab.py` — the "good night" command: unattended trade stress
@@ -225,6 +228,20 @@ top-level directories and points here for the detail.
   behind `crypto_scan`'s signals, iron condor venue/construction facts, and
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
+- `tools/broker_costs.py` — prices the same option structure at every broker on
+  the shortlist, with platform fees in the total where they belong, because a
+  headline commission decides nothing on its own. `condor` runs the weekly
+  SPX/XSP program a year at a time across a size sweep; `spread` reports best
+  against worst, which is the only number that says whether a difference is
+  real. The finding it exists to produce: at one lot the entire spread is under
+  $200/yr, so broker choice here is a capability question and not a cost one —
+  pinned by a test, so it fails loudly if that stops being true
+- `docs/brokers.md` — which broker to execute through, scored against what the
+  desk actually trades rather than against a rate card. Ten-broker shortlist
+  with sourced fees and API terms, the incumbent setup (IB, Schwab, TradingView,
+  CCXT) it has to beat, and the finding that decides it: Schwab's Trader API is
+  live-only and cannot drive paperMoney, so the one account already holding the
+  options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
   `one-person-ai-company.md` (the reference target architecture that playbook's

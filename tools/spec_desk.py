@@ -20,10 +20,18 @@ money that is allowed to die. The wall between the two is the whole design:
 Every open is a complete committed plan — instrument, size, max loss, stop
 and target on the underlying, thesis — logged before execution, and closes
 are scored in R-multiples so `review` can say which lanes actually earn
-their risk. Execution stays human: the agent plans and logs, you click the
-order into paperMoney (options) or TradingView paper (stock/crypto), and
-`check` watches live prices against your stops and targets so you hear
-about it when a level hits.
+their risk. `check` watches live prices against your stops and targets so
+you hear about it when a level hits.
+
+Execution used to be entirely human — the agent planned and logged, you
+clicked the order in. For **options** it no longer has to be: `open --place`
+sends the logged plan to the Interactive Brokers *paper* account after the
+ledger has accepted it, so the 30-trade record rule 9 demands fills itself
+instead of being typed. The ordering is the safety property — nothing
+reaches a broker that the caps would have refused — and `--place` refuses
+any port that is not a known paper port, so this desk cannot be the thing
+that reaches a funded account. Stock and crypto stay manual on TradingView
+paper, which has no public order API.
 
 The ledger lives in spec_desk/spec_desk.json — gitignored; trade records
 are personal and this fork is public.
@@ -34,6 +42,7 @@ Examples::
     python tools/spec_desk.py open --lane swing-buy --symbol NVDA \
         --instrument "NVDA 02OCT26 190C" --venue paperMoney --qty 2 \
         --entry 4.20 --stop 176 --target 198 --thesis "breakout over 182 on volume"
+    python tools/spec_desk.py open ... --place    # same, but IB paper places it
     python tools/spec_desk.py status
     python tools/spec_desk.py check          # which stops/targets have hit
     python tools/spec_desk.py close T1 --exit 7.90
@@ -45,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -273,6 +283,80 @@ def cmd_init(args):
     )
 
 
+#: IB Gateway's paper port and TWS's. `--place` refuses anything else outright,
+#: on top of the connector's own two-key brake. This desk trades a pot that is
+#: allowed to die; it must never be the thing that reaches a funded account.
+PAPER_ONLY_PORTS = frozenset({4002, 7497})
+
+
+def place_on_ib_paper(instrument, qty, direction, limit_price, port=None):
+    """Send a logged option plan to the IB paper account.
+
+    Imports are local on purpose: ``ib_insync`` is only needed by the one
+    command that places an order, and every other command — and the whole test
+    suite — must keep working without it installed.
+
+    Returns the connector's ``TradeRecord``. Raises ``SystemExit`` with a
+    readable reason rather than a traceback, because the caller is a person at
+    a terminal who has just committed a trade to the ledger.
+    """
+
+    from pwb_toolbox.execution.option_contract import (
+        ParseError,
+        parse_option_instrument,
+    )
+
+    try:
+        parse_option_instrument(instrument)
+    except ParseError as exc:
+        raise SystemExit(
+            f"NOT PLACED: {exc}\n"
+            "  The ledger entry stands. Only option instruments can be placed "
+            "this way;\n"
+            "  the momentum-stock lane is TradingView paper and stays manual."
+        ) from exc
+
+    resolved = int(port if port is not None else os.getenv("PWB_IB_PORT", 4002))
+    if resolved not in PAPER_ONLY_PORTS:
+        raise SystemExit(
+            f"NOT PLACED: port {resolved} is not a paper port "
+            f"({sorted(PAPER_ONLY_PORTS)}).\n"
+            "  The ledger entry stands. This desk never places on a funded "
+            "account — if\n"
+            "  that port really is paper, place it by hand and check the "
+            "gateway's config."
+        )
+
+    try:
+        from pwb_toolbox.execution import create_connector
+    except ImportError as exc:  # pragma: no cover - ib_insync not installed
+        raise SystemExit(
+            f"NOT PLACED: {exc}\n"
+            "  The ledger entry stands. Install ib_insync to place from here, "
+            "or place it by hand."
+        ) from exc
+
+    connector = create_connector({"broker": "ib", "port": resolved})
+    signed = qty if direction == "long" else -qty
+    try:
+        connector.connect()
+        return connector.place_option_order(instrument, signed, limit_price=limit_price)
+    except SystemExit:  # pragma: no cover - re-raised untouched
+        raise
+    except Exception as exc:
+        raise SystemExit(
+            f"NOT PLACED: {exc}\n"
+            "  The ledger entry stands — the plan is committed even though the "
+            "order is not.\n"
+            "  Place it by hand, or fix the gateway and place it again."
+        ) from exc
+    finally:
+        try:
+            connector.disconnect()
+        except Exception:  # pragma: no cover - already down
+            pass
+
+
 def cmd_open(args):
     path = ledger_path(args.dir)
     ledger = load(path)
@@ -303,7 +387,8 @@ def cmd_open(args):
     except ValueError as e:
         raise SystemExit(f"REFUSED: {e}")
     save(path, ledger)
-    print(f"{trade['id']} logged — now place it, then trade the plan, not the P&L.\n")
+    tail = "placing it now" if getattr(args, "place", False) else "now place it"
+    print(f"{trade['id']} logged — {tail}, then trade the plan, not the P&L.\n")
     print(
         f"  {args.lane}: {trade['instrument']} x{args.qty} @ {args.entry} ({args.venue})"
     )
@@ -312,6 +397,23 @@ def cmd_open(args):
     )
     print(f"  thesis: {args.thesis}")
     print(f"\nPot equity {equity(ledger):,.2f}, at risk {open_risk(ledger):,.2f}.")
+
+    if getattr(args, "place", False):
+        # Deliberately after save(): the ledger's caps are what authorise a
+        # trade, so nothing reaches a broker that the ledger would have
+        # refused. "No log, no trade" is enforced by ordering, not by comment.
+        record = place_on_ib_paper(
+            instrument=args.instrument,
+            qty=args.qty,
+            direction=args.direction,
+            limit_price=args.entry,
+            port=getattr(args, "ib_port", None),
+        )
+        print(
+            f"\nPlaced on IB paper: {record.action} {record.quantity} "
+            f"{record.symbol} @ {record.price} — {record.status} "
+            f"(order {record.order_id})"
+        )
 
 
 def cmd_close(args):
@@ -455,6 +557,16 @@ def main(argv=None):
     p.add_argument("--target", type=float, help="target level on the UNDERLYING")
     p.add_argument(
         "--thesis", required=True, help="why this trade, in one or two sentences"
+    )
+    p.add_argument(
+        "--place",
+        action="store_true",
+        help="after logging, send the option order to the IB paper account",
+    )
+    p.add_argument(
+        "--ib-port",
+        type=int,
+        help=f"IB port for --place; paper only {sorted(PAPER_ONLY_PORTS)}",
     )
     p.set_defaults(func=cmd_open)
 
