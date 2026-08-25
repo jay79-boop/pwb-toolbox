@@ -8,12 +8,19 @@ limit orders and retrieving account information.
 Example
 -------
     >>> from pwb_toolbox.execution import create_connector
-    >>> cc = create_connector({"broker": "ccxt", "exchange": "binance", "api_key": "...", "api_secret": "..."})
+    >>> cc = create_connector({"broker": "ccxt", "exchange": "binance",
+    ...                        "api_key": "...", "api_secret": "...",
+    ...                        "sandbox": True})
     >>> cc.connect()
     >>> nav = cc.get_account_nav()
     >>> positions = cc.get_positions()
-    >>> cc.place_orders({"BTC/USDT": 0.01})
+    >>> cc.place_orders({"BTC/USDT": 0.01})   # sandbox: no unlocks needed
     >>> cc.disconnect()
+
+Trading a **funded** exchange account additionally requires both unlocks
+described in :mod:`pwb_toolbox.execution._live_guard` -- ``allow_live_orders=True``
+in the calling code and ``PWB_ALLOW_LIVE_ORDERS`` in the environment. Sandbox
+mode needs neither, so tests and paper automation never notice the brake.
 
 The connector provides ``connect``/``disconnect`` helpers, account information
 methods and simple order placement utilities.  Orders are submitted using
@@ -29,6 +36,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import ccxt
+
+from ._live_guard import LiveOrderBlocked, missing_unlocks
 
 
 @dataclass
@@ -88,6 +97,15 @@ class CCXTConnector:
         Credentials used to authenticate with the exchange.
     params : dict, optional
         Additional parameters passed to the exchange constructor.
+    sandbox : bool, optional
+        Put the exchange in ``ccxt`` sandbox/testnet mode on :meth:`connect`.
+        Sandbox orders cannot move real money, so they bypass the live-order
+        brake entirely.
+    allow_live_orders : bool, optional
+        First of the two keys required to trade a funded account. The second is
+        the ``PWB_ALLOW_LIVE_ORDERS`` environment variable. Defaults to
+        ``False`` so that anything which merely constructs a connector -- a
+        stray import, an unattended scheduled run -- cannot place a live order.
     """
 
     def __init__(
@@ -96,11 +114,15 @@ class CCXTConnector:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         params: Optional[Dict[str, object]] = None,
+        sandbox: bool = False,
+        allow_live_orders: bool = False,
     ) -> None:
         self.exchange_name = exchange
         self.api_key = api_key
         self.api_secret = api_secret
         self.params = params or {}
+        self.sandbox = sandbox
+        self.allow_live_orders = allow_live_orders
         self.exchange: Optional[ccxt.Exchange] = None
 
     # ------------------------------------------------------------------
@@ -112,7 +134,13 @@ class CCXTConnector:
         exchange_class = getattr(ccxt, self.exchange_name)
         config = {"apiKey": self.api_key, "secret": self.api_secret}
         config.update(self.params)
-        self.exchange = exchange_class(config)
+        exchange = exchange_class(config)
+        if self.sandbox:
+            # Raises ccxt.NotSupported when the exchange has no testnet, which
+            # is the right outcome: failing here is far better than silently
+            # leaving a "sandbox" connector pointed at the live venue.
+            exchange.set_sandbox_mode(True)
+        self.exchange = exchange
 
     def disconnect(self) -> None:
         """Clear the exchange instance."""
@@ -126,6 +154,40 @@ class CCXTConnector:
                 except Exception:
                     pass
         self.exchange = None
+
+    # ------------------------------------------------------------------
+    # Live-order safety
+    # ------------------------------------------------------------------
+    def _assert_orders_allowed(self) -> None:
+        """Block funded-account orders unless both unlocks are present.
+
+        Sandbox mode returns immediately, so this is invisible to anything that
+        cannot move real money. Sandbox is read from the connected exchange
+        (``isSandboxModeEnabled``) rather than from the constructor flag, so a
+        connector that merely *asked* for sandbox and did not get it is still
+        treated as live. Attributes are read defensively: an instance built
+        without ``__init__`` fails closed rather than raising ``AttributeError``.
+        """
+
+        exchange = getattr(self, "exchange", None)
+        if exchange is not None and getattr(exchange, "isSandboxModeEnabled", False):
+            return
+
+        missing = missing_unlocks(
+            getattr(self, "allow_live_orders", False),
+            "pass allow_live_orders=True when constructing CCXTConnector",
+        )
+        if not missing:
+            return
+
+        raise LiveOrderBlocked(
+            f"Refusing to send orders on {getattr(self, 'exchange_name', '?')!r}, "
+            "which is not in sandbox mode. To trade a funded account, "
+            + " and ".join(missing)
+            + ". To trade the testnet instead, construct the connector with "
+            "sandbox=True — an exchange that is not in sandbox mode is treated "
+            "as live on purpose."
+        )
 
     # ------------------------------------------------------------------
     # Account information helpers
@@ -199,6 +261,7 @@ class CCXTConnector:
         """
 
         ex = self._ensure_connection()
+        self._assert_orders_allowed()
         trade_records: List[TradeRecord] = []
         for symbol, qty in orders.items():
             side = "buy" if qty > 0 else "sell"

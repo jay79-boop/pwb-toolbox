@@ -39,6 +39,21 @@ from .ccxt_connector import CCXTConnector
 Connector = Union[IBConnector, CCXTConnector]
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _live_orders_requested(cfg: Dict[str, object]) -> bool:
+    """Read the *first* live-order key, from the config mapping only.
+
+    Deliberately never consulted from the environment. The second key already
+    is an environment variable, and a factory that read this one from the
+    environment too would let a single exported variable satisfy both — which
+    is exactly the accident the two-key design exists to prevent.
+    """
+
+    return bool(cfg.get("allow_live_orders", False))
+
+
 def create_connector(config: Optional[Dict[str, Any]] = None) -> Connector:
     """Instantiate a connector based on a config mapping or environment.
 
@@ -67,6 +82,7 @@ def create_connector(config: Optional[Dict[str, Any]] = None) -> Connector:
             port=port,
             client_id=client_id,
             market_data_type=market_data_type,
+            allow_live_orders=_live_orders_requested(cfg),
         )
 
     if broker == "ccxt":
@@ -76,11 +92,18 @@ def create_connector(config: Optional[Dict[str, Any]] = None) -> Connector:
         api_key = cfg.get("api_key", os.getenv("PWB_CCXT_API_KEY"))
         api_secret = cfg.get("api_secret", os.getenv("PWB_CCXT_API_SECRET"))
         params = cfg.get("params")
+        sandbox = bool(
+            cfg.get(
+                "sandbox", os.getenv("PWB_CCXT_SANDBOX", "").strip().lower() in _TRUTHY
+            )
+        )
         return CCXTConnector(
             exchange,
             api_key=api_key,
             api_secret=api_secret,
             params=params,
+            sandbox=sandbox,
+            allow_live_orders=_live_orders_requested(cfg),
         )
 
     raise ValueError(f"Unknown broker '{broker}'")

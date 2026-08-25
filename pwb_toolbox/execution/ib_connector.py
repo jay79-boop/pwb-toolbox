@@ -28,7 +28,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import math
-import os
 import statistics
 import time
 from typing import Dict, List, Optional, Sequence
@@ -37,6 +36,12 @@ import pandas as pd
 from ib_insync import IB, LimitOrder, MarketOrder, Option, Stock
 
 from .optimal_limit_order import get_optimal_quote
+from ._live_guard import (
+    LIVE_ORDER_ENV,
+    LiveOrderBlocked,
+    env_allows_live_orders,
+    missing_unlocks,
+)
 from .config import OptimalQuoteConfig
 from .option_contract import OptionContract, parse_option_instrument
 
@@ -50,26 +55,11 @@ _SECONDS_PER_TRADING_SESSION = 6.5 * 3600
 # backtests, paper automation and the test suite run completely untouched.
 PAPER_PORTS = frozenset({4002, 7497})
 
-_LIVE_ORDER_ENV = "PWB_ALLOW_LIVE_ORDERS"
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
-
-
-class LiveOrderBlocked(RuntimeError):
-    """Raised when a live-account order is attempted without both unlocks.
-
-    Placing an order against a funded account is irreversible in a way nothing
-    else in this package is, so it takes two independent keys that are awkward
-    to supply by accident: an explicit ``allow_live_orders=True`` in the code
-    *and* ``PWB_ALLOW_LIVE_ORDERS`` set in the environment. A stray import, an
-    unattended scheduled run, or a config file someone flipped cannot satisfy
-    both.
-    """
-
-
-def _env_allows_live_orders() -> bool:
-    """True when ``PWB_ALLOW_LIVE_ORDERS`` is set to a truthy value."""
-
-    return os.environ.get(_LIVE_ORDER_ENV, "").strip().lower() in _TRUTHY
+# The two-key brake lives in ``_live_guard`` so this connector and the CCXT one
+# cannot drift on what "live" means. Re-exported here because callers and tests
+# have always imported these names from this module.
+_LIVE_ORDER_ENV = LIVE_ORDER_ENV
+_env_allows_live_orders = env_allows_live_orders
 
 
 def _sigma_from_closes(
@@ -178,11 +168,10 @@ class IBConnector:
         if port in PAPER_PORTS:
             return
 
-        missing = []
-        if not getattr(self, "allow_live_orders", False):
-            missing.append("pass allow_live_orders=True when constructing IBConnector")
-        if not _env_allows_live_orders():
-            missing.append(f"set {_LIVE_ORDER_ENV}=1 in the environment")
+        missing = missing_unlocks(
+            getattr(self, "allow_live_orders", False),
+            "pass allow_live_orders=True when constructing IBConnector",
+        )
         if not missing:
             return
 
