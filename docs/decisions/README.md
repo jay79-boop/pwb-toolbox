@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-25 | [VWAP measured against the noise floor: no tradeable edge (PR #127)](2026-08-25-vwap-measured-against-the-noise-floor-no-tradeable-edge.md) |
 | 2026-08-25 | [The brake was on the connector, not on the path](2026-08-25-the-brake-was-on-the-connector-not-the-path.md) |
 | 2026-08-25 | [The one-person AI company as a checkable reference](2026-08-25-the-one-person-ai-company-as-a-checkable-reference.md) |
 | 2026-08-24 | [A written rule with no check behind it lasted eight hours](2026-08-24-a-written-rule-with-no-check-behind-it-lasted-eight-hours.md) |

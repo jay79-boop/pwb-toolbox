@@ -316,6 +316,94 @@ def test_zero_volume_share_flags_a_volumeless_feed():
     assert vwap_lab.zero_volume_share(_frame([100.0] * 4)) == 0.0
 
 
+def test_no_confirms_means_nothing_to_disclaim():
+    # An unfiltered table already means what it looks like.
+    assert vwap_lab.gate_report(["fade", "cross"], {}) == []
+    assert vwap_lab.gate_report(["fade"], {"rvol_min": 0.0, "ma_len": 0}) == []
+
+
+def test_cross_is_named_as_ignoring_every_confirm_it_is_given():
+    # The bug this pins: cross silently ignored --rvol-min and --ma-len, so a
+    # filtered table compared two gated setups against one ungated one and
+    # said nothing. Measured: three confirms took fade 149 -> 2 and cross
+    # 316 -> 300.
+    lines = vwap_lab.gate_report(["cross"], {"rvol_min": 1.5, "ma_len": 200})
+    body = "\n".join(lines)
+    assert "IGNORES" in body
+    assert "--rvol-min" in body and "--ma-len" in body
+    assert "ungated" in body
+
+
+def test_fade_and_pullback_are_reported_as_applying_what_they_apply():
+    params = {"rvol_min": 1.5, "day_type_bp": 30.0, "ma_len": 200}
+    for setup in ("fade", "pullback"):
+        lines = vwap_lab.gate_report([setup], params)
+        assert any("applies all of them" in line for line in lines)
+        assert not any("IGNORES" in line for line in lines)
+
+
+def test_pullback_is_reported_as_ignoring_rsi_which_only_fades_read():
+    lines = vwap_lab.gate_report(["pullback"], {"rvol_min": 1.5, "rsi_len": 14})
+    body = "\n".join(lines)
+    assert "IGNORES --rsi" in body
+    assert "applies --rvol-min" in body
+
+
+def test_the_day_type_delay_note_appears_only_when_that_flag_is_set():
+    with_day = "\n".join(vwap_lab.gate_report(["cross"], {"day_type_bp": 30.0}))
+    assert "--day-type-bp still holds" in with_day
+    without = "\n".join(vwap_lab.gate_report(["cross"], {"rvol_min": 1.5}))
+    assert "still holds" not in without
+
+
+def test_the_report_matches_what_the_strategy_actually_consults():
+    # Guards against the table drifting from the code it describes: every gate
+    # claimed for a setup must be a real strategy parameter.
+    for setup, gates in vwap_lab.SETUP_GATES.items():
+        assert setup in vwap_lab.SETUPS
+        for gate in gates:
+            assert gate in VwapStrategy.params._getkeys()
+
+
+def test_volume_warning_covers_the_second_feed_not_just_the_first():
+    # The bug this pins: a volumeless SECOND feed used to pass in silence, so
+    # the noise floor compared a TWAP run against a VWAP one and reported the
+    # difference as vendor disagreement.
+    full = _frame([100.0] * 4)
+    empty = _frame([100.0] * 4, volumes=[0] * 4)
+
+    lines = vwap_lab.volume_warnings(full, empty, labels=("primary", "second"))
+    assert any("second feed carry zero volume" in line for line in lines)
+
+    lines = vwap_lab.volume_warnings(empty, full, labels=("primary", "second"))
+    assert any("primary feed carry zero volume" in line for line in lines)
+
+
+def test_a_mixed_volume_pair_says_the_gap_is_not_vendor_disagreement():
+    lines = vwap_lab.volume_warnings(
+        _frame([100.0] * 4, volumes=[0] * 4),
+        _frame([100.0] * 4),
+        labels=("primary", "second"),
+    )
+    assert any("not vendor disagreement" in line for line in lines)
+
+
+def test_two_volumeless_feeds_warn_twice_but_not_about_disagreement():
+    empty = _frame([100.0] * 4, volumes=[0] * 4)
+    lines = vwap_lab.volume_warnings(empty, empty, labels=("primary", "second"))
+    # Both are TWAP, which is at least like-for-like -- flag each feed, but do
+    # not claim the comparison itself is mixing indicators.
+    assert len(lines) == 2
+    assert not any("not vendor disagreement" in line for line in lines)
+
+
+def test_two_volumed_feeds_and_a_lone_feed_stay_quiet():
+    full = _frame([100.0] * 4)
+    assert vwap_lab.volume_warnings(full, full) == []
+    assert vwap_lab.volume_warnings(full) == []
+    assert len(vwap_lab.volume_warnings(_frame([100.0] * 4, volumes=[0] * 4))) == 1
+
+
 def test_exported_trades_carry_the_fields_the_night_lab_reads():
     result = backtest(_fade_day(), VwapStrategy, mintick=0.25, setup="fade")
     records = vwap_lab.trades_as_records(result.strategy.trade_log, "ES")

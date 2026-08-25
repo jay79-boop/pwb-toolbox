@@ -79,6 +79,24 @@ Two rules that are *not* in the skill:
   see which steps are already done, because an unticked list of five items and a
   half-finished one look identical. Sub-steps of a single item stay plain text
   underneath it; only the things they must actually *do* get a box.
+- **The block is also copied into the Action Ledger**, and that is the copy that
+  survives:
+
+      https://claude.ai/code/artifact/a9da0f16-1b7f-4658-a21f-70271be5c413
+
+  A checkbox in a terminal reply is text — there is nothing to click, and it
+  scrolls away with the session. The ledger is a published artifact holding the
+  `artifact` capability, so ticking a box republishes the page: the state *is*
+  the page, it follows them to another device, and **a tick costs no tokens
+  because it never involves a session at all.**
+
+  **Append to it; never start a second one.** Read it with the Artifact tool
+  (`action: "read"`, that URL), add your items to the state JSON in
+  `<script id="app-state">`, and republish with `url` set to that same address.
+  Items already ticked stay ticked. An item raised weeks ago staying visibly
+  open is the entire point — a fresh list every session is what they asked us to
+  stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
+  so they can tell at a glance which items are still theirs.
 
 ## Layout
 
@@ -127,6 +145,13 @@ session's own accumulated context passes 10M, 25M and 50M cache reads. It reads
 the transcript the harness already writes, so it costs nothing — a spend warning
 that spends the window is not one worth having. Silent below the first tier.
 
+**That hook is scoped to this repository.** `tools/install_spend_hook.py` installs
+a self-contained copy into `~/.claude/` so it fires in *every* session, whatever
+project — and adds the Action Ledger rule to the user-level `CLAUDE.md` at the same
+time. It has to run **on the machine the sessions run on**: a cloud container's
+`~/.claude` is reclaimed with the container, so a cloud session cannot install it.
+Both hooks share a tier state file, so a pwb-toolbox session warns once, not twice.
+
 By hand:
 
 ```bash
@@ -162,11 +187,13 @@ python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
+python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
 python -m tools.strategy_lab               # live run dashboard on :8771
 python tools/reversal_15m_sim.py bars.csv --post  # send that run to it
+python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  # bars with real volume
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working

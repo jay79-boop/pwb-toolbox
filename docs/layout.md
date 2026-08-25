@@ -77,6 +77,25 @@ top-level directories and points here for the detail.
   the stats module is a separate, tested file that the page inlines verbatim, and
   `tests/test_strategy_lab.py` requires its numbers to agree with
   `pwb_toolbox.performance.trade_stats` so the screen and the package cannot drift
+  TWAP there, names which confirms each setup actually applies (`cross` reads
+  none of them), and says when the two feeds disagree about volume. **Measured
+  and parked**: three years of BTC across two exchanges put every setup within
+  half a basis point of zero gross — see
+  `docs/decisions/2026-08-25-vwap-measured-against-the-noise-floor-no-tradeable-edge.md`
+- `tools/fetch_bars.py` — intraday OHLCV in the shape the bar labs read,
+  stamped naive UTC so the vendor-timezone trap cannot bite. `season_scan
+  fetch` covers daily bars; this covers the intraday ones VWAP needs. Two
+  sources: yfinance, which caps intraday history silently (~7d of 1m, ~60d of
+  5m) and whose crypto bars came back 50% zero-volume; and `--exchange`
+  (ccxt), which reports matched volume and serves years. **Two exchanges
+  quoting one pair are two vendors, which is what makes `noise_floor`
+  computable** — the yfinance path alone never can be. Prints the row count,
+  range, zero-volume share, and the `--mintick` that charges 1bp on this
+  instrument, because mintick is the per-trade slippage in price units and a
+  tick copied across instruments quoting orders of magnitude apart silently
+  stops charging a real cost. Warns when an exchange serves less history than
+  was asked for: Kraken answers with ~720 candles however far back `since`
+  reaches, and answers successfully
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
@@ -196,6 +215,13 @@ top-level directories and points here for the detail.
   command warns — from the session's own transcript, costing no tokens — when
   the current session has itself grown expensive to keep going. Wired to every
   prompt by `.claude/hooks/session-size.sh`
+- `tools/install_spend_hook.py` — installs a self-contained copy of that size
+  warning into `~/.claude/` so it fires in every session on the machine rather
+  than only in this repo's, and adds the Action Ledger rule to the user-level
+  `CLAUDE.md`. Merges into an existing `settings.json` rather than replacing it,
+  backs up whatever it touches, and is idempotent. `--check` reports without
+  writing. Must run locally — a cloud container's `~/.claude` does not survive
+  the session (`tests/test_install_spend_hook.py`)
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
