@@ -671,16 +671,32 @@ def test_read_jobs_accepts_the_column_names_an_export_actually_uses(tmp_path):
 
 
 def test_page_renders_from_the_blueprint(tmp_path, blueprint):
+    """Everything on the page is read off the map, including the counts.
+
+    Asserted by content rather than by markup: the last cut of this test
+    pinned a CSS class name and broke on a restyle that changed nothing about
+    what the page claims.
+    """
     out = build_page(blueprint, tmp_path / "page.html")
     html = out.read_text(encoding="utf-8")
     assert "<title>" in html
-    for tag in ("div", "table", "tr", "td", "p"):
+    for tag in ("div", "table", "tr", "td", "p", "section", "span"):
         opened = html.count(f"<{tag} ") + html.count(f"<{tag}>")
         assert opened == html.count(f"</{tag}>"), f"unbalanced <{tag}>"
-    # the numbers on the page are the derived ones, not typed ones
-    assert ">7</span>" in html  # agent roles
-    assert "7 built, 33 backlog" in html
-    assert html.count('class="badge b-backlog">backlog</span>') == 33
+
+    found = roster(blueprint)
+    grouped = fanout(blueprint)
+    planned = sum(len(v) for v in grouped.values())
+
+    # every role the map names, and every sub-agent it does not
+    for name in found["ai"]:
+        assert name in html, f"{name} missing from the page"
+    for items in grouped.values():
+        for item in items:
+            assert item["title"] in html, f"{item['title']} missing from the page"
+
+    assert f"{len(found['ai'])} built, {planned} backlog" in html
+    assert "none of them running" in html
 
 
 def test_page_says_what_it_does_not_know(tmp_path, blueprint):

@@ -90,6 +90,13 @@ Two rules that are *not* in the skill:
   agent, and the operational IB scripts
 - `static/` — single-file browser tools that open from `file://` with no build
   step, plus the shared JS modules they load
+
+**Pages and artifacts are light, colour-coded, and validated, by default** —
+`docs/page-style.md` is the standing style and does not need to be asked for.
+Committed light (no dark theme), every surface and ink stated so the page holds
+on a dark host, colours run through the `dataviz` validator rather than
+eyeballed, and every number on a page derived from the data rather than typed
+into it.
 - `pine/` — TradingView strategies kept as reviewable source; nothing under
   `pwb_toolbox/` imports them
 - `docs/` — manuals, field notes, and the decision log
