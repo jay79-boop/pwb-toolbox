@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-25 | [The one-person AI company as a checkable reference](2026-08-25-the-one-person-ai-company-as-a-checkable-reference.md) |
 | 2026-08-24 | [A written rule with no check behind it lasted eight hours](2026-08-24-a-written-rule-with-no-check-behind-it-lasted-eight-hours.md) |
 | 2026-08-24 | [Deleting a merged head branch orphans any PR stacked on it](2026-08-24-deleting-a-merged-head-branch-orphans-any-pr-stacked-on-it.md) |
 | 2026-08-24 | [VWAP lab: the fade as candidate, the crossover as control (PR #111)](2026-08-24-vwap-lab-the-fade-as-candidate-the-crossover-as-control.md) |
