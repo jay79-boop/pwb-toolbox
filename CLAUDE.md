@@ -150,6 +150,13 @@ A worked example, for this repo's 21st MCP key:
   the setup choices is sourced in `docs/trading-wisdom.md`. Warns when a feed
   carries no volume (histdata index CFDs), because VWAP silently degrades to
   TWAP there
+- `tools/fetch_bars.py` — intraday OHLCV from yfinance in the shape the bar
+  labs read, stamped naive UTC so the vendor-timezone trap cannot bite.
+  `season_scan fetch` covers daily bars; this covers the intraday ones VWAP
+  needs. Yahoo caps intraday history silently (~7d of 1m, ~60d of 5m) so the
+  row count and range are printed, and the zero-volume share with them. One
+  vendor, so a file from here cannot clear the two-vendor noise floor on its
+  own — a real-volume feed to develop against, not evidence of an edge
 - `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
@@ -387,6 +394,7 @@ python -m tools.desk_agent.runlog summary --last 20   # is the agent actually wo
 python -m tools.desk_agent.runlog review  --last 40   # what the weekly review reads
 python tools/night_lab.py plan    # queue tonight's overnight stress jobs
 python tools/night_lab.py verdict --quiet  # morning findings; silent if none
+python tools/fetch_bars.py SPY --interval 5m --period 60d --out spy.csv  # intraday bars
 python tools/season_scan.py report  # seasonality: report + watchlist + json
 python tools/season_scan.py overnight       # overnight vs intraday, per ticker
 python tools/calibration_audit.py --symbols SPY   # is our option math calibrated?
