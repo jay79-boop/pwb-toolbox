@@ -36,7 +36,7 @@ against the wrong desk.
 | **Interactive Brokers** | The live execution path — `pwb_toolbox/execution/ib_connector.py`, `tools/ib_server/`, ~$10/mo data | **Yes**, `ib_insync`. Covers equities, options, futures, FX |
 | **Schwab / thinkorswim** | Options paper (`paperMoney`); real fill history via `pwb_toolbox/journal/schwab.py` | **Partly** — see the trap below |
 | **TradingView** | Charts, Pine strategies, stock/crypto paper | No public API; CDP bridge only (`docs/tradingview-mcp.md`) |
-| **CCXT exchanges** | Crypto execution path, built, unused | Yes |
+| **CCXT exchanges** | Crypto execution path; live-order brake added 2026-08-25 | Yes |
 
 ### The trap that decides this whole question
 
@@ -92,6 +92,44 @@ port that is not a known paper port, so the pot that is *allowed to die* cannot
 be the thing that reaches a funded account even if `PWB_IB_PORT` is wrong.
 
 ---
+
+### The third trap: the brake was on one connector, not on the path
+
+The paragraph above is true of `IBConnector` and was **false of
+`CCXTConnector`**, which until 2026-08-25 had no live-order brake of any kind —
+no code key, no environment key, no sandbox detection. `place_orders` submitted
+straight to the exchange on `PWB_CCXT_API_KEY`, and the module docstring
+demonstrated exactly that.
+
+The same factory call was fail-closed for one broker and wide open for the
+other:
+
+```python
+create_connector({"broker": "ib"})                        # refused live orders
+create_connector({"broker": "ccxt", "exchange": "..."})   # placed them
+```
+
+Two things kept it invisible. The brake was written as a property of
+`IBConnector` rather than of *placing an order*, so adding a second connector
+silently added a second, unguarded path. And the table above calls this path
+"built, unused" — an assumption about usage doing the work a guard should do.
+Unused today is not unused tomorrow, and the crypto side is the one the spec
+desk actually trades.
+
+Both connectors now share `pwb_toolbox/execution/_live_guard.py`, so the
+definition of "live" cannot drift between them again. For CCXT the safe state is
+sandbox rather than a paper port:
+
+```python
+create_connector({"broker": "ccxt", "exchange": "binance", "sandbox": True})
+```
+
+Sandbox needs no unlocks at all. A funded account needs both — `allow_live_orders=True`
+in the config *and* `PWB_ALLOW_LIVE_ORDERS` in the environment — and the factory
+reads the first key from the config mapping only, never from the environment, so
+one exported variable can never satisfy both. Sandbox is read off the connected
+exchange (`isSandboxModeEnabled`), never off the constructor flag, so a
+connector that asked for sandbox and did not get it is still treated as live.
 
 ## The ten, scored against that
 
