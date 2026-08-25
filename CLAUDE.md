@@ -180,6 +180,7 @@ black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
+node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
 pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
@@ -190,6 +191,8 @@ python tools/install_spend_hook.py --check  # size warning in EVERY session? (lo
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
+python -m tools.strategy_lab               # live run dashboard on :8771
+python tools/reversal_15m_sim.py bars.csv --post  # send that run to it
 python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  # bars with real volume
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?

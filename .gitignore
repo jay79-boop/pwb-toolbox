@@ -29,6 +29,8 @@ graphify-out/.vocab.txt
 graphify-out/graph.html
 graphify-out/manifest.json
 
+# Strategy Lab run records: local test output, not source.
+strategy-runs/
 # desk agent: raw per-run stdout. Noise, and it can contain chart detail.
 # runs.jsonl (the structured record) and out/ (gameplans, Pine reports) stay
 # tracked -- they are the agent's memory and its deliverables.

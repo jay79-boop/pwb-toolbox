@@ -1,0 +1,940 @@
+<title>Strategy Lab</title>
+<style>
+/* ============================================================
+   Strategy Lab — tokens
+   Palette, surfaces and ink come from the repo's data-viz reference
+   instance. Series hues are assigned in fixed slot order and never
+   cycled; win/loss uses the diverging blue-red pair, because the
+   question there is polarity, not identity.
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --plane: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+
+  --pos: #2a78d6;
+  --neg: #e34948;
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+
+  --ord-1: #86b6ef;
+  --ord-2: #5598e7;
+  --ord-3: #2a78d6;
+  --ord-4: #184f95;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --pos: #3987e5;
+    --neg: #e66767;
+    --ord-1: #b7d3f6;
+    --ord-2: #86b6ef;
+    --ord-3: #5598e7;
+    --ord-4: #2a78d6;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --plane: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --pos: #3987e5;
+  --neg: #e66767;
+  --ord-1: #b7d3f6;
+  --ord-2: #86b6ef;
+  --ord-3: #5598e7;
+  --ord-4: #2a78d6;
+}
+
+* { box-sizing: border-box; }
+/* The viewer paints its own ground behind the page, so body takes an explicit
+   token background — a transparent body silently borrows the host's theme. */
+body { margin: 0; background: var(--plane); color: var(--text-primary); }
+
+.lab {
+  background: var(--plane);
+  color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  min-height: 100vh;
+  padding: 20px clamp(12px, 3vw, 32px) 56px;
+}
+
+/* ---------- header ---------- */
+.lab-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.lab-head h1 {
+  font-size: clamp(19px, 2.4vw, 25px);
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.lab-sub {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0 0 18px;
+}
+.lab-sub code {
+  font-size: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.spacer { flex: 1 1 auto; }
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 11px 3px 9px;
+  background: var(--surface-1);
+  white-space: nowrap;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.live.on .dot { background: var(--good); }
+.live.on .dot { animation: pulse 2.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .live.on .dot { animation: none; } }
+
+select, button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 9px;
+  max-width: min(60vw, 380px);
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--axis); }
+
+/* ---------- notices ---------- */
+.notices { display: grid; gap: 8px; margin-bottom: 18px; }
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.notice.critical { border-left-color: var(--critical); }
+.notice.warning { border-left-color: var(--warning); }
+.notice.good { border-left-color: var(--good); }
+.notice b { font-weight: 620; }
+.notice .icon { font-weight: 700; flex: none; line-height: 1.45; }
+.notice.critical .icon { color: var(--critical); }
+.notice.warning .icon { color: var(--warning); }
+.notice.good .icon { color: var(--good); }
+.notice p { margin: 0; color: var(--text-secondary); }
+.notice p b { color: var(--text-primary); }
+
+/* ---------- stat tiles ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.tile {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.tile .k {
+  font-size: 11.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+  font-weight: 560;
+}
+.tile .v {
+  font-size: clamp(20px, 2.6vw, 27px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-top: 3px;
+  line-height: 1.15;
+}
+.tile .n { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.v.pos { color: var(--pos); }
+.v.neg { color: var(--neg); }
+
+/* ---------- chart cards ---------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 14px;
+}
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px 10px;
+  min-width: 0;
+}
+.card.wide { grid-column: 1 / -1; }
+.card h2 {
+  font-size: 13.5px;
+  font-weight: 620;
+  margin: 0;
+  letter-spacing: -0.005em;
+}
+.card .hint { font-size: 12px; color: var(--muted); margin: 2px 0 10px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+.axis-label { fill: var(--muted); font-size: 11px; }
+.grid-line { stroke: var(--grid); stroke-width: 1; }
+.zero-line { stroke: var(--axis); stroke-width: 1; }
+
+/* ---------- tooltip ---------- */
+.tip {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  transition: opacity 90ms linear;
+  max-width: 260px;
+}
+.tip.on { opacity: 1; }
+.tip b { font-weight: 620; }
+.tip .r { font-variant-numeric: tabular-nums; }
+
+/* ---------- table ---------- */
+.scroll { overflow-x: auto; margin-top: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 10px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child, th.l, td.l { text-align: left; }
+thead th {
+  color: var(--muted);
+  font-weight: 560;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+}
+thead th:hover { color: var(--text-primary); }
+tbody tr:hover { background: var(--plane); }
+td.pos { color: var(--pos); }
+td.neg { color: var(--neg); }
+.pill {
+  display: inline-block;
+  font-size: 11.5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--text-secondary);
+}
+.tall { max-height: 460px; overflow-y: auto; }
+.empty { color: var(--muted); padding: 30px 0; text-align: center; font-size: 13px; }
+.foot { color: var(--muted); font-size: 12px; margin-top: 26px; }
+</style>
+
+<div class="lab">
+  <div class="lab-head">
+    <h1 id="title">Strategy Lab</h1>
+    <span class="spacer"></span>
+    <select id="runPicker" aria-label="Which run to display"></select>
+    <span class="live" id="live"><span class="dot"></span><span id="liveText">standalone</span></span>
+  </div>
+  <p class="lab-sub" id="subtitle"></p>
+
+  <div class="notices" id="notices"></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="grid" id="grid"></div>
+
+  <p class="foot" id="foot"></p>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script id="strategy-lab-data" type="application/json">{"runs": []}</script>
+
+<script>
+/* The stats core, inlined verbatim from static/strategy-lab-stats.js so this
+   page stays one file that opens from file:// with no server and no build step.
+   Edit the module, run its tests, then re-inline — never patch this copy. */
+/*__STRATEGY_LAB_STATS__*/
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var S = window.StrategyLabStats;
+
+  // ---------------------------------------------------------------- utilities
+  var $ = function (id) { return document.getElementById(id); };
+  var el = function (tag, attrs, kids) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (var k in attrs) if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+    (kids || []).forEach(function (c) { n.appendChild(c); });
+    return n;
+  };
+  var esc = function (s) {
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  };
+  var fmtR = function (x) { return (x > 0 ? "+" : "") + x.toFixed(2) + "R"; };
+  var fmtPct = function (x) { return (100 * x).toFixed(1) + "%"; };
+  var fmtNum = function (x, d) { return isFinite(x) ? x.toFixed(d === undefined ? 2 : d) : "—"; };
+  var fmtMoney = function (x) {
+    var s = Math.abs(x) >= 1000 ? Math.round(x).toLocaleString() : Math.abs(x).toFixed(0);
+    return (x < 0 ? "−$" : "$") + s.replace("-", "");
+  };
+  var css = function (name) {
+    return getComputedStyle(document.querySelector(".lab")).getPropertyValue(name).trim();
+  };
+
+  // ------------------------------------------------------------------ tooltip
+  var tip = $("tip");
+  function showTip(evt, html) {
+    tip.innerHTML = html;
+    tip.classList.add("on");
+    var pad = 14;
+    var box = tip.getBoundingClientRect();
+    var x = evt.clientX + pad;
+    var y = evt.clientY + pad;
+    if (x + box.width > window.innerWidth - 8) x = evt.clientX - box.width - pad;
+    if (y + box.height > window.innerHeight - 8) y = evt.clientY - box.height - pad;
+    tip.style.left = Math.max(8, x) + "px";
+    tip.style.top = Math.max(8, y) + "px";
+  }
+  function hideTip() { tip.classList.remove("on"); }
+  window.addEventListener("scroll", hideTip, true);
+
+  // ------------------------------------------------------------ chart plumbing
+  // Charts render at the container's measured width, so text is never scaled by
+  // a viewBox — a stretched viewBox is what makes axis labels look squashed on
+  // a phone. Re-rendered on resize instead.
+  var charts = [];
+  function mount(host, draw) {
+    var entry = { host: host, draw: draw };
+    charts.push(entry);
+    render(entry);
+  }
+  function render(entry) {
+    var w = Math.max(260, entry.host.clientWidth || 320);
+    entry.host.innerHTML = "";
+    entry.host.appendChild(entry.draw(w));
+  }
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { charts.forEach(render); }, 120);
+  });
+
+  function niceTicks(lo, hi, count) {
+    if (!isFinite(lo) || !isFinite(hi) || lo === hi) return [lo || 0];
+    var raw = (hi - lo) / Math.max(1, count);
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var step = [1, 2, 2.5, 5, 10].map(function (m) { return m * mag; })
+      .filter(function (s) { return s >= raw; })[0] || 10 * mag;
+    var out = [];
+    for (var v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Math.abs(v) < 1e-9 ? 0 : v);
+    return out;
+  }
+
+  /** A tick formatter whose precision follows the step.
+   *
+   * Fixed decimals collide: a 0.2R step printed with none reads "1R, 1R, 1R,
+   * 0R, 0R" down the axis, which looks like a rendering bug and hides the scale.
+   */
+  function tickFmt(ticks, unit) {
+    var step = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : Math.abs(ticks[0]) || 1;
+    var d = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+    return function (v) { return v.toFixed(d) + (unit || ""); };
+  }
+
+  /** Shared frame: gridlines, y ticks, zero rule, x labels. */
+  function frame(w, h, pad, yScale, yTicks, fmt) {
+    var g = el("g", {});
+    yTicks.forEach(function (t) {
+      var y = yScale(t);
+      g.appendChild(el("line", {
+        x1: pad.l, x2: w - pad.r, y1: y, y2: y,
+        class: t === 0 ? "zero-line" : "grid-line",
+      }));
+      g.appendChild(el("text", { x: pad.l - 7, y: y + 3.5, class: "axis-label", "text-anchor": "end" },
+        [document.createTextNode(fmt ? fmt(t) : String(t))]));
+    });
+    return g;
+  }
+
+  // ------------------------------------------------------------- line / area
+  function lineChart(points, opts) {
+    return function (w) {
+      var h = opts.height || 210;
+      var pad = { t: 10, r: 12, b: 24, l: 46 };
+      var svg = el("svg", { width: w, height: h, role: "img", "aria-label": opts.aria || opts.title });
+      if (!points.length) return svg;
+
+      var ys = points.map(function (p) { return p.y; });
+      var lo = Math.min.apply(null, ys.concat([0]));
+      var hi = Math.max.apply(null, ys.concat([0]));
+      if (lo === hi) { lo -= 1; hi += 1; }
+      var padY = (hi - lo) * 0.08;
+      lo -= padY; hi += padY;
+
+      var X = function (i) {
+        return pad.l + (points.length < 2 ? (w - pad.l - pad.r) / 2 : (i * (w - pad.l - pad.r)) / (points.length - 1));
+      };
+      var Y = function (v) { return pad.t + ((hi - v) * (h - pad.t - pad.b)) / (hi - lo); };
+
+      var ticks = niceTicks(lo, hi, 4);
+      svg.appendChild(frame(w, h, pad, Y, ticks, opts.fmtY || tickFmt(ticks, opts.unit)));
+
+      var d = points.map(function (p, i) { return (i ? "L" : "M") + X(i) + " " + Y(p.y); }).join(" ");
+      if (opts.fill) {
+        svg.appendChild(el("path", {
+          d: d + " L" + X(points.length - 1) + " " + Y(0) + " L" + X(0) + " " + Y(0) + " Z",
+          fill: opts.color, opacity: 0.13,
+        }));
+      }
+      svg.appendChild(el("path", {
+        d: d, fill: "none", stroke: opts.color, "stroke-width": 2,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+      }));
+
+      // Crosshair layer: one transparent rect, nearest-point lookup.
+      var marker = el("circle", { r: 4.5, fill: opts.color, stroke: css("--surface-1"), "stroke-width": 2, opacity: 0 });
+      var rule = el("line", { y1: pad.t, y2: h - pad.b, class: "grid-line", opacity: 0 });
+      svg.appendChild(rule);
+      svg.appendChild(marker);
+
+      var hit = el("rect", { x: pad.l, y: pad.t, width: Math.max(1, w - pad.l - pad.r), height: h - pad.t - pad.b, fill: "transparent" });
+      hit.addEventListener("pointermove", function (e) {
+        var box = svg.getBoundingClientRect();
+        var rel = e.clientX - box.left;
+        var span = points.length < 2 ? 1 : (w - pad.l - pad.r) / (points.length - 1);
+        var i = Math.max(0, Math.min(points.length - 1, Math.round((rel - pad.l) / span)));
+        var p = points[i];
+        marker.setAttribute("cx", X(i)); marker.setAttribute("cy", Y(p.y)); marker.setAttribute("opacity", 1);
+        rule.setAttribute("x1", X(i)); rule.setAttribute("x2", X(i)); rule.setAttribute("opacity", 1);
+        showTip(e, opts.tipFor(p, i));
+      });
+      hit.addEventListener("pointerleave", function () {
+        marker.setAttribute("opacity", 0); rule.setAttribute("opacity", 0); hideTip();
+      });
+      svg.appendChild(hit);
+
+      if (opts.xLabel) {
+        svg.appendChild(el("text", { x: pad.l, y: h - 6, class: "axis-label" }, [document.createTextNode(opts.xLabel(points[0], 0))]));
+        svg.appendChild(el("text", { x: w - pad.r, y: h - 6, class: "axis-label", "text-anchor": "end" },
+          [document.createTextNode(opts.xLabel(points[points.length - 1], points.length - 1))]));
+      }
+      return svg;
+    };
+  }
+
+  // ------------------------------------------------------------------- bars
+  function barChart(bars, opts) {
+    return function (w) {
+      var h = opts.height || 210;
+      var pad = { t: 10, r: 12, b: opts.rotate ? 44 : 28, l: 46 };
+      var svg = el("svg", { width: w, height: h, role: "img", "aria-label": opts.aria || opts.title });
+      if (!bars.length) return svg;
+
+      var vals = bars.map(function (b) { return b.value; });
+      var lo = Math.min.apply(null, vals.concat([0]));
+      var hi = Math.max.apply(null, vals.concat([0]));
+      if (lo === hi) { hi = lo + 1; }
+      var Y = function (v) { return pad.t + ((hi - v) * (h - pad.t - pad.b)) / (hi - lo); };
+      var ticks = niceTicks(lo, hi, 4);
+      svg.appendChild(frame(w, h, pad, Y, ticks, opts.fmtY || tickFmt(ticks, opts.unit)));
+
+      var inner = w - pad.l - pad.r;
+      var slot = inner / bars.length;
+      // A 2px surface gap between adjacent bars, as the mark spec requires.
+      var bw = Math.max(2, Math.min(opts.maxWidth || 54, slot - 2));
+      var zero = Y(0);
+
+      bars.forEach(function (b, i) {
+        var x = pad.l + slot * i + (slot - bw) / 2;
+        var y = Math.min(zero, Y(b.value));
+        // An empty bin gets no mark. Forcing a 1px minimum drew a sliver at every
+        // zero-count bucket, which reads as "a trade happened here" — the exact
+        // opposite of what the bin means.
+        var height = b.value === 0 ? 0 : Math.max(1.5, Math.abs(Y(b.value) - zero));
+        var rect = el("rect", {
+          x: x, y: y, width: bw, height: height,
+          fill: b.color || opts.color || css("--series-1"),
+          rx: Math.min(4, bw / 2), ry: Math.min(4, bw / 2),
+        });
+        rect.addEventListener("pointerenter", function (e) { showTip(e, opts.tipFor(b)); rect.setAttribute("opacity", 0.82); });
+        rect.addEventListener("pointermove", function (e) { showTip(e, opts.tipFor(b)); });
+        rect.addEventListener("pointerleave", function () { hideTip(); rect.setAttribute("opacity", 1); });
+        svg.appendChild(rect);
+
+        if (opts.label !== false) {
+          var tx = pad.l + slot * i + slot / 2;
+          var t = el("text", {
+            x: tx, y: h - (opts.rotate ? 30 : 10), class: "axis-label", "text-anchor": opts.rotate ? "end" : "middle",
+            transform: opts.rotate ? "rotate(-38 " + tx + " " + (h - 30) + ")" : null,
+          }, [document.createTextNode(b.label)]);
+          svg.appendChild(t);
+        }
+      });
+      return svg;
+    };
+  }
+
+  // ------------------------------------------------------------------ funnel
+  function funnelChart(stages) {
+    return function (w) {
+      var rowH = 34;
+      var h = stages.length * rowH + 12;
+      var svg = el("svg", { width: w, height: h, role: "img", "aria-label": "Session funnel" });
+      var labelW = Math.min(190, Math.max(120, w * 0.42));
+      var barMax = Math.max(30, w - labelW - 56);
+      var ramp = ["--ord-1", "--ord-2", "--ord-3", "--ord-4"];
+
+      stages.forEach(function (s, i) {
+        var y = i * rowH + 6;
+        svg.appendChild(el("text", { x: 0, y: y + 17, class: "axis-label" }, [document.createTextNode(s.label)]));
+        var width = Math.max(2, barMax * s.share);
+        var rect = el("rect", {
+          x: labelW, y: y + 5, width: width, height: 18, rx: 4, ry: 4,
+          fill: css(ramp[Math.min(i, ramp.length - 1)]),
+        });
+        rect.addEventListener("pointerenter", function (e) {
+          showTip(e, "<b>" + esc(s.label) + "</b><br>" + s.value + " sessions &middot; " + fmtPct(s.share) + " of range" +
+            (i ? "<br>lost " + s.dropFromPrevious + " at this gate" : ""));
+        });
+        rect.addEventListener("pointerleave", hideTip);
+        svg.appendChild(rect);
+        svg.appendChild(el("text", { x: labelW + width + 8, y: y + 19, class: "axis-label" },
+          [document.createTextNode(String(s.value))]));
+      });
+      return svg;
+    };
+  }
+
+  // ------------------------------------------------------------------- cards
+  function card(title, hint, wide) {
+    var c = document.createElement("div");
+    c.className = "card" + (wide ? " wide" : "");
+    c.innerHTML = "<h2>" + esc(title) + "</h2>" + (hint ? '<p class="hint">' + esc(hint) + "</p>" : "");
+    var host = document.createElement("div");
+    host.className = "chart";
+    c.appendChild(host);
+    $("grid").appendChild(c);
+    return { card: c, host: host };
+  }
+  function legend(card, items) {
+    var l = document.createElement("div");
+    l.className = "legend";
+    l.innerHTML = items.map(function (i) {
+      return '<span><i class="swatch" style="background:' + i.color + '"></i>' + esc(i.label) + "</span>";
+    }).join("");
+    card.appendChild(l);
+  }
+
+  // ------------------------------------------------------------------- state
+  var STATE = { runs: [], current: null, sort: { key: "day", dir: 1 } };
+
+  function tile(k, v, note, cls) {
+    return '<div class="tile"><div class="k">' + esc(k) + '</div><div class="v ' + (cls || "") + '">' +
+      v + '</div>' + (note ? '<div class="n">' + note + "</div>" : "") + "</div>";
+  }
+
+  function draw(run) {
+    charts = [];
+    $("grid").innerHTML = "";
+    $("notices").innerHTML = "";
+    $("tiles").innerHTML = "";
+
+    if (!run) {
+      $("title").textContent = "Strategy Lab";
+      $("subtitle").textContent = "";
+      $("grid").innerHTML = '<div class="card wide"><p class="empty">No runs yet. Post one and this fills in.</p></div>';
+      return;
+    }
+
+    var trades = run.trades || [];
+    var s = S.summarize(trades);
+    var pv = run.point_value;
+    var m = pv ? S.money(trades, pv) : null;
+
+    $("title").textContent = run.strategy;
+    var bits = [run.symbol, run.timeframe, run.session ? run.session + " hours" : null].filter(Boolean).join(" · ");
+    var period = run.period && run.period.start ? run.period.start + " → " + run.period.end : null;
+    var params = run.params
+      ? Object.keys(run.params).map(function (k) { return k + "=" + run.params[k]; }).join("  ")
+      : "";
+    $("subtitle").innerHTML = [esc(bits), esc(period), params ? "<code>" + esc(params) + "</code>" : ""]
+      .filter(Boolean).join(" &nbsp;·&nbsp; ");
+
+    // -------- notices: the things worth interrupting for
+    var notices = [];
+    var f = S.funnel(run);
+    if (f[0].value > 0 && f[1].value === 0) {
+      notices.push(["critical", "!", "<b>No Candle 1 in any session.</b><p>All " + f[0].value +
+        " sessions in range are missing the opening-range bar — this is a regular-hours chart, not a strategy result.</p>"]);
+    }
+    if (run.notes) {
+      notices.push(["good", "i", "<b>About this run.</b><p>" + esc(run.notes) + "</p>"]);
+    }
+    var breaches = S.riskBreaches(trades);
+    if (breaches.length) {
+      var worst = breaches.reduce(function (a, b) { return a.r < b.r ? a : b; });
+      notices.push(["critical", "!", "<b>" + breaches.length + " trade" + (breaches.length > 1 ? "s" : "") +
+        " lost more than 1R.</b><p>Worst was <b>" + fmtR(worst.r) + "</b> on " + esc(worst.day) +
+        ". A stop-out should cost about 1R — beyond that the trade escaped its stop (a gap, or a bracket that was not armed on the fill bar).</p>"]);
+    }
+    if (m && s.totalR > 0 !== m.net > 0 && s.trades > 0) {
+      // R divides each trade by its own risk; dollars do not. One contract with a
+      // stop that moves means the two can disagree in sign, and which one is
+      // "true" depends on whether size is meant to follow risk.
+      notices.push(["warning", "~", "<b>R and dollars disagree.</b><p>The run is <b>" + fmtR(s.totalR) +
+        "</b> but <b>" + fmtMoney(m.net) + "</b>. Trading one contract with a stop whose distance changes " +
+        "means every trade risks a different amount, so a positive R can still lose money. Sizing each trade " +
+        "to a fixed risk is what makes the two agree.</p>"]);
+    }
+    if (s.trades > 0 && s.trades < 30) {
+      notices.push(["warning", "~", "<b>" + s.trades + " trades is not a verdict.</b><p>Below about 30 trades the win rate and profit factor here are noise. Read the risk contract, not the edge.</p>"]);
+    }
+    $("notices").innerHTML = notices.map(function (n) {
+      return '<div class="notice ' + n[0] + '"><span class="icon">' + n[1] + "</span><div>" + n[2] + "</div></div>";
+    }).join("");
+
+    // -------- tiles
+    var pfNote = isFinite(s.profitFactor)
+      ? (s.profitFactor >= 1 ? "above breakeven" : "below breakeven")
+      : "no losing trades";
+    $("tiles").innerHTML = [
+      tile("Trades", String(s.trades), (run.funnel ? f[0].value + " sessions scanned" : "")),
+      tile("Win rate", fmtPct(s.winRate), s.wins + "W / " + s.losses + "L"),
+      tile("Profit factor", isFinite(s.profitFactor) ? fmtNum(s.profitFactor) : "—", pfNote,
+        s.profitFactor >= 1 ? "pos" : "neg"),
+      tile("Expectancy", fmtR(s.expectancyR), "per trade", s.expectancyR >= 0 ? "pos" : "neg"),
+      tile("Total", fmtR(s.totalR), m ? fmtMoney(m.net) : "", s.totalR >= 0 ? "pos" : "neg"),
+      tile("Max drawdown", fmtNum(s.maxDrawdownR) + "R", m ? fmtMoney(m.maxDrawdown) : "", "neg"),
+      tile("Payoff", isFinite(s.payoff) ? fmtNum(s.payoff) + " : 1" : "—",
+        "avg win " + fmtNum(s.avgWinR) + "R"),
+      tile("Worst streak", String(s.longestLossStreak), "consecutive losses"),
+    ].join("");
+
+    if (!trades.length) {
+      var c0 = card("Session funnel", "Where the sessions went. A run with no trades is explained here.", true);
+      mount(c0.host, funnelChart(f));
+      return;
+    }
+
+    // -------- equity curve
+    var curve = S.equityCurve(trades);
+    var eq = card("Equity curve", "Cumulative R after each trade. R, not dollars, so runs of different size compare.", true);
+    mount(eq.host, lineChart(curve.map(function (p) { return { y: p.cum, p: p }; }), {
+      color: css("--series-1"), fill: true, height: 240, unit: "R",
+      xLabel: function (pt) { return pt.p.day; },
+      tipFor: function (pt) {
+        return "<b>Trade " + pt.p.i + "</b> &middot; " + esc(pt.p.day) +
+          '<br><span class="r">' + fmtR(pt.p.r) + " → " + fmtNum(pt.p.cum) + "R cumulative</span>";
+      },
+    }));
+
+    // -------- underwater
+    var uw = card("Drawdown", "Distance below the run's high-water mark, in R.");
+    mount(uw.host, lineChart(curve.map(function (p) { return { y: p.drawdown, p: p }; }), {
+      color: css("--neg"), fill: true, unit: "R",
+      xLabel: function (pt) { return pt.p.day; },
+      tipFor: function (pt) {
+        return "<b>" + esc(pt.p.day) + "</b><br>" + fmtNum(pt.p.drawdown) + "R below peak";
+      },
+    }));
+
+    // -------- R distribution
+    var hist = S.histogram(trades.map(function (t) { return t.r; }), 0.5);
+    var rd = card("R-multiple distribution", "Where the outcomes land. A clean run stacks at −1R and at the target.");
+    mount(rd.host, barChart(hist.map(function (b) {
+      return {
+        label: b.lo % 1 === 0 ? String(b.lo) : "", value: b.count, bin: b,
+        color: b.mid >= 0 ? css("--pos") : css("--neg"),
+      };
+    }), {
+      fmtY: function (v) { return String(Math.round(v)); }, maxWidth: 40,
+      tipFor: function (b) {
+        return "<b>" + fmtNum(b.bin.lo, 1) + "R to " + fmtNum(b.bin.hi, 1) + "R</b><br>" + b.value + " trade" + (b.value === 1 ? "" : "s");
+      },
+    }));
+    legend(rd.card, [{ color: css("--pos"), label: "Winners" }, { color: css("--neg"), label: "Losers" }]);
+
+    // -------- funnel
+    var fc = card("Session funnel", "Every gate between a session existing and a trade happening.");
+    mount(fc.host, funnelChart(f));
+
+    // -------- exit reason
+    var byReason = S.groupBy(trades, function (t) { return t.reason || "unknown"; })
+      .sort(function (a, b) { return b.trades - a.trades; });
+    var reasonColors = { target: css("--series-1"), stop: css("--series-2"), flatten: css("--series-3") };
+    var er = card("How trades ended", "Total R contributed by each exit route.");
+    mount(er.host, barChart(byReason.map(function (g) {
+      return { label: g.key, value: g.totalR, g: g, color: reasonColors[g.key] || css("--muted") };
+    }), {
+      unit: "R",
+      tipFor: function (b) {
+        return "<b>" + esc(b.g.key) + "</b><br>" + b.g.trades + " trades &middot; " + fmtR(b.g.totalR) +
+          "<br>" + fmtPct(b.g.winRate) + " of them positive";
+      },
+    }));
+    legend(er.card, byReason.map(function (g) { return { color: reasonColors[g.key] || css("--muted"), label: g.key }; }));
+
+    // -------- weekday
+    var order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    var byDay = S.groupBy(trades, function (t) { return S.weekday(t.day); })
+      .sort(function (a, b) { return order.indexOf(a.key) - order.indexOf(b.key); });
+    var wd = card("By weekday", "Total R per day of week.");
+    mount(wd.host, barChart(byDay.map(function (g) {
+      return { label: g.key, value: g.totalR, g: g, color: g.totalR >= 0 ? css("--pos") : css("--neg") };
+    }), {
+      unit: "R",
+      tipFor: function (b) { return "<b>" + esc(b.g.key) + "</b><br>" + b.g.trades + " trades &middot; " + fmtR(b.g.totalR) + "<br>" + fmtPct(b.g.winRate) + " win rate"; },
+    }));
+
+    // -------- entry hour
+    var byHour = S.groupBy(trades, S.entryHour).sort(function (a, b) { return a.key - b.key; });
+    var eh = card("By entry hour (ET)", "When the entry stop filled.");
+    mount(eh.host, barChart(byHour.map(function (g) {
+      return { label: String(g.key).padStart(2, "0") + ":00", value: g.totalR, g: g, color: g.totalR >= 0 ? css("--pos") : css("--neg") };
+    }), {
+      unit: "R", rotate: true,
+      tipFor: function (b) { return "<b>" + esc(b.label) + "</b><br>" + b.g.trades + " trades &middot; " + fmtR(b.g.totalR) + "<br>" + fmtPct(b.g.winRate) + " win rate"; },
+    }));
+
+    // -------- direction
+    var byDir = S.groupBy(trades, function (t) { return t.direction === 1 ? "Long" : "Short"; });
+    var dc = card("Long vs short", "Whether one side is carrying the run.");
+    mount(dc.host, barChart(byDir.map(function (g) {
+      return { label: g.key + " (" + g.trades + ")", value: g.totalR, g: g, color: g.totalR >= 0 ? css("--pos") : css("--neg") };
+    }), {
+      unit: "R", maxWidth: 70,
+      tipFor: function (b) { return "<b>" + esc(b.g.key) + "</b><br>" + b.g.trades + " trades &middot; " + fmtR(b.g.totalR) + "<br>" + fmtPct(b.g.winRate) + " win rate"; },
+    }));
+
+    drawTable(trades);
+    drawRunComparison();
+  }
+
+  // ------------------------------------------------------------------- table
+  var COLS = [
+    { k: "day", t: "Day", l: true },
+    { k: "dir", t: "Side", l: true, get: function (t) { return t.direction === 1 ? "Long" : "Short"; } },
+    { k: "entry_ts", t: "Entry", l: true, get: function (t) { return (t.entry_ts || "").slice(11, 16); } },
+    { k: "entry", t: "Price", num: true },
+    { k: "stop", t: "Stop", num: true },
+    { k: "target", t: "Target", num: true },
+    { k: "exit_ts", t: "Exit", l: true, get: function (t) { return (t.exit_ts || "").slice(11, 16); } },
+    { k: "exit", t: "At", num: true },
+    { k: "reason", t: "Why", l: true, pill: true },
+    { k: "points", t: "Points", num: true, sign: true },
+    { k: "r", t: "R", num: true, sign: true },
+  ];
+
+  function drawTable(trades) {
+    var c = document.createElement("div");
+    c.className = "card wide";
+    c.innerHTML = '<h2>Every trade</h2><p class="hint">Click a heading to sort. R is the trade\'s result against its own planned risk.</p>';
+    var wrap = document.createElement("div");
+    wrap.className = "scroll tall";
+
+    var sorted = trades.slice().sort(function (a, b) {
+      var col = COLS.filter(function (x) { return x.k === STATE.sort.key; })[0] || COLS[0];
+      var va = col.get ? col.get(a) : a[col.k];
+      var vb = col.get ? col.get(b) : b[col.k];
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * STATE.sort.dir;
+      return String(va).localeCompare(String(vb)) * STATE.sort.dir;
+    });
+
+    var head = COLS.map(function (col) {
+      var arrow = STATE.sort.key === col.k ? (STATE.sort.dir === 1 ? " ↑" : " ↓") : "";
+      return '<th class="' + (col.l ? "l" : "") + '" data-k="' + col.k + '">' + esc(col.t) + arrow + "</th>";
+    }).join("");
+
+    var body = sorted.map(function (t) {
+      return "<tr>" + COLS.map(function (col) {
+        var v = col.get ? col.get(t) : t[col.k];
+        var cls = col.l ? "l" : "";
+        if (col.sign) cls += (v > 0 ? " pos" : v < 0 ? " neg" : "");
+        var text = col.num ? (typeof v === "number" ? (col.sign && v > 0 ? "+" : "") + v.toFixed(2) : "—") : esc(v);
+        if (col.pill) text = '<span class="pill">' + esc(v) + "</span>";
+        return '<td class="' + cls + '">' + text + "</td>";
+      }).join("") + "</tr>";
+    }).join("");
+
+    wrap.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>";
+    c.appendChild(wrap);
+    $("grid").appendChild(c);
+
+    wrap.querySelectorAll("th").forEach(function (th) {
+      th.addEventListener("click", function () {
+        var k = th.getAttribute("data-k");
+        STATE.sort = { key: k, dir: STATE.sort.key === k ? -STATE.sort.dir : 1 };
+        draw(STATE.current);
+      });
+    });
+  }
+
+  // -------------------------------------------------------- run comparison
+  function drawRunComparison() {
+    if (STATE.runs.length < 2) return;
+    var c = document.createElement("div");
+    c.className = "card wide";
+    c.innerHTML = '<h2>All runs</h2><p class="hint">Every run this lab has seen. Click one to open it.</p>';
+    var wrap = document.createElement("div");
+    wrap.className = "scroll";
+
+    var rows = STATE.runs.map(function (r) {
+      var st = S.summarize(r.trades || []);
+      var here = STATE.current && r.id === STATE.current.id;
+      return '<tr data-id="' + esc(r.id) + '" style="cursor:pointer' + (here ? ";font-weight:600" : "") + '">' +
+        '<td class="l">' + esc(r.strategy) + (here ? " ●" : "") + "</td>" +
+        '<td class="l">' + esc((r.recorded_at || r.id).slice(0, 16).replace("T", " ")) + "</td>" +
+        '<td class="l">' + esc([r.symbol, r.timeframe].filter(Boolean).join(" ")) + "</td>" +
+        "<td>" + st.trades + "</td>" +
+        "<td>" + fmtPct(st.winRate) + "</td>" +
+        "<td>" + (isFinite(st.profitFactor) ? fmtNum(st.profitFactor) : "—") + "</td>" +
+        '<td class="' + (st.expectancyR >= 0 ? "pos" : "neg") + '">' + fmtNum(st.expectancyR) + "</td>" +
+        '<td class="' + (st.totalR >= 0 ? "pos" : "neg") + '">' + fmtNum(st.totalR, 1) + "R</td>" +
+        "<td>" + fmtNum(st.maxDrawdownR, 1) + "R</td></tr>";
+    }).join("");
+
+    wrap.innerHTML = "<table><thead><tr><th class='l'>Strategy</th><th class='l'>Recorded</th>" +
+      "<th class='l'>Market</th><th>Trades</th><th>Win</th><th>PF</th><th>Exp R</th><th>Total</th><th>Max DD</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table>";
+    c.appendChild(wrap);
+    $("grid").appendChild(c);
+
+    wrap.querySelectorAll("tbody tr").forEach(function (tr) {
+      tr.addEventListener("click", function () { select(tr.getAttribute("data-id")); });
+    });
+  }
+
+  // ------------------------------------------------------------------ wiring
+  function select(id) {
+    var run = STATE.runs.filter(function (r) { return r.id === id; })[0] || STATE.runs[0] || null;
+    STATE.current = run;
+    if (run) $("runPicker").value = run.id;
+    draw(run);
+  }
+
+  function setRuns(runs, keepSelection) {
+    STATE.runs = runs;
+    var picker = $("runPicker");
+    picker.innerHTML = runs.map(function (r) {
+      var when = (r.recorded_at || r.id).slice(0, 16).replace("T", " ");
+      return '<option value="' + esc(r.id) + '">' + esc(r.strategy) + " — " + esc(when) +
+        " (" + (r.trades ? r.trades.length : 0) + " trades)</option>";
+    }).join("");
+    picker.style.display = runs.length > 1 ? "" : "none";
+    var wanted = keepSelection && STATE.current ? STATE.current.id : (runs[0] || {}).id;
+    select(wanted);
+  }
+  $("runPicker").addEventListener("change", function (e) { select(e.target.value); });
+
+  // Live mode: the server injects a meta tag naming the API. Without it — opened
+  // from disk, or published as an Artifact — the page renders its baked-in data
+  // and never fires a request that could not succeed.
+  var meta = document.querySelector('meta[name="strategy-lab-api"]');
+  var API = meta ? meta.getAttribute("content") : null;
+  var lastSignature = "";
+
+  function baked() {
+    try {
+      var node = $("strategy-lab-data");
+      return (JSON.parse(node.textContent || "{}").runs) || [];
+    } catch (e) { return []; }
+  }
+
+  function poll() {
+    fetch(API, { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (payload) {
+        var index = payload.runs || [];
+        // Only refetch the bodies when the set of runs actually changed;
+        // otherwise a 5s poll would redownload every trade list forever.
+        var signature = index.map(function (r) { return r.id + ":" + r.trade_count; }).join("|");
+        $("live").className = "live on";
+        $("liveText").textContent = index.length + " run" + (index.length === 1 ? "" : "s") + " · live";
+        if (signature === lastSignature) return;
+        lastSignature = signature;
+        return Promise.all(index.map(function (r) {
+          return fetch(API + "/" + encodeURIComponent(r.id), { cache: "no-store" }).then(function (x) { return x.json(); });
+        })).then(function (full) { setRuns(full, true); });
+      })
+      .catch(function () {
+        $("live").className = "live";
+        $("liveText").textContent = "lab unreachable";
+      });
+  }
+
+  var seed = baked();
+  setRuns(seed, false);
+  $("foot").textContent = API
+    ? "Live from the local lab. Post a run and this page picks it up within a few seconds."
+    : "Standalone snapshot. Run `python -m tools.strategy_lab` for the live version.";
+
+  if (API) {
+    poll();
+    setInterval(poll, 5000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+  }
+})();
+</script>

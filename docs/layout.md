@@ -66,6 +66,17 @@ top-level directories and points here for the detail.
   TradingView reading is `pine/vwap_strategy.pine`, and the evidence behind
   the setup choices is sourced in `docs/trading-wisdom.md`. Warns when a feed
   carries no volume (histdata index CFDs), because VWAP silently degrades to
+  TWAP there
+- `tools/strategy_lab/` — live dashboard for strategy test runs; stdlib-only server
+  serving `static/strategy-lab.html` plus a run API. Every strategy test in this repo
+  reports into it through one JSON run-record contract, so results accumulate and
+  compare instead of scrolling past in a terminal. `--export` writes a standalone
+  snapshot for publishing or reading off the machine
+- `static/strategy-lab.html` / `static/strategy-lab-stats.js` — the Strategy Lab
+  dashboard and its arithmetic. Same arrangement as `option-lab.js` and the journal:
+  the stats module is a separate, tested file that the page inlines verbatim, and
+  `tests/test_strategy_lab.py` requires its numbers to agree with
+  `pwb_toolbox.performance.trade_stats` so the screen and the package cannot drift
   TWAP there, names which confirms each setup actually applies (`cross` reads
   none of them), and says when the two feeds disagree about volume. **Measured
   and parked**: three years of BTC across two exchanges put every setup within

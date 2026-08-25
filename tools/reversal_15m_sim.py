@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import math
 import json
+import math
 import statistics
 from dataclasses import dataclass, replace
-from pathlib import Path
 from datetime import date, datetime, time
+from pathlib import Path
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
@@ -697,7 +697,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument(
         "--days", type=int, default=55, help="days to fetch (Yahoo caps 15m at 60)"
     )
-    ap.add_argument("--symbol", default=None, help="symbol label on exported trades")
+    ap.add_argument(
+        "--symbol",
+        default=None,
+        help="symbol label on exported trades and on the Strategy Lab run record",
+    )
     ap.add_argument(
         "--daily",
         metavar="PATH",
@@ -726,6 +730,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="PATH",
         help="sweep rr, sma-length and bar size around the chosen values and "
         "write night-lab fragility specs (see night_lab.py plan)",
+    )
+    ap.add_argument(
+        "--json", metavar="PATH", help="write a Strategy Lab run record here"
+    )
+    ap.add_argument(
+        "--post",
+        nargs="?",
+        const="http://127.0.0.1:8771/api/runs",
+        metavar="URL",
+        help="post the run to a running Strategy Lab (default: the local one)",
     )
     args = ap.parse_args(argv)
 
@@ -792,6 +806,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"\nNo {args.candle1} ET bar in {stats['days']} days — these are "
             "regular-hours bars. The strategy needs the electronic session."
         )
+
+    if args.json or args.post:
+        # Imported here so the simulator keeps working as a bare script when the
+        # lab package is not on the path.
+        from tools.strategy_lab.record import from_reversal_sim, post
+
+        record = from_reversal_sim(results, cfg, symbol=args.symbol)
+        if args.json:
+            Path(args.json).write_text(json.dumps(record, indent=2), encoding="utf-8")
+            print(f"\nwrote {args.json}")
+        if args.post:
+            reply = post(record, args.post)
+            print(f"\nposted {reply['id']} ({reply['trades']} trades) to {args.post}")
     return 0
 
 
