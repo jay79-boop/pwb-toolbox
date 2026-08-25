@@ -150,6 +150,30 @@ def fetch_ccxt(
     return normalise_ccxt(rows)
 
 
+def short_history_warning(bars, days, exchange, tolerance=0.8):
+    """Whether an exchange served materially less history than was asked for.
+
+    Some exchanges cap OHLCV depth however far back ``since`` reaches --
+    Kraken answers with roughly the last 720 intervals -- and they do it by
+    responding *successfully* with the cap rather than by erroring. A run then
+    quietly measures one month where three years were requested, which is the
+    same shape as Yahoo's silent period cap: a wrong answer that looks like a
+    right one. Returns ``None`` when the history is full enough to be read as
+    asked for.
+    """
+    if len(bars) < 2:
+        return None
+    span = (bars.index[-1] - bars.index[0]).total_seconds() / 86_400.0
+    if span >= days * tolerance:
+        return None
+    return (
+        f"WARNING: asked {exchange} for {days:,.0f} days of history and got "
+        f"{span:,.0f}. Some exchanges cap OHLCV depth however far back you "
+        "ask, and answer with the cap rather than erroring. Read this as a "
+        f"{span:,.0f}-day run, or fetch from an exchange that serves more."
+    )
+
+
 def mintick_for_bp(price, bp=1.0):
     """The ``--mintick`` that charges ``bp`` basis points of slippage.
 
@@ -230,6 +254,11 @@ def main(argv=None) -> int:
         bars = fetch(args.symbol, args.interval, args.period)
     out = Path(args.out or f"{args.symbol.replace('/', '-')}.csv")
     bars.reset_index(names="time").to_csv(out, index=False)
+
+    if args.exchange:
+        stale = short_history_warning(bars, args.days, args.exchange)
+        if stale:
+            print(stale)
 
     share = zero_volume_share(bars)
     price = float(bars["close"].mean())

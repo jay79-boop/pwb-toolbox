@@ -179,3 +179,32 @@ def test_days_bounds_how_far_back_the_walk_starts():
     ex = _FakeExchange(rows, now_ms=now, batch=50)
     fetch_bars.fetch_ccxt("BTC/USDT", timeframe="5m", days=0.01, client=ex)
     assert ex.calls[0] == now - int(0.01 * 86_400_000)
+
+
+def _spanning(days):
+    idx = pd.date_range("2024-01-01", periods=days * 24, freq="1h")
+    return pd.DataFrame({c: 1.0 for c in fetch_bars.COLUMNS}, index=idx)
+
+
+def test_a_capped_exchange_is_called_out_rather_than_read_as_asked_for():
+    # Kraken answers with ~720 candles however far back `since` reaches, and
+    # answers SUCCESSFULLY -- so nothing distinguishes a 30-day reply to a
+    # 1095-day request from a real one.
+    warn = fetch_bars.short_history_warning(_spanning(30), 1095, "kraken")
+    assert warn is not None
+    assert "kraken" in warn and "1,095" in warn
+
+
+def test_full_history_says_nothing():
+    assert fetch_bars.short_history_warning(_spanning(365), 365, "coinbase") is None
+    # Coinbase's real reply: 1095 asked, ~1095 served.
+    assert fetch_bars.short_history_warning(_spanning(1095), 1095, "coinbase") is None
+
+
+def test_a_little_short_is_tolerated_since_exchanges_start_when_they_start():
+    # A pair listed slightly inside the window is not a capped exchange.
+    assert fetch_bars.short_history_warning(_spanning(900), 1000, "coinbase") is None
+
+
+def test_too_few_bars_to_judge_makes_no_claim():
+    assert fetch_bars.short_history_warning(_spanning(1).iloc[:1], 365, "x") is None
