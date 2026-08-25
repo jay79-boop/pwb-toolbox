@@ -991,160 +991,164 @@ def render_reprice(results: Sequence[dict], min_jobs: int) -> str:
 # file still opens correctly from file:// with no network.
 
 _PAGE_CSS = """
+/* Committed to light. The artifact host paints its own ground in the viewer's
+   theme, so every surface and every ink below is stated rather than inherited
+   -- that is what lets one deliberate palette hold on either host. */
 :root{
-  --bg:#f8fafc; --fg:#0f172a; --card:#ffffff; --muted:#f1f5f9;
-  --muted-fg:#475569; --border:#cbd5e1; --accent:#15803d; --accent-soft:#dcfce7;
-  --warn:#b45309; --warn-soft:#fef3c7; --person:#b91c1c; --person-soft:#fee2e2;
-  --ai:#1d4ed8; --ai-soft:#dbeafe; --auto:#475569; --auto-soft:#e2e8f0;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#020617; --fg:#f8fafc; --card:#0e1223; --muted:#1a1e2f;
-    --muted-fg:#94a3b8; --border:#334155; --accent:#22c55e; --accent-soft:#052e16;
-    --warn:#fbbf24; --warn-soft:#3f2d06; --person:#f87171; --person-soft:#450a0a;
-    --ai:#60a5fa; --ai-soft:#0b2545; --auto:#94a3b8; --auto-soft:#1e293b;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#020617; --fg:#f8fafc; --card:#0e1223; --muted:#1a1e2f;
-  --muted-fg:#94a3b8; --border:#334155; --accent:#22c55e; --accent-soft:#052e16;
-  --warn:#fbbf24; --warn-soft:#3f2d06; --person:#f87171; --person-soft:#450a0a;
-  --ai:#60a5fa; --ai-soft:#0b2545; --auto:#94a3b8; --auto-soft:#1e293b;
+  --page:#fbfbfa; --card:#ffffff; --sunken:#f5f5f3;
+  --ink:#141413; --ink-2:#57564f; --ink-3:#8a8880;
+  --rule:#e6e5e0; --rule-2:#f0efec;
+
+  /* Executor -- the page's argument, and the only colour on 90 step rows.
+     Blue/orange is the safest categorical pair in the set; automation is
+     deliberately greyed because it is plumbing, not a party to the argument.
+     Validated all-pairs light: CVD dE 16.6, normal dE 21.2. */
+  --ai:#2a78d6;        --ai-bg:#e9f1fc;     --ai-edge:#c2dbf6;
+  --person:#c4491d;    --person-bg:#fdece5; --person-edge:#f7cdb9;
+  --auto:#57564f;      --auto-bg:#f0efec;   --auto-edge:#dedcd5;
+
+  /* Loop stages -- large named blocks only, never small marks, and every one
+     carries its name so hue reinforces the label rather than replacing it.
+     FOUR hues for five stages on purpose: marketing and finance share green
+     because they are the same money. The loop closes when what finance
+     collected becomes what marketing spends, and the colour says so.
+     Validated all-pairs light: CVD dE 16.2, normal dE 19.6. The two sub-3:1
+     hues never carry text -- they are rails and rules; ink is the -ink token. */
+  --s1:#008300; --s1-ink:#00701f; --s1-bg:#e3f4e6;
+  --s2:#4a3aa7; --s2-ink:#4a3aa7; --s2-bg:#eeecfa;
+  --s3:#e87ba4; --s3-ink:#a3305e; --s3-bg:#fceaf2;
+  --s4:#eda100; --s4-ink:#8a5d00; --s4-bg:#fbf1dc;
+  --s5:#008300; --s5-ink:#00701f; --s5-bg:#e3f4e6;
+
+  /* Status -- reserved, and never carried by hue alone: every one ships with
+     a glyph and a word. */
+  --good:#00701f; --good-bg:#e3f4e6;
+  --warn:#9a6200; --warn-bg:#fbf1dc;
+  --bad:#b5292a;  --bad-bg:#fdeaea;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);
-  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  line-height:1.6;font-size:16px}
-.wrap{max-width:1080px;margin:0 auto;padding:48px 24px 96px}
-h1,h2,h3{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-weight:600;line-height:1.25;letter-spacing:-0.01em;text-wrap:balance}
-h1{font-size:2rem;margin:0 0 8px}
-h2{font-size:1.25rem;margin:56px 0 4px;padding-top:24px;border-top:1px solid var(--border)}
-h3{font-size:1rem;margin:28px 0 8px}
-p{margin:8px 0 16px;max-width:70ch}
-.lede{font-size:1.05rem;color:var(--muted-fg);max-width:70ch}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:28px 0}
-.tile{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
-.tile .n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:1.9rem;font-weight:600;
-  display:block;line-height:1.1;font-variant-numeric:tabular-nums}
-.tile .k{color:var(--muted-fg);font-size:.82rem;text-transform:uppercase;letter-spacing:.06em}
-.tile .s{color:var(--muted-fg);font-size:.86rem;margin-top:6px;display:block}
-.diagram{overflow-x:auto;margin:24px 0;background:var(--card);border:1px solid var(--border);
-  border-radius:10px;padding:20px}
-.diagram svg{display:block;min-width:940px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;
-  padding:18px 20px;margin:14px 0}
-.gate{border-left:3px solid var(--person)}
-.gate .where{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.8rem;
-  color:var(--muted-fg)}
+body{margin:0;background:var(--page);color:var(--ink);
+  font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  font-size:16.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:56px 28px 120px}
+h1,h2,h3{font-family:Newsreader,Georgia,"Times New Roman",serif;font-weight:600;
+  line-height:1.15;letter-spacing:-0.012em;text-wrap:balance;margin:0}
+h1{font-size:clamp(2.1rem,5vw,3.1rem)}
+h2{font-size:clamp(1.5rem,3vw,1.95rem);margin:0 0 6px}
+h3{font-size:1.15rem;margin:0}
+p{margin:0;max-width:68ch}
+.stack{display:flex;flex-direction:column}
+.g8{gap:8px}.g12{gap:12px}.g16{gap:16px}.g24{gap:24px}.g40{gap:40px}
+.lede{font-size:1.18rem;line-height:1.55;color:var(--ink-2);max-width:60ch}
+.eyebrow{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.72rem;
+  font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+section{border-top:1px solid var(--rule);padding-top:34px;
+  display:flex;flex-direction:column;gap:20px}
+.note{color:var(--ink-2);max-width:68ch}
+
+/* ------------------------------------------------------------ loop diagram */
+.figure{background:var(--card);border:1px solid var(--rule);border-radius:14px;
+  padding:26px 24px 20px;overflow-x:auto}
+.figure svg{display:block;min-width:900px;width:100%;height:auto}
+
+/* -------------------------------------------------------------- stat tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:14px}
+.tile{background:var(--card);border:1px solid var(--rule);border-radius:12px;
+  padding:18px 18px 16px;display:flex;flex-direction:column;gap:2px}
+.tile .n{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:2.2rem;
+  font-weight:600;line-height:1.05;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em}
+.tile .s{color:var(--ink-2);font-size:.9rem;line-height:1.4;margin-top:4px}
+
+/* ------------------------------------------------------------------- chips */
+.chip{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;
+  font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.73rem;
+  font-weight:500;padding:2px 8px;border-radius:6px;border:1px solid transparent}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.c-ai{background:var(--ai-bg);color:var(--ai);border-color:var(--ai-edge)}
+.c-ai .dot{background:var(--ai)}
+.c-person{background:var(--person-bg);color:var(--person);border-color:var(--person-edge)}
+.c-person .dot{background:var(--person)}
+.c-automation{background:var(--auto-bg);color:var(--auto);border-color:var(--auto-edge)}
+.c-automation .dot{background:var(--auto);border-radius:1px}
+.c-backlog{background:var(--sunken);color:var(--ink-3);border-color:var(--rule)}
+.legend{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+  background:var(--sunken);border-radius:10px;padding:12px 16px}
+.legend b{font-weight:600;font-size:.9rem}
+.legend .k{color:var(--ink-2);font-size:.88rem}
+
+/* ------------------------------------------------------------------ status */
+.st{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:600;
+  padding:2px 9px;border-radius:6px;white-space:nowrap}
+.st-good{background:var(--good-bg);color:var(--good)}
+.st-warn{background:var(--warn-bg);color:var(--warn)}
+.st-bad{background:var(--bad-bg);color:var(--bad)}
+.st-person{background:var(--person-bg);color:var(--person)}
+.st .gl{font-family:"JetBrains Mono",ui-monospace,monospace}
+
+/* ------------------------------------------------------------------- cards */
+.card{background:var(--card);border:1px solid var(--rule);border-radius:12px;
+  padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.gate{border-left:4px solid var(--person)}
+.meta{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.76rem;
+  color:var(--ink-3);font-variant-numeric:tabular-nums}
+.card p{font-size:.95rem;color:var(--ink-2)}
+
+/* ------------------------------------------------------------------- stage */
+.stage{border-left:4px solid var(--stage,var(--rule));padding-left:22px;
+  display:flex;flex-direction:column;gap:14px}
+.stage .eyebrow{color:var(--stage-ink)}
+.stage-head{display:flex;flex-direction:column;gap:3px}
+
+/* ------------------------------------------------------------------ tables */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;
+  background:var(--card)}
+.scroll:focus-visible{outline:2px solid var(--ai);outline-offset:2px}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
-.scroll{overflow-x:auto;margin:10px 0}
-.scroll:focus-visible,.diagram:focus-visible{outline:2px solid var(--accent);
-  outline-offset:2px}
-th{text-align:left;font-weight:600;color:var(--muted-fg);font-size:.78rem;
-  text-transform:uppercase;letter-spacing:.05em;padding:8px 10px;
-  border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:8px 10px;border-bottom:1px solid var(--muted);vertical-align:top}
-td.num{font-family:"JetBrains Mono",ui-monospace,monospace;color:var(--muted-fg);
-  width:2.5rem;text-align:right;font-variant-numeric:tabular-nums}
-.badge{display:inline-block;font-size:.72rem;font-weight:600;padding:2px 7px;
-  border-radius:20px;white-space:nowrap;
-  font-family:"JetBrains Mono",ui-monospace,monospace}
-.b-ai{background:var(--ai-soft);color:var(--ai)}
-.b-person{background:var(--person-soft);color:var(--person)}
-.b-automation{background:var(--auto-soft);color:var(--auto)}
-.b-backlog{background:var(--warn-soft);color:var(--warn)}
-.kind{color:var(--muted-fg);font-size:.78rem;
-  font-family:"JetBrains Mono",ui-monospace,monospace}
-.branch{color:var(--muted-fg);font-size:.82rem}
-.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+th{text-align:left;font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:.7rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);padding:10px 14px;background:var(--sunken);
+  border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num{font-family:"JetBrains Mono",ui-monospace,monospace;color:var(--ink-3);
+  width:3rem;text-align:right;font-variant-numeric:tabular-nums}
+td.cost{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.8rem;
+  color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sub{color:var(--ink-3);font-size:.8rem;line-height:1.5;margin-top:2px}
+.sub .arrow{font-family:"JetBrains Mono",ui-monospace,monospace}
+tr.is-person{background:var(--person-bg)}
+tr.is-person td{border-bottom-color:var(--person-edge)}
+
+/* ------------------------------------------------------------------- files */
 .file code{font-family:"JetBrains Mono",ui-monospace,monospace;font-weight:600;
-  color:var(--accent)}
-ul{max-width:70ch}
-.note{background:var(--muted);border-radius:8px;padding:14px 18px;
-  color:var(--muted-fg);font-size:.92rem;max-width:74ch}
-footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--border);
-  color:var(--muted-fg);font-size:.85rem}
+  font-size:.95rem;color:var(--ai)}
+.callout{background:var(--sunken);border-radius:12px;padding:22px 24px;
+  display:flex;flex-direction:column;gap:10px}
+.callout .eyebrow{color:var(--ink-3)}
+footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);
+  color:var(--ink-3);font-size:.85rem;max-width:68ch}
+footer code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.8rem}
+@media (max-width:640px){
+  .wrap{padding:36px 18px 80px}
+  .stage{padding-left:14px}
+}
 """
 
-_STAGE_ORDER = [
-    "dept-marketing",
-    "dept-intake",
-    "dept-sales",
-    "dept-ops",
-    "dept-finance",
+#: The loop, in order. Each stage owns one hue, used only on blocks that carry
+#: its name -- so the colour reinforces the label rather than replacing it.
+_STAGES = [
+    ("dept-marketing", "Marketing", "rings the phone", "s1"),
+    ("dept-intake", "Intake", "catches it", "s2"),
+    ("dept-sales", "Sales", "books it", "s3"),
+    ("dept-ops", "Operations", "does the job", "s4"),
+    ("dept-finance", "Finance", "gets you paid", "s5"),
 ]
-_STAGE_CAPTION = {
-    "dept-marketing": "rings the phone",
-    "dept-intake": "catches it",
-    "dept-sales": "books it",
-    "dept-ops": "does the job",
-    "dept-finance": "gets you paid",
-}
+_STAGE_TOKEN = {dept: token for dept, _, _, token in _STAGES}
 
-
-def _loop_svg(blueprint: dict) -> str:
-    by_id = {d["id"]: d for d in blueprint.get("departments", [])}
-    boxes = []
-    x, y, w, h, gap = 20, 30, 168, 76, 24
-    for i, dept_id in enumerate(_STAGE_ORDER):
-        dept = by_id.get(dept_id)
-        if not dept:
-            continue
-        left = x + i * (w + gap)
-        name = _esc(dept["name"].split(" & ")[0])
-        caption = _esc(_STAGE_CAPTION.get(dept_id, ""))
-        boxes.append(
-            f'<rect x="{left}" y="{y}" width="{w}" height="{h}" rx="8" '
-            f'fill="var(--muted)" stroke="var(--border)"/>'
-            f'<text x="{left + w / 2}" y="{y + 32}" text-anchor="middle" '
-            f'fill="var(--fg)" font-size="15" font-weight="600" '
-            f'font-family="ui-monospace,monospace">{name}</text>'
-            f'<text x="{left + w / 2}" y="{y + 54}" text-anchor="middle" '
-            f'fill="var(--muted-fg)" font-size="12">{caption}</text>'
-        )
-        if i:
-            ax = left - gap
-            boxes.append(
-                f'<path d="M{ax} {y + h / 2} h{gap - 7}" stroke="var(--border)" '
-                f'stroke-width="2" fill="none" marker-end="url(#a)"/>'
-            )
-    last = x + 4 * (w + gap) + w / 2
-    first = x + w / 2
-    boxes.append(
-        f'<path d="M{last} {y + h} V{y + h + 46} H{first} V{y + h + 8}" '
-        f'stroke="var(--accent)" stroke-width="2.5" fill="none" '
-        f'marker-end="url(#g)"/>'
-        f'<text x="{(first + last) / 2}" y="{y + h + 64}" text-anchor="middle" '
-        f'fill="var(--accent)" font-size="12.5" font-weight="600">'
-        f"collected cash sets next week&#39;s ad budget</text>"
-    )
-    platform = by_id.get("dept-platform")
-    if platform:
-        top = y + h + 92
-        width = 4 * (w + gap) + w
-        boxes.append(
-            f'<rect x="{x}" y="{top}" width="{width}" height="46" rx="8" '
-            f'fill="var(--card)" stroke="var(--border)" stroke-dasharray="4 3"/>'
-            f'<text x="{x + width / 2}" y="{top + 28}" text-anchor="middle" '
-            f'fill="var(--muted-fg)" font-size="13" '
-            f'font-family="ui-monospace,monospace">'
-            f'{_esc(platform["name"])} — Claude Code over MCP, over plain files'
-            f"</text>"
-        )
-    return (
-        '<svg viewBox="0 0 980 290" role="img" '
-        'aria-label="The five stages of the loop, with collected cash feeding '
-        'back into the ad budget, over a shared integration layer">'
-        "<defs>"
-        '<marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" '
-        'markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" '
-        'fill="var(--border)"/></marker>'
-        '<marker id="g" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" '
-        'markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" '
-        'fill="var(--accent)"/></marker>'
-        "</defs>" + "".join(boxes) + "</svg>"
-    )
+_EXECUTOR_LABEL = {"ai": "AI agent", "person": "Person", "automation": "Automation"}
 
 
 def _esc(text: Any) -> str:
@@ -1153,211 +1157,424 @@ def _esc(text: Any) -> str:
     return escape(str(text), quote=True)
 
 
+def _chip(executor: str, label: str) -> str:
+    return (
+        f'<span class="chip c-{executor}"><span class="dot"></span>'
+        f"{_esc(label)}</span>"
+    )
+
+
+def _loop_svg(blueprint: dict) -> str:
+    """The thesis as a picture: five stages, and the leg that closes the loop.
+
+    Drawn rather than described because the return leg -- collected cash
+    setting next week's budget -- is the one relationship prose keeps losing.
+    """
+    names = {d["id"]: d for d in blueprint.get("departments", [])}
+    x, y, w, h, gap = 14, 16, 168, 84, 22
+    parts = []
+    for i, (dept_id, short, caption, token) in enumerate(_STAGES):
+        if dept_id not in names:
+            continue
+        left = x + i * (w + gap)
+        parts.append(
+            f'<g><rect x="{left}" y="{y}" width="{w}" height="{h}" rx="10" '
+            f'fill="var(--{token}-bg)"/>'
+            f'<rect x="{left}" y="{y}" width="{w}" height="4" rx="2" '
+            f'fill="var(--{token})"/>'
+            f'<text x="{left + w / 2}" y="{y + 44}" text-anchor="middle" '
+            f'fill="var(--ink)" font-size="17" font-weight="600" '
+            f'font-family="Newsreader,Georgia,serif">{_esc(short)}</text>'
+            f'<text x="{left + w / 2}" y="{y + 66}" text-anchor="middle" '
+            f'fill="var(--ink-2)" font-size="12.5">{_esc(caption)}</text></g>'
+        )
+        if i:
+            parts.append(
+                f'<path d="M{left - gap + 3} {y + h / 2} h{gap - 12}" '
+                f'stroke="var(--ink-3)" stroke-width="1.5" fill="none" '
+                f'marker-end="url(#tip)"/>'
+            )
+    first = x + w / 2
+    last = x + 4 * (w + gap) + w / 2
+    base = y + h + 48
+    parts.append(
+        f'<path d="M{last} {y + h + 4} V{base} H{first} V{y + h + 3}" '
+        f'stroke="var(--s5)" stroke-width="2.5" fill="none" '
+        f'marker-end="url(#tip-loop)"/>'
+        f'<text x="{(first + last) / 2}" y="{base + 21}" text-anchor="middle" '
+        f'fill="var(--s5-ink)" font-size="13" font-weight="600">'
+        f"collected cash sets next week&#39;s ad budget</text>"
+        f'<text x="{(first + last) / 2}" y="{base + 38}" text-anchor="middle" '
+        f'fill="var(--ink-3)" font-size="11.5">'
+        f"the two ends of the loop share a colour because they are the same "
+        f"money</text>"
+    )
+    platform = names.get("dept-platform")
+    if platform:
+        top = base + 54
+        width = 4 * (w + gap) + w
+        parts.append(
+            f'<rect x="{x}" y="{top}" width="{width}" height="44" rx="10" '
+            f'fill="none" stroke="var(--rule)" stroke-width="1.5" '
+            f'stroke-dasharray="5 4"/>'
+            f'<text x="{x + width / 2}" y="{top + 27}" text-anchor="middle" '
+            f'fill="var(--ink-3)" font-size="13" '
+            f'font-family="JetBrains Mono,ui-monospace,monospace">'
+            f"Claude Code over MCP &#183; pricing.yaml &#183; rules.md &#183; "
+            f"bench.csv</text>"
+        )
+    return (
+        '<svg viewBox="0 0 960 276" role="img" aria-label="Five stages in a '
+        "row -- marketing, intake, sales, operations, finance -- with an arrow "
+        "from finance back to marketing labelled collected cash sets next "
+        'week&#39;s ad budget, over a shared integration layer">'
+        "<defs>"
+        '<marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" '
+        'markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 z" '
+        'fill="var(--ink-3)"/></marker>'
+        '<marker id="tip-loop" viewBox="0 0 8 8" refX="7" refY="4" '
+        'markerWidth="6" markerHeight="6" orient="auto">'
+        '<path d="M0 0 L8 4 L0 8 z" fill="var(--s5)"/></marker>'
+        "</defs>" + "".join(parts) + "</svg>"
+    )
+
+
 def _steps_table(proc: dict) -> str:
     rows = []
     for step in proc.get("steps", []):
         kind = step.get("kind", "task")
         executor = step.get("executor", "person")
-        extra = []
+        detail = []
         if kind == "decision":
             for b in step.get("branches", []) or []:
-                extra.append(f"{_esc(b['label'])} &rarr; {_esc(b['to'])}")
+                detail.append(
+                    f'<span class="arrow">{_esc(b["label"])} &rarr; '
+                    f'{_esc(b["to"])}</span>'
+                )
         elif kind == "goto":
-            extra.append(f"jumps to step {_esc(step.get('goto'))}")
+            detail.append(
+                f'<span class="arrow">jumps to {_esc(step.get("goto"))}</span>'
+            )
         elif kind == "delay":
-            extra.append(f"waits {_esc(step.get('duration', '?'))}")
+            detail.append(f"waits {_esc(step.get('duration', '?'))}")
+        if step.get("commits"):
+            detail.append('<span class="arrow">commits the business</span>')
         cost = ""
         if executor == "person" and step.get("duration") and step.get("frequency"):
             cost = f"{_esc(step['duration'])} &times; {_esc(step['frequency'])}/mo"
+        klass = ' class="is-person"' if executor == "person" else ""
         rows.append(
-            f'<tr><td class="num">{_esc(step["number"])}</td>'
-            f'<td>{_esc(step["title"])}'
+            f"<tr{klass}><td class=\"num\">{_esc(step['number'])}</td>"
+            f"<td>{_esc(step['title'])}"
             + (
-                f'<div class="branch">{" &nbsp;·&nbsp; ".join(extra)}</div>'
-                if extra
+                f'<div class="sub">{" &nbsp;·&nbsp; ".join(detail)}</div>'
+                if detail
                 else ""
             )
-            + f'</td><td><span class="badge b-{executor}">{_esc(step.get("owner", ""))}</span>'
-            + (f'<div class="kind">{_esc(kind)}</div>' if kind != "task" else "")
-            + f'</td><td class="kind">{cost}</td></tr>'
+            + f"</td><td>{_chip(executor, step.get('owner', ''))}</td>"
+            + f'<td class="cost">{cost}</td></tr>'
         )
     return (
-        '<div class="scroll"><table><thead><tr><th></th><th>Step</th>'
-        "<th>Who</th><th>Person cost</th></tr></thead><tbody>"
+        '<div class="scroll" tabindex="0"><table><thead><tr><th></th><th>Step</th>'
+        "<th>Who runs it</th><th>Person cost</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></div>"
     )
 
 
+_STATUS = {
+    "gated": ("st-good", "&#10003;", "gated"),
+    "person_commits": ("st-good", "&#10003;", "a person does it"),
+    "partial_gate": ("st-warn", "!", "threshold"),
+    "automation_commits": ("st-warn", "!", "check the trigger"),
+    "ungated_ai_commit": ("st-bad", "&#10005;", "ungated"),
+}
+
+
+def _status(code: str) -> str:
+    klass, glyph, word = _STATUS.get(code, ("st-warn", "?", code))
+    return f'<span class="st {klass}"><span class="gl">{glyph}</span>{word}</span>'
+
+
 def build_page(blueprint: dict, out: Path) -> Path:
+    """Render the architecture as one standalone light page.
+
+    Everything here is read off the blueprint, including the counts. A page
+    that carries its own numbers is a second copy of the map, and the two stop
+    agreeing on the first edit -- which is the failure the derived roster
+    exists to prevent, applied to the readable artefact.
+    """
     meta = blueprint["meta"]
     found = roster(blueprint)
     load = monthly_load(blueprint)
-    gates = [f for f in audit_gates(blueprint) if f["severity"] in ("ok", "error")]
+    findings = audit_gates(blueprint)
+    committing = [f for f in findings if f["code"] != "unmarked_touch"]
     grouped = fanout(blueprint)
     planned = sum(len(v) for v in grouped.values())
     procs = {p["id"]: p for p in blueprint.get("processes", [])}
+    tools_by_id = {t["id"]: t for t in blueprint.get("tools", [])}
     person_steps = [
         (proc, step)
         for proc, step in work_steps(blueprint)
         if step.get("executor") == "person"
     ]
-    # a person step that forks the flow is an approval gate; the rest is the
-    # work itself, and conflating the two overstates how much of this is
-    # oversight
     gate_steps = [s for _, s in person_steps if s.get("kind") == "decision"]
+    ops_hours = load["by_department"].get("Operations & Delivery", 0) / 60
+    admin_hours = load["hours"] - ops_hours
 
-    parts = [
-        f"<title>{_esc(meta['name'])}</title>",
-        '<link rel="preconnect" href="https://fonts.googleapis.com">',
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+    P = []
+    add = P.append
+
+    add(f"<title>{_esc(meta['name'])}</title>")
+    add('<link rel="preconnect" href="https://fonts.googleapis.com">')
+    add('<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>')
+    add(
         '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-        "family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600"
-        '&display=swap">',
-        f"<style>{_PAGE_CSS}</style>",
-        '<div class="wrap">',
-        f"<h1>{_esc(meta['name'])}</h1>",
-        '<p class="lede">A local service business is not a funnel. It is a loop: '
-        "marketing rings the phone, intake catches it, sales books it, operations "
-        "does the job, finance gets you paid — and that money decides next "
-        "week's ads.</p>",
-        '<div class="diagram">' + _loop_svg(blueprint) + "</div>",
-        '<div class="tiles">',
-        f'<div class="tile"><span class="k">Agent roles</span>'
-        f'<span class="n">{len(found["ai"])}</span>'
-        f'<span class="s">derived from the map, not a list</span></div>',
-        f'<div class="tile"><span class="k">Person steps</span>'
-        f'<span class="n">{len(person_steps)}</span>'
-        f'<span class="s">{len(gate_steps)} of them approval gates</span></div>',
-        f'<div class="tile"><span class="k">Person load</span>'
+        "family=Newsreader:opsz,wght@6..72,500;6..72,600&"
+        "family=Public+Sans:wght@400;500;600&"
+        'family=JetBrains+Mono:wght@400;500;600&display=swap">'
+    )
+    add(f"<style>{_PAGE_CSS}</style>")
+    add('<div class="wrap stack g40">')
+
+    # ---------------------------------------------------------------- hero
+    add(
+        '<header class="stack g16">'
+        '<div class="eyebrow">Reference architecture</div>'
+        f"<h1>{_esc(meta['name'])}</h1>"
+        '<p class="lede">A local service business is not a funnel. It is a '
+        "loop: marketing rings the phone, intake catches it, sales books it, "
+        "operations does the job, finance gets you paid &mdash; and that money "
+        "decides next week&#39;s ads.</p>"
+        "</header>"
+    )
+    add(f'<div class="figure">{_loop_svg(blueprint)}</div>')
+
+    add(
+        '<div class="tiles">'
+        f'<div class="tile"><span class="eyebrow">Agent roles</span>'
+        f'<span class="n" style="color:var(--ai)">{len(found["ai"])}</span>'
+        f'<span class="s">derived from the map, not kept in a list</span></div>'
+        f'<div class="tile"><span class="eyebrow">Person steps</span>'
+        f'<span class="n" style="color:var(--person)">{len(person_steps)}</span>'
+        f'<span class="s">{len(gate_steps)} of them approval gates on money '
+        f"or a customer</span></div>"
+        f'<div class="tile"><span class="eyebrow">Person hours</span>'
         f'<span class="n">{load["hours"]:,.0f}</span>'
-        f'<span class="s">hours a month, mostly the job itself</span></div>',
-        f'<div class="tile"><span class="k">At full fan-out</span>'
-        f'<span class="n">{len(found["ai"]) + planned}</span>'
-        f'<span class="s">{len(found["ai"])} built, {planned} backlog</span></div>',
-        "</div>",
-        "<h2>Where a person stays</h2>",
-        "<p>Agents move information. A person moves money and risk. Every step "
-        f"below is a human one: {len(gate_steps)} are approval gates on money or "
-        "a customer relationship, and the rest is the work itself and the "
-        "judgement immediately around it. None of them is here because it was "
-        "hard to automate.</p>",
-    ]
-    for proc, step in person_steps:
-        parts.append(
-            f'<div class="card gate"><strong>{_esc(step["title"])}</strong>'
+        f'<span class="s">a month &mdash; {ops_hours:,.0f} of it the job '
+        f"itself, {admin_hours:,.0f} everything else</span></div>"
+        f'<div class="tile"><span class="eyebrow">At full fan-out</span>'
+        f'<span class="n" style="color:var(--ink-3)">'
+        f'{len(found["ai"]) + planned}</span>'
+        f'<span class="s">{len(found["ai"])} built, {planned} backlog and '
+        f"none of them running</span></div>"
+        "</div>"
+    )
+
+    add(
+        '<div class="legend">'
+        "<b>Who runs a step</b>"
+        + "".join(
+            f'<span class="k">{_chip(k, _EXECUTOR_LABEL[k])} {gloss}</span>'
+            for k, gloss in (
+                ("ai", f"{len(found['ai'])} roles"),
+                ("person", "the owner"),
+                ("automation", f"{len(found['automation'])} integrations"),
+            )
+        )
+        + "</div>"
+    )
+
+    # ------------------------------------------------------ the human gates
+    add(
+        "<section><div class='stack g8'>"
+        '<div class="eyebrow" style="color:var(--person)">The rule</div>'
+        "<h2>AI moves information. You move money and risk.</h2>"
+        f'<p class="note">Every step below is a human one. {len(gate_steps)} '
+        "are approval gates on money or a customer relationship; the rest is "
+        "the work itself and the judgement immediately around it. None of "
+        "them is here because it was hard to automate.</p></div>"
+        '<div class="grid2">'
+        + "".join(
+            f'<div class="card gate"><div class="stack g8">'
+            f"<h3>{_esc(step['title'])}</h3>"
             + (
-                ' <span class="badge b-person">approval gate</span>'
+                '<span class="st st-person">'
+                '<span class="gl">&#9679;</span>approval gate</span>'
                 if step.get("kind") == "decision"
                 else ""
             )
-            + f'<div class="where">{_esc(proc["id"])} · step {_esc(step["number"])}'
+            + f'<div class="meta">{_esc(proc["id"])} &#183; step '
+            f"{_esc(step['number'])}"
             + (
-                f' · {_esc(step["duration"])} &times; {_esc(step["frequency"])}/mo'
+                f" &#183; {_esc(step['duration'])} &times; "
+                f"{_esc(step['frequency'])}/mo"
                 if step.get("duration") and step.get("frequency")
                 else ""
             )
             + "</div>"
-            + f'<p>{_esc((step.get("notes", "").split(chr(10))[0] or "").removeprefix("Purpose: "))}</p>'
-            + "</div>"
+            + "<p>"
+            + _esc(
+                (step.get("notes", "").split(chr(10))[0] or "").removeprefix(
+                    "Purpose: "
+                )
+            )
+            + "</p></div></div>"
+            for proc, step in person_steps
         )
-
-    parts.append("<h2>What commits the business, and what gates it</h2>")
-    parts.append(
-        "<p>A step that reaches payments, advertising or contracts can commit "
-        "the business. Every one of them run by an agent has a person "
-        "immediately in front of it — that is the property "
-        "<code>ai_company.py gates</code> checks, and it is a test that can "
-        "fail.</p>"
-    )
-    rows = "".join(
-        f'<tr><td class="num">{_esc(f["step"])}</td><td>{_esc(f["title"])}'
-        f'<div class="branch">{_esc(f["process"])}</div></td>'
-        f'<td><span class="badge b-ai">{_esc(f["owner"])}</span></td>'
-        f'<td class="kind">{_esc(f["message"])}</td></tr>'
-        for f in gates
-    )
-    parts.append(
-        '<div class="scroll"><table><thead><tr><th></th><th>Step</th>'
-        "<th>Agent</th><th>Gate</th></tr></thead><tbody>"
-        + rows
-        + "</tbody></table></div>"
+        + "</div></section>"
     )
 
-    parts.append("<h2>The loop, stage by stage</h2>")
+    # ------------------------------------------------------------ the gates
+    add(
+        "<section><div class='stack g8'>"
+        '<div class="eyebrow">The check</div>'
+        "<h2>What can commit the business</h2>"
+        '<p class="note">A step that spends money, moves cash or binds the '
+        "business to a contract says so in the map. Every one of them run by "
+        "an agent has a person immediately in front of it &mdash; that is a "
+        "property <code>ai_company.py gates</code> tests, and a test that can "
+        "fail.</p></div>"
+        '<div class="scroll" tabindex="0"><table><thead><tr><th></th>'
+        "<th>Step</th><th>Who runs it</th><th>Gate</th>"
+        "</tr></thead><tbody>"
+        + "".join(
+            f"<tr><td class=\"num\">{_esc(f['step'])}</td>"
+            f"<td>{_esc(f['title'])}<div class=\"sub\">{_esc(f['process'])}"
+            f"</div></td>"
+            f"<td>{_chip(_owner_executor(f, blueprint), f['owner'])}</td>"
+            f"<td>{_status(f['code'])}"
+            f"<div class=\"sub\">{_esc(f['message'])}</div></td></tr>"
+            for f in committing
+        )
+        + "</tbody></table></div></section>"
+    )
+
+    # ------------------------------------------------------- stage by stage
+    add(
+        "<section><div class='stack g8'>"
+        '<div class="eyebrow">The loop</div>'
+        "<h2>Stage by stage</h2>"
+        '<p class="note">Six processes, every step carrying who runs it. The '
+        "person rows are tinted, so the labour bill is visible by scanning "
+        "rather than by reading.</p></div>"
+    )
     for dept in blueprint.get("departments", []):
         if not dept.get("processes"):
             continue
-        parts.append(f"<h3>{_esc(dept['name'])}</h3>")
-        parts.append(f"<p>{_esc(dept.get('description', ''))}</p>")
+        token = _STAGE_TOKEN.get(dept["id"], "s1")
+        add(
+            f'<div class="stage" style="--stage:var(--{token});'
+            f'--stage-ink:var(--{token}-ink)">'
+            f'<div class="stage-head">'
+            f'<div class="eyebrow">{_esc(dept["name"])}</div>'
+            f'<p class="note">{_esc(dept.get("description", ""))}</p></div>'
+        )
         for proc_id in dept["processes"]:
             proc = procs.get(proc_id)
             if not proc:
                 continue
-            parts.append(
-                f'<div class="card"><strong>{_esc(proc["name"])}</strong>'
-                f'<div class="where kind">{_esc(proc.get("frequency", ""))}</div>'
-                f'<p>{_esc(proc.get("description", ""))}</p>'
+            add(
+                f'<div class="stack g12"><div class="stack g8">'
+                f"<h3>{_esc(proc['name'])}</h3>"
+                f'<div class="meta">{_esc(proc.get("frequency", ""))}</div>'
+                f'<p class="note">{_esc(proc.get("description", ""))}</p></div>'
                 + _steps_table(proc)
                 + "</div>"
             )
+        add("</div>")
+    add("</section>")
 
+    # ------------------------------------------------------------ the files
     platform = next(
         (d for d in blueprint.get("departments", []) if d["id"] == "dept-platform"),
         None,
     )
     if platform:
-        parts.append("<h2>Underneath: plain files</h2>")
-        parts.append(f"<p>{_esc(platform.get('description', ''))}</p>")
-        by_id = {t["id"]: t for t in blueprint.get("tools", [])}
         chips = [
-            f'<div class="card file"><code>{_esc(by_id[t]["name"])}</code>'
-            f'<p>{_esc(by_id[t]["purpose"])}</p></div>'
+            f'<div class="card file"><code>{_esc(tools_by_id[t]["name"])}</code>'
+            f'<p>{_esc(tools_by_id[t]["purpose"])}</p></div>'
             for t in platform.get("tools", [])
-            if t in by_id and by_id[t].get("category", "").startswith("Config")
+            if t in tools_by_id
+            and str(tools_by_id[t].get("category", "")).startswith("Config")
         ]
-        parts.append('<div class="files">' + "".join(chips) + "</div>")
-
-    parts.append("<h2>The other thirty-three</h2>")
-    parts.append(
-        f"<p>{len(found['ai'])} roles are specified above and run the whole loop. "
-        f"The {planned} below are what each role would split into if volume ever "
-        "justified it. They are backlog, all of them, and none exists. A "
-        "committed list of named agents that reads as built is how a "
-        "customer-facing promise gets wired to something that is not there.</p>"
-    )
-    for role, items in grouped.items():
-        rows = "".join(
-            f"<tr><td>{_esc(i['title'])}"
-            f'<div class="branch">{_esc(i["description"])}</div></td>'
-            f'<td><span class="badge b-backlog">backlog</span></td></tr>'
-            for i in items
-        )
-        parts.append(
-            f'<div class="card"><strong>{_esc(role)}</strong>'
-            f'<div class="scroll"><table><tbody>{rows}</tbody></table></div></div>'
+        add(
+            "<section><div class='stack g8'>"
+            '<div class="eyebrow">Underneath</div>'
+            "<h2>Three plain files</h2>"
+            f'<p class="note">{_esc(platform.get("description", ""))}</p></div>'
+            f'<div class="grid3">{"".join(chips)}</div>'
+            '<p class="note">Every threshold in this architecture is a number '
+            "in one of these rather than a judgement an agent makes. That is "
+            "what turns &#8220;is this quote too big to send unattended&#8221; "
+            "from a prompt-engineering problem into a comparison.</p></section>"
         )
 
-    parts.append("<h2>What this page does not know</h2>")
-    parts.append(
-        '<div class="note">Every KPI on this map reads <em>unmeasured</em>, and '
-        "the volumes are illustrative for a one-van shop. There is no "
-        "current-state map behind it, so there is no hours-returned figure — "
-        "<code>ai_company.py hours</code> refuses to produce one without a "
-        "baseline. Tool costs are absent on purpose: phase 1 of the readiness "
-        "framework fills them from real invoices, and a placeholder would be "
-        "read as a fact.</div>"
+    # -------------------------------------------------------- the other 33
+    add(
+        "<section><div class='stack g8'>"
+        '<div class="eyebrow">Not built</div>'
+        f"<h2>The other {planned}</h2>"
+        f'<p class="note">{len(found["ai"])} roles run the whole loop. The '
+        f"{planned} below are what each would split into if volume ever "
+        "justified it, and every one names the volume that would. They are "
+        "backlog, all of them. A committed list of named agents that reads as "
+        "built is how a customer-facing promise gets wired to something that "
+        "is not there.</p></div>"
+        '<div class="grid2">'
+        + "".join(
+            f'<div class="card"><div class="stack g8">'
+            f"<h3>{_esc(role)}</h3>"
+            + "".join(
+                f'<div class="stack g8" style="padding-top:4px">'
+                f'<div>{_chip("backlog", i["title"])}'
+                f'<div class="sub">{_esc(i["description"])}</div></div></div>'
+                for i in items
+            )
+            + "</div></div>"
+            for role, items in grouped.items()
+        )
+        + "</div></section>"
     )
-    parts.append(
+
+    # ------------------------------------------------------- what it cannot
+    add(
+        "<section>"
+        '<div class="callout">'
+        '<div class="eyebrow">What this page does not know</div>'
+        "<p>Every KPI on this map reads <strong>unmeasured</strong>, and the "
+        "volumes are illustrative for a one-van shop. There is no "
+        "current-state map behind it, so there is no hours-returned figure "
+        "&mdash; <code>ai_company.py hours</code> refuses to produce one "
+        "without a baseline. Tool costs are absent on purpose: phase 1 of the "
+        "readiness framework fills them from real invoices, and a placeholder "
+        "in a committed reference gets read as a fact.</p>"
+        "</div></section>"
+    )
+
+    add(
         f"<footer>Generated from <code>docs/{REFERENCE.name}</code> by "
-        f"<code>tools/ai_company.py page</code>. Edit the blueprint, not this "
-        f"file. Blueprint version {_esc(meta.get('version', '?'))}.</footer>"
+        f"<code>tools/ai_company.py page</code> &mdash; the counts, the roster "
+        f"and the gate verdicts are all read off that file. Edit the "
+        f"blueprint, not this page. Version "
+        f"{_esc(meta.get('version', '?'))}.</footer>"
     )
-    parts.append("</div>")
+    add("</div>")
 
     out = Path(out)
-    out.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    out.write_text("\n".join(P) + "\n", encoding="utf-8")
     return out
+
+
+def _owner_executor(finding: dict, blueprint: dict) -> str:
+    """The executor of the step a finding came from, for its chip."""
+    for proc in blueprint.get("processes", []):
+        if proc["id"] != finding["process"]:
+            continue
+        for step in proc.get("steps", []):
+            if step.get("number") == finding["step"]:
+                return step.get("executor", "person")
+    return "person"
 
 
 # --- CLI --------------------------------------------------------------------

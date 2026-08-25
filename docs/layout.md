@@ -244,6 +244,9 @@ top-level directories and points here for the detail.
   options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
+  `page-style.md` (the standing look for any page or artifact built here —
+  light, colour-coded, validated; the rule is in `CLAUDE.md`, the tokens and
+  the checks are here),
   `one-person-ai-company.md` (the reference target architecture that playbook's
   phase 7 designs toward — a local service business as a loop rather than a
   funnel, with agents on the information and people on money and risk), plus
