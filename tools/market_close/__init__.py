@@ -7,6 +7,7 @@ broadcast script with Eleven v3 audio tags and every number already spelled the
 way it should be spoken. See ``README.md`` in this directory.
 """
 
+from .description import affiliate_link, bio_line, video_description
 from .free import collect_free
 from .market import MarketFacts, Quote, collect, demo_facts
 from .script import ScriptOptions, preview, render, split_segments
@@ -15,10 +16,13 @@ __all__ = [
     "MarketFacts",
     "Quote",
     "ScriptOptions",
+    "affiliate_link",
+    "bio_line",
     "collect",
     "collect_free",
     "demo_facts",
     "preview",
     "render",
     "split_segments",
+    "video_description",
 ]

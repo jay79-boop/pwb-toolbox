@@ -43,10 +43,30 @@ as everywhere else here: report what you measured. It's a cheaper seat and it sa
    before committing to anything.
 2. Write the opening story into `story.txt`. One human-scale thing that actually
    happened to you, no numbers, landing on `[starts laughing]`.
-3. `python -m tools.market_close --kicker-file story.txt --segments render/`
+3. `python -m tools.market_close --kicker-file story.txt --segments render/ --description render/description.txt --bio-line render/bio.txt`
 4. Paste `render/01-…` through `render/05-…` into ElevenLabs Text to Speech one at a
    time, on **Eleven v3**, stability **Natural**.
 5. Stitch the clips, drop the track onto a HeyGen avatar as uploaded audio.
+6. Paste `render/description.txt` into the YouTube/TikTok description, and
+   `render/bio.txt` into whatever link-in-bio slot the account uses.
+
+## Crediting ElevenLabs
+
+Every episode is voiced by ElevenLabs, so every episode credits it: `--description`
+writes a long-form description (show, date, host, the credit line, the affiliate
+link, the disclaimer) and `--bio-line` writes the one-liner for a platform with a
+single clickable bio slot. Both come from `description.py`, not `script.py` — they
+are pasted into a text field, never spoken, so unlike the script itself they are
+allowed digits and a literal URL.
+
+**On masking the link.** A plain-text description or bio field shows exactly the
+string you put in it — there's no way to display a friendly label over a hidden
+destination without an actual redirect (a URL shortener or a vanity domain).
+Nothing in this repo can stand one up: it would need a shortener account and
+outbound access this environment doesn't have. Once you have one, point
+`$ELEVENLABS_AFFILIATE_LINK` (or `--elevenlabs-link`) at it and every description
+and bio line this tool renders switches over — no code change, no re-editing past
+scripts.
 
 ## Five segments, in this order
 
@@ -230,6 +250,9 @@ string concatenation rather than wrapping for source readability.
 | `--preview` | tape and movers only; exits `1` when neither has data |
 | `--out PATH` | write the script (default: stdout) |
 | `--segments DIR` | also write one numbered file per block, in render order |
+| `--description PATH` | also write a video description crediting ElevenLabs, with the affiliate link |
+| `--bio-line PATH` | also write a one-line ElevenLabs credit for a link-in-bio platform |
+| `--elevenlabs-link URL` | override the credit link (else `$ELEVENLABS_AFFILIATE_LINK`, else the default) |
 
 `COMPANY_NAMES` in `market.py` covers about sixty large caps. Anything absent gets
 its ticker spelled out — "Z Z Z Z" — which is also how a desk reads an unfamiliar
@@ -238,6 +261,9 @@ one, but `--names` is there for when you want fuller coverage.
 ## Layout
 
 - `spoken.py` — numbers to broadcast English. No dependencies, heavily tested.
+- `description.py` — the ElevenLabs credit text (video description, bio line) and
+  where the affiliate link comes from. Written for a text field, not the voice —
+  digits and a literal URL are fine here.
 - `market.py` — dataset loading and reduction. `collect()` is the only function that
   touches the network; everything else is pure and takes a DataFrame, which is what
   keeps the suite offline.
