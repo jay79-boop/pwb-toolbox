@@ -188,6 +188,7 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_workspace_dirs.py --check  # can a new chat reach my other repos? (local only)
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
