@@ -313,3 +313,38 @@ def test_diagnose_refuses_to_read_past_broken_json(home, capsys):
 
     assert installer.main(["--diagnose"]) == 1
     assert "not valid JSON" in capsys.readouterr().out
+
+
+# --- the standing rule, written where every project reads it ---------------
+
+
+def test_the_rule_lands_in_user_level_claude_md(home):
+    installer.main([])
+
+    text = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert installer.RULE_MARKER in text
+    assert "If yes, do it." in text
+    assert "a decision that changes money, scope, or something hard to reverse" in text
+
+
+def test_the_rule_is_not_duplicated_on_a_second_run(home):
+    installer.main([])
+    installer.main([])
+
+    text = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.count(installer.RULE_MARKER) == 1
+
+
+def test_the_rule_appends_and_never_rewrites(home):
+    target = home / ".claude" / "CLAUDE.md"
+    target.write_text("# My own notes\n\nKeep this.\n", encoding="utf-8")
+    installer.main([])
+
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("# My own notes\n\nKeep this.\n")
+    assert installer.RULE_MARKER in text
+
+
+def test_check_does_not_write_the_rule(home):
+    assert installer.main(["--check"]) == 0
+    assert not (home / ".claude" / "CLAUDE.md").exists()

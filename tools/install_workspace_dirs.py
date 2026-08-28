@@ -70,6 +70,36 @@ BLOCKLIST = (
     "Edit(~/AppData/**)",
 )
 
+RULE_MARKER = "## Do the work. Hand back only what genuinely needs them"
+
+# Written into ~/.claude/CLAUDE.md, which every session in every project reads.
+# The repo copy of this rule only reaches sessions working in pwb-toolbox, and
+# the owner asked for it everywhere.
+RULE = """
+## Do the work. Hand back only what genuinely needs them
+
+Before any item goes in a NEEDS YOU block, it has to survive one question: is
+there any route by which this session could do it? If yes, do it.
+
+Only these are genuinely mine to do:
+
+- a credential, a code, or an answer only I hold
+- a GUI action, or a click in a service the session cannot reach
+- a command that must run on my Windows machine when the session is in the
+  cloud and has no path to that disk
+- a decision that changes money, scope, or something hard to reverse
+
+Everything else is the session's: reading files, running tests, checking CI,
+git archaeology, working out which commit diverged and why, comparing two
+remotes, fetching a public repo to answer a question about it, writing the
+code and opening the PR. "Run this and tell me what it says" is almost always
+a failure to try it in the session first.
+
+And batch what is left. One paste that does three things beats three numbered
+steps; a diagnostic step that only feeds the next one should be folded into it.
+"""
+
+
 DEFAULT_DEPTH = 3
 
 # Noise, not projects. Descending into these is slow and finds nothing: AppData
@@ -258,6 +288,34 @@ def write_settings(path, settings, keep, deny=None):
     return None
 
 
+def add_rule(home, check):
+    """Put the standing rule in user-level CLAUDE.md, where every project reads it.
+
+    Appends behind a marker so a second run is a no-op, and never rewrites what
+    is already in the file.
+    """
+
+    path = os.path.join(home, "CLAUDE.md")
+    existing = ""
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            existing = handle.read()
+    if RULE_MARKER in existing:
+        return "already present", path
+    if check:
+        return "missing", path
+    if os.path.isfile(path):
+        shutil.copyfile(path, path + ".bak")
+    separator = (
+        ""
+        if not existing or existing.endswith("\n\n")
+        else ("\n" if existing.endswith("\n") else "\n\n")
+    )
+    with open(path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(separator + RULE.lstrip("\n"))
+    return "added", path
+
+
 def diagnose(home, roots):
     """Answer 'why can a session not see that folder?' without changing anything.
 
@@ -436,9 +494,15 @@ def main(argv=None):
         if not deny_added:
             print("    (all %d already present)" % len(BLOCKLIST))
 
+    state, rule_path = add_rule(home, True)
+    print("\nStanding rule in %s: %s" % (rule_path, state))
+
     if args.check:
         print("\n--check: nothing was written. Re-run without --check to apply.")
         return 0
+
+    if state != "already present":
+        add_rule(home, False)
 
     if added or dropped or deny_added:
         error = write_settings(path, settings, keep, deny)
