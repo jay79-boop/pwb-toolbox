@@ -1,77 +1,113 @@
 # Working in more than one directory
 
-A Claude Code session can read and edit files in the directory it was launched
-from, and nowhere else. Everything below is a way around that, and they are not
-interchangeable — three of the four grant file access only, and picking the wrong
-one is why a new chat keeps behaving as though pwb-toolbox is the whole world.
+"It can only see one repo" has **two different causes**, they look identical from
+a chat, and they have nothing in common. Establish which one you are in before
+changing anything — the fix for one does nothing at all for the other.
 
-## The four mechanisms
-
-| You want | Use | Lasts |
+| What you see | Cause | Fix |
 | --- | --- | --- |
-| Every session, in every project, to read and edit your other repos | `permissions.additionalDirectories` in `~/.claude/settings.json` | forever, every project |
-| This session to also load another repo's skills, commands and subagents | `/add-dir <path>`, or `claude --add-dir <path>` at launch | this session |
-| This session to **move** to another repo — its `CLAUDE.md`, hooks, settings, MCP servers | `/cd <path>` | this session, until you move again |
-| To see your projects in the desktop app's left panel | sidebar controls → **group by project** | a display setting |
+| It **asks permission** every time it touches another folder | Local session. The files are right there; the permission is missing. | `permissions.additionalDirectories` in `~/.claude/settings.json` |
+| It says the folder **does not exist** | Cloud session. That repo was never cloned into the container. | Ask the session to add the repository by name |
 
-The distinction that matters: **`additionalDirectories` grants file access and
-nothing else.** A directory listed there is readable and editable without
-prompts, but Claude Code does not load its `CLAUDE.md`, its skills, its hooks or
-its `.mcp.json` from it. So a session started in pwb-toolbox with the trade
-journal registered can open and edit the journal — but it will not know the
-journal's own rules unless you `/cd` there.
+`tools/install_workspace_dirs.py --diagnose` names which one you are in and
+writes nothing.
 
-`--add-dir` and `/add-dir` are the richer ones: they do load skills,
-`.claude/commands/` and subagents from the added directory. They do **not** load
-its `CLAUDE.md` unless `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is set.
+## Cause 1 — the local session that keeps asking
 
-## The tool
-
-`tools/install_workspace_dirs.py` writes the first row of that table for you. It
-scans for git repositories, prints what it found, and registers them in
-user-level settings so **every** new chat can reach them:
+A session can read and edit files in the directory it was launched from. Anywhere
+else it prompts, every time. `permissions.additionalDirectories` in user-level
+settings applies to **every** project, so that is where a machine-wide answer
+belongs.
 
 ```bash
-python tools/install_workspace_dirs.py --scan    # list repos, touch nothing
-python tools/install_workspace_dirs.py --check   # report the diff, write nothing
-python tools/install_workspace_dirs.py           # install
-python tools/install_workspace_dirs.py --prune   # also drop entries that are gone
+python tools/install_workspace_dirs.py --diagnose  # why can a session not see X?
+python tools/install_workspace_dirs.py --check     # report the diff, write nothing
+python tools/install_workspace_dirs.py             # install
 ```
 
-It merges rather than replaces — your model, permission rules and every hook on
-the machine live in that same file — backs the file up before writing, and is
-idempotent. `--add PATH` registers a folder that is not a repo (the trade
-journal, say). `--root PATH` and `--depth N` widen the search.
+**The default registers your home directory**, not a list of repos. That is
+deliberate: a list is a snapshot, and it goes stale the day you create repo
+number eleven — which is the failure this tool exists to end. Registering the
+home directory once covers every repo you will ever make, with nothing to re-run.
 
-**It skips `.claude` directories on purpose.** `~/.claude/projects` is roughly
-300 MB of session transcripts carrying SSNs, claim numbers and financial detail,
-and this key grants *unprompted* read access to every session on the machine.
-`--include-claude` overrides that; think before using it.
+`--repos-only` takes the narrow path instead — scan for git repositories and
+register exactly those. Precise, and stale on your next `git init`.
 
-**It has to run locally.** A cloud container's `~/.claude` is reclaimed when the
-session ends, so a cloud session cannot install anything durable. Running it in
-one prints the reason rather than pretending to succeed.
+### What makes the broad grant safe
+
+Breadth is only defensible because it is paired with **deny rules, which outrank
+every allow**. The installer adds them by name:
+
+- `~/.claude/projects/**` — roughly 300 MB of session transcripts carrying SSNs,
+  claim numbers and financial detail. This is the one that matters.
+- `~/.claude/.credentials.json`, `~/.claude.json` — auth tokens and MCP config.
+- `~/OneDrive/.claude/projects/**`, `~/OneDrive/Backups/claude-config/**` — the
+  mirrored copies of the same thing. The vault repo itself stays reachable, so
+  you can still work in it.
+- `~/.ssh/**`, `~/.aws/**` — keys.
+- `~/AppData/**` — browser profiles, cookies, app tokens.
+
+Deny governs the **Read and Edit tools only**. A program under one of those paths
+still runs: denying `Read(~/AppData/**)` does not stop `python.exe` from
+executing, it stops a session reading files there. `--no-blocklist` skips them,
+which leaves the broad grant unguarded — there is no good reason to use it.
+
+The installer merges: your own deny rules keep their place and are never
+reordered, and a `settings.json` it cannot parse is reported and left untouched
+rather than overwritten. That one file holds the model, every permission rule and
+every hook on the machine.
+
+## Cause 2 — the cloud session that cannot find the folder
+
+A cloud session (claude.ai/code, or a cloud session in the desktop app) runs in a
+container holding only the repositories attached to it. The others were never
+cloned. There is no file for a permission to apply to, so **no setting on your
+machine can fix this** — and the local installer says so rather than pretending.
+
+The fix is to attach the repo, and the fastest route is to say so in the chat:
+
+> add ray-vault to this session
+
+The session can list the repositories your account can reach and attach any of
+them mid-conversation. It cannot see a repository that has not been attached, so
+asking is not a formality — it is the whole mechanism. In the desktop app, the
+**+** button on a cloud session does the same thing.
+
+Do not keep a list of your repositories in this file. It goes stale silently;
+ask the session to enumerate them at read time instead.
+
+## The four mechanisms, and what each actually grants
+
+| You want | Use |
+| --- | --- |
+| Every session, in every project, to read and edit your other repos | `permissions.additionalDirectories` |
+| This session to also load another repo's skills, commands and subagents | `/add-dir <path>`, or `claude --add-dir <path>` |
+| This session to **move** — the new repo's `CLAUDE.md`, hooks, settings, MCP | `/cd <path>` |
+| Your projects visible in the desktop app's left panel | sidebar controls → group by project |
+
+The distinction that trips people: **`additionalDirectories` grants file access
+and nothing else.** A directory listed there is readable and editable without
+prompts, but Claude Code does not load its `CLAUDE.md`, its skills, its hooks or
+its `.mcp.json`. A session started in pwb-toolbox with the trade journal
+reachable can edit the journal — and will not know the journal's own rules.
+
+`--add-dir` and `/add-dir` are richer: they load skills, `.claude/commands/` and
+subagents from the added directory. They still do not load its `CLAUDE.md` unless
+`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is set.
 
 ## The desktop app's left panel
 
 The sidebar lists **sessions, not folders**. There is no tree of your repos to
-populate — a project appears in the panel once a session exists in it. What makes
-it read like a project list:
+populate — a project appears once a session exists in it. What makes it read like
+a project list:
 
 - The controls at the top of the sidebar filter by status, project or
-  environment, and **group sessions by project**. Grouping is the setting that
-  turns a flat session list into a per-directory one.
+  environment, and **group sessions by project**. Grouping is what turns a flat
+  session list into a per-directory one.
 - **+ New session** (`Ctrl`+`N` on Windows) asks for the folder. That folder is
   the session's project, and it is what the grouping keys on.
-- `Ctrl`+`Tab` and `Ctrl`+`Shift`+`Tab` cycle sessions; `Ctrl`+click opens a
-  second one in a split pane.
 
-So the way to get all your repos into the panel is to start one session in each,
-once, with grouping on. After that they stay.
-
-The `+` button that adds multiple repos to a single session is a **cloud**
-session feature — it is the desktop equivalent of `--add-dir`. Local sessions get
-the same reach from `additionalDirectories` or `/add-dir`.
+So: start one session in each repo, once, with grouping on. After that they stay.
 
 ## The version trap
 
@@ -84,7 +120,7 @@ which looks exactly like `/cd` having silently done nothing.
 The last version recorded for the owner's machine is **v2.1.235** (noted
 2026-08-18 in the `gexio-machine` skill), which sits inside that window. It may
 have updated itself since; that is not knowable from a cloud session. Check with
-`claude --version` before relying on `/cd`, and update if it is below 2.1.246.
+`claude --version` before relying on `/cd`.
 
 ## Worktrees are not a second directory
 

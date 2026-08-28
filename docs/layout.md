@@ -222,15 +222,21 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
-- `tools/install_workspace_dirs.py` — registers every git repo on the machine in
-  `permissions.additionalDirectories` in user-level settings, so a new chat can
-  reach the other checkouts instead of only the one it was launched in. Scans
-  rather than asking for paths; skips `.claude` by default because
-  `~/.claude/projects` holds transcripts carrying SSNs and claim numbers. Merges,
-  backs up, idempotent; `--scan`/`--check` write nothing, `--prune` drops what is
-  gone. Local-only for the same reason as the hook installer
-  (`tests/test_install_workspace_dirs.py`); the four mechanisms it sits among are
-  in `docs/working-directories.md`
+- `tools/install_workspace_dirs.py` — ends "it can only see one repo" for local
+  sessions by registering the **home directory** in
+  `permissions.additionalDirectories` in user-level settings, so every repo
+  including ones created later is reachable with nothing to re-run. A scanned
+  list was the first design and was wrong: a snapshot goes stale on the next
+  `git init`, which is the failure it exists to end (`--repos-only` still does
+  it). The breadth is paired with deny rules, which outrank every allow —
+  `~/.claude/projects` (transcripts carrying SSNs and claim numbers),
+  credentials, `.ssh`, `.aws`, `AppData` — and deny governs Read/Edit only, so a
+  program under those paths still runs. `--diagnose` names which of the two
+  causes you are in and writes nothing; the other cause is a cloud session, where
+  the repo was never cloned and no setting can help. Merges, backs up,
+  idempotent, refuses to overwrite unparseable JSON
+  (`tests/test_install_workspace_dirs.py`); both causes and the four mechanisms
+  are in `docs/working-directories.md`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
