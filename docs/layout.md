@@ -222,6 +222,17 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
+- `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
+  plain markdown: `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
+  of non-note files are copied alongside and rewritten, frontmatter passes
+  through untouched. `docs/journal` is treated as fully generated — every run
+  wipes and rewrites it, guarded by a `.obsidian-sync-marker` so it never
+  silently clobbers a directory it did not create. A `.syncignore` file at the
+  vault root (gitignore-style patterns) excludes anything that should not
+  leave the vault; `.obsidian/`, `.trash/`, and other dotfolders are always
+  excluded. `--commit`/`--push` wraps the git side. Must run where the vault's
+  files are readable — a local machine or WSL, never a cloud session, which has
+  no access to the vault at all (`tests/test_obsidian_sync.py`)
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
