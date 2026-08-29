@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-29 | [Retiring `build-puzzle-process`, and what its "vendored" label was hiding](2026-08-29-retiring-build-puzzle-process.md) |
 | 2026-08-29 | [Skills, docs and pull requests are all Claude-facing](2026-08-29-skills-docs-and-prs-are-all-claude-facing.md) |
 | 2026-08-29 | [The morning scan died on a *successful* `git fetch`](2026-08-29-the-scan-died-on-a-successful-git-fetch.md) |
 | 2026-08-29 | [A tool that needs a local path should find it, not ask for it](2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md) |
