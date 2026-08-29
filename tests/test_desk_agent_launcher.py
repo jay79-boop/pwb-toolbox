@@ -165,13 +165,43 @@ def test_every_scheduler_status_code_is_decoded_in_the_read_back():
         )
 
 
+def test_the_two_failure_results_are_decoded_too():
+    # Not every LastTaskResult is a SCHED_S_* code, and the ones that are not
+    # look nothing like them -- ten digits rather than six. Both of these were
+    # met on the owner's machine rather than read out of a reference: 2147946720
+    # is what \\ClaudeRemoteControl reports on every firing of its keep-alive
+    # trigger, and 3221225786 is the Ctrl+C death that left Remote Control down
+    # for seventeen hours while RestartCount made it look self-healing.
+    body = read(SCHEDULER)
+    for code, hexes in (("2147946720", "0x800710E0"), ("3221225786", "0xC000013A")):
+        assert "'%s' = '%s = %s" % (code, code, hexes) in body, (
+            "the read-back must decode LastTaskResult %s (%s); it is a failure "
+            "code, not a state, and nothing else in the output says so" % (code, hexes)
+        )
+
+
+def test_a_refused_firing_names_the_hung_predecessor():
+    # 2147946720 is 267009 seen from the next occurrence: Windows refused to
+    # start this firing because the previous run had not ended. For the batch
+    # jobs this script registers that is the hung-schedule fault, so the line
+    # has to say so -- and has to say that the same code is healthy on a
+    # long-lived task, or the next keep-alive task gets diagnosed as broken.
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
+    refused = tail.split("'2147946720'", 1)[1].split("$ok++", 1)[0]
+    assert "PREVIOUS run" in refused and "never started" in refused
+    assert "keep-alive" in refused, (
+        "the same code is normal on a long-lived task; saying only 'hung' here "
+        "would convict a healthy keep-alive trigger"
+    )
+
+
 def test_a_running_task_is_named_as_blocking_its_own_schedule():
     # 267009 is the expensive one, and the only one whose meaning is not enough
     # on its own. MultipleInstances defaults to IgnoreNew, so while one run
     # hangs Windows skips every later occurrence rather than starting a second
     # copy: the schedule stops with no error, no missed-run count and a task
     # that still reads healthy. The line has to say that, not just "running".
-    tail = read(SCHEDULER).split("$schedCodes.ContainsKey", 1)[1]
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
     running = tail.split("'267009'", 1)[1].split("$ok++", 1)[0]
     assert "skip" in running.lower() and "hung" in running.lower(), (
         "a task sitting at 267009 must be reported as hung and as suppressing "
