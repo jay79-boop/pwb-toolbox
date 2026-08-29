@@ -1,6 +1,6 @@
 # The desk agent
 
-An unattended Claude Code agent that runs four jobs on a schedule, writes down
+An unattended Claude Code agent that runs three jobs on a schedule, writes down
 what happened, and revises its own playbook from that record once a week.
 
 ```
@@ -31,7 +31,7 @@ The split follows what each job can physically reach.
 | job | runs | where | why there |
 | --- | --- | --- | --- |
 | `premarket` | weekdays 07:00 | local | needs TradingView Desktop |
-| `alerts` | weekdays hourly, 09:00-16:00 | local | needs TradingView Desktop |
+| `alerts` | **off** (was weekdays hourly, 09:00-16:00) | local | retired 2026-08-29: 25 runs, 0 actions, no alerts on the login |
 | `journal` | weekdays 16:30 | local | the journal is on your disk and not in this repo |
 | `pine_loop` | on demand | local | starts from a description only you can give |
 | `review` | weekly | **cloud** | reads only the committed log; needs neither |
@@ -50,9 +50,14 @@ cd C:\Users\Gexio\OneDrive\pwb-toolbox
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\register_desk_agent.ps1
 ```
 
-It registers three tasks, then reads each one back from Windows and prints the
-next run time. The read-back is the point: `Register-ScheduledTask` can fail
-while the surrounding script still prints that it worked.
+It registers every **enabled** task, then reads each one back from Windows and
+prints the next run time. The read-back is the point: `Register-ScheduledTask`
+can fail while the surrounding script still prints that it worked.
+
+A job with `Enabled = $false` in that script's `$jobs` table is not merely
+skipped — the run **unregisters** it, so re-running this is how a job gets
+turned off on the machine and not just in the source. `alerts` is currently the
+only one.
 
 Run one immediately, without waiting for its trigger:
 
@@ -201,6 +206,25 @@ running into — quietly, with a plausible-looking result.
   re-applied before a result is read. Skip it and the number gets taken off the
   wrong instrument, or off an empty chart, and nothing about the screenshot says
   so.
+
+## The journal job reads one directory outside the repository
+
+`trade-journal.html` is on your disk and not in this repo, and a headless
+session is confined to its working directory — so for five consecutive weekdays
+the journal job could do nothing but log the same blocker while the paper record
+moved twice underneath it. `run_job.ps1` now passes
+`--add-dir $HOME\OneDrive\trade-journal`, **only when `-Job journal`**. The
+other jobs keep the boundary they had; there is no reason an hourly triage run
+should be able to read a personal document.
+
+Two properties of that block are deliberate. A path that does not exist is
+logged and dropped rather than passed to `claude`, because a bad `--add-dir`
+kills a run for a reason that has nothing to do with the job and names the flag
+instead of the cause. And `-AddDir` on the launcher appends to whatever the job
+gets by default, so a different machine layout needs no code edit.
+
+The agent could not have done this itself: widening its own access is what the
+guardrail forbids, which is why it filed the request five times instead.
 
 ## Three design decisions worth knowing before you change anything
 

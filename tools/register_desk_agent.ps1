@@ -44,12 +44,34 @@ $prefix = 'PWB-DeskAgent-'
 # and it throws at registration time, on theirs, not here. One trigger per hour
 # is plainer, is supported everywhere, and shows up in Task Scheduler as eight
 # legible rows instead of one rule you have to decode.
+#
+# Enabled = $false keeps a job in this table while taking it off the schedule.
+# Deleting the entry instead would leave any already-registered task firing
+# forever with nothing here to remove it -- and -Remove would no longer know it
+# existed. A job that is off has to still be reachable by the script that turns
+# things off.
 $jobs = @(
   @{ Name = 'Premarket'; Job = 'premarket'; Hours = @(7); Minute = 0
+     Enabled = $true
      Desc = 'Pre-market gameplan before the open.' },
+
+  # OFF since 2026-08-29. Twenty-five consecutive runs, hourly through every
+  # session, and not one produced an action: alert_list returned zero on a
+  # session proven logged in, because no alerts are configured on the agent's
+  # TradingView login. The job asked to be retired or fed in twenty-four
+  # successive records and could not raise it any other way -- the weekly
+  # review cannot see it, since runlog's dead-job check skips `skipped` runs
+  # and this job logs `skipped` correctly whenever nothing fired.
+  #
+  # Turned off rather than deleted: jobs/alerts.md and the runner's ValidateSet
+  # both still carry it, so configuring alerts on that login and flipping this
+  # back to $true is the whole of turning it on again.
   @{ Name = 'Alerts';    Job = 'alerts';    Hours = @(9, 10, 11, 12, 13, 14, 15, 16); Minute = 0
+     Enabled = $false
      Desc = 'Alert triage each hour through the session.' },
+
   @{ Name = 'Journal';   Job = 'journal';   Hours = @(16); Minute = 30
+     Enabled = $true
      Desc = 'Capture the day into the trade journal after the close.' }
 )
 
@@ -118,6 +140,21 @@ $registered = @()
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
 
+  # Turning a job off in this file has to turn it off on the machine too.
+  # Skipping the entry would leave a previously registered task running on its
+  # old schedule while the repo says it is off -- and a schedule you cannot
+  # read off the source is how the log stops being trusted. So unregister it
+  # every time, and treat "was not there" as success rather than an error.
+  if (-not $j.Enabled) {
+    try {
+      Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+      Write-Host ("turned OFF " + $name + " -- removed the existing task")
+    } catch {
+      Write-Host ("turned OFF " + $name + " -- was not registered")
+    }
+    continue
+  }
+
   $arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job ' + $j.Job + ' -RepoRoot "' + $RepoRoot + '"'
   $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
                                     -Argument $arg `
@@ -153,6 +190,13 @@ Write-Host ''
 $ok = 0
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
+  # Without this a job that is off reads as MISSING, which is the word this
+  # script uses for a registration that failed. Off on purpose and broken must
+  # not print the same way.
+  if (-not $j.Enabled) {
+    Write-Host ("  OFF       " + $name + "  -- disabled in register_desk_agent.ps1, not scheduled")
+    continue
+  }
   $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
   if (-not $task) {
     Write-Host ("  MISSING   " + $name + "  -- not registered")
@@ -186,8 +230,11 @@ foreach ($j in $jobs) {
   $ok++
 }
 
+$wanted = @($jobs | Where-Object { $_.Enabled }).Count
+$off    = $jobs.Count - $wanted
+
 Write-Host ''
-Write-Host ("Registered " + $ok + " of " + $jobs.Count + " tasks.")
+Write-Host ("Registered " + $ok + " of " + $wanted + " enabled tasks (" + $off + " turned off).")
 Write-Host ''
 Write-Host 'To test one right now without waiting for its trigger:'
 Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job premarket -RepoRoot "' + $RepoRoot + '"')
