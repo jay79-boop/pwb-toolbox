@@ -68,3 +68,10 @@ render/
 # copy of the example rather than the tracked example itself.
 watch-state.json
 watch-state.example.bak
+
+# Obsidian vault mirror (tools/obsidian_sync.py) - this fork is public and the
+# vault is the Claude config repo, whose Projects/ tree holds session
+# transcripts with personal detail. Decided 2026-08-29: the vault is not
+# mirrored into this repository at all. Ignored rather than merely guarded, so
+# an accidental sync followed by `git add -A` cannot publish it.
+docs/journal/

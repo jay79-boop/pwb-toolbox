@@ -243,7 +243,7 @@ python tools/ai_company.py gates          # can any agent commit money unsupervi
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
-python tools/obsidian_sync.py sync --dry-run  # mirror the vault into docs/journal; finds it itself
+python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
 ```
 
 `docs/layout.md` lists the rest with what each is for.

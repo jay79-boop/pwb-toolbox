@@ -16,6 +16,7 @@ import pytest
 
 from tools.obsidian_sync import (
     MARKER_NAME,
+    assert_output_is_committable,
     gitignored_paths,
     assert_publish_is_deliberate,
     build_link_index,
@@ -563,3 +564,41 @@ def test_sync_reports_how_many_files_the_vault_withheld(tmp_path):
 
 def test_gitignored_paths_returns_empty_for_an_empty_request(tmp_path):
     assert gitignored_paths(tmp_path, []) == set()
+
+
+# --- Not committing into a directory git ignores -----------------------------
+#
+# docs/journal is gitignored here by the 2026-08-29 decision. Without this
+# check, --commit stages nothing and reports "no changes to commit", which
+# reads exactly like success.
+
+
+def _repo_ignoring(root: Path, pattern: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / ".gitignore").write_text(pattern, encoding="utf-8")
+    return root
+
+
+def test_commit_is_refused_when_the_output_dir_is_gitignored(tmp_path):
+    repo = _repo_ignoring(tmp_path / "repo", "docs/journal/\n")
+
+    with pytest.raises(click.ClickException) as excinfo:
+        assert_output_is_committable(repo, repo / "docs" / "journal")
+
+    message = str(excinfo.value)
+    assert "Refusing to commit" in message
+    assert "stage nothing and report success" in message
+
+
+def test_a_repo_that_wants_the_mirror_is_unaffected(tmp_path):
+    """Acquit: the guard must not block a checkout that does track the mirror."""
+    repo = _repo_ignoring(tmp_path / "repo", "unrelated/\n")
+
+    assert assert_output_is_committable(repo, repo / "docs" / "journal") is None
+
+
+def test_the_guard_is_silent_when_output_is_outside_the_repo(tmp_path):
+    repo = _repo_ignoring(tmp_path / "repo", "docs/journal/\n")
+
+    assert assert_output_is_committable(repo, tmp_path / "elsewhere") is None

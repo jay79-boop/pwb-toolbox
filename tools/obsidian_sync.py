@@ -563,6 +563,42 @@ def sync_vault(
     return result
 
 
+def assert_output_is_committable(repo: Path, output_dir: Path) -> None:
+    """Refuse to commit a mirror into a directory git is told to ignore.
+
+    In this repository `docs/journal` is gitignored, by the 2026-08-29 decision
+    that the vault is not mirrored into a public fork at all. Without this check
+    `--commit` stages nothing and reports "no changes to commit" - a silent
+    no-op that reads exactly like success. Say what is actually happening.
+
+    A repo where the output is not ignored is unaffected, so the tool still
+    works for a checkout that genuinely wants the mirror committed.
+    """
+    try:
+        rel = output_dir.relative_to(repo).as_posix()
+    except ValueError:
+        return
+    # Ask about a file inside the directory, not the directory: a `docs/journal/`
+    # pattern only matches a path git knows to BE a directory, and the mirror
+    # does not exist yet on the run that matters.
+    probe = f"{rel}/{MARKER_NAME}"
+    proc = _run_git(repo, "check-ignore", "-q", probe)
+    if proc.returncode != 0:
+        return
+    raise click.ClickException(
+        f"Refusing to commit: {rel} is gitignored in {repo}.\n"
+        "\n"
+        "Committing there would stage nothing and report success. In this "
+        "repository that is deliberate - see "
+        "docs/decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md: "
+        "the vault is the Claude config repo and this fork is public, so the "
+        "mirror is not committed here at all.\n"
+        "\n"
+        "Sync without --commit for a local mirror, or point --repo at a "
+        "checkout that wants it."
+    )
+
+
 def assert_publish_is_deliberate(vault_root: Path, allow_publish: bool) -> None:
     """Refuse to commit a vault mirror that nothing has been excluded from.
 
@@ -711,10 +747,11 @@ def sync(
     if vault is None:
         click.echo(f"vault: {vault_root}")
 
+    output_dir = repo / "docs" / "journal"
     if commit or push:
+        assert_output_is_committable(repo, output_dir)
         assert_publish_is_deliberate(vault_root, allow_publish)
 
-    output_dir = repo / "docs" / "journal"
     result = sync_vault(
         vault_root,
         output_dir,
