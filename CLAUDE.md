@@ -244,6 +244,7 @@ python -m tools.desk_agent.runlog summary --last 20  # is the agent actually wor
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
+python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
 ```
 
 `docs/layout.md` lists the rest with what each is for.

@@ -478,16 +478,22 @@ ajv validate -s blueprint-schema.json -d your-blueprint.json
 
 ## Formats & Export
 
+Both directions are one tool, `tools/blueprint_converter.py`, which also
+validates a blueprint against the schema.
+
 ### From Excel to JSON
-Use the Python script `tools/blueprint-xlsx-to-json.py` (if you have it):
 ```bash
-python tools/blueprint-xlsx-to-json.py blueprint-template.xlsx -o my-blueprint.json
+python tools/blueprint_converter.py xlsx-to-json blueprint-template.xlsx --out my-blueprint.json
 ```
 
 ### From JSON to Excel
-Use `tools/blueprint-json-to-xlsx.py`:
 ```bash
-python tools/blueprint-json-to-xlsx.py my-blueprint.json -o my-blueprint.xlsx
+python tools/blueprint_converter.py json-to-xlsx my-blueprint.json --out my-blueprint.xlsx
+```
+
+### Checking a blueprint before you share it
+```bash
+python tools/blueprint_converter.py validate my-blueprint.json
 ```
 
 ### From any format to HTML
