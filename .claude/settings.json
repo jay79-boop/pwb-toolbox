@@ -14,6 +14,7 @@
       "Bash(git fetch:*)",
       "Bash(pytest:*)",
       "Bash(black:*)",
+      "Edit(/tools/desk_agent/out/**)",
       "mcp__tradingview__tv_health_check",
       "mcp__tradingview__tv_launch",
       "mcp__tradingview__tv_discover",

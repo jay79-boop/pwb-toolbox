@@ -1,0 +1,7 @@
+Gameplans the premarket job writes land here, one per trading day.
+
+Tracked with a .gitkeep on purpose. The agent may write files in this directory
+but may not create it -- `mkdir` is not among its permitted commands, and four
+consecutive premarket runs ended `partial` partly because step 4 had nowhere to
+write. Committing the directory removes the need for that permission instead of
+granting it.
