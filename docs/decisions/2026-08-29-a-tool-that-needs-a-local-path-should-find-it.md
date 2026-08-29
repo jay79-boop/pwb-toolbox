@@ -86,3 +86,39 @@ must be kept in sync by hand.
 this urgent: the tool can now find, and mirror, a vault nobody has looked at this turn.
 Convenience and hazard arrived in the same commit, which is why the guard belongs in the
 same one.
+
+## The resolution: the destination was wrong, not the tool
+
+**Decided 2026-08-29 by the owner, on the recommendation above: the vault is not
+mirrored into this repository at all.**
+
+Once discovery answered the question, the answer invalidated the premise. The sync was
+built so that "a session working in this repo needs the vault's rules and cannot reach
+the vault" — and that need had already been met the same morning by
+`docs/vault-operating-manual.md`, which is canonical for exactly those rules. Mirroring
+the rest bought nothing and risked everything.
+
+The `.gitignore` fix above helps but is *not sufficient*, and the reason is worth
+stating: **the vault's ignore rules are calibrated for the vault repo's audience, not
+for this one.** A file tracked in a private config repo is fine there and may be very
+much not fine on a public fork. Reusing someone's exclusion list only transfers safety
+when the two destinations have the same audience. Here they do not.
+
+So the decision is enforced rather than written down:
+
+- `docs/journal/` is **gitignored**, so an accidental sync followed by `git add -A`
+  cannot publish it. A guard that depends on remembering is not a guard.
+- `--commit`/`--push` **refuse** when the output directory is gitignored, instead of
+  staging nothing and reporting "no changes to commit" — a silent no-op that reads
+  exactly like success. A checkout that genuinely tracks the mirror is unaffected.
+
+`tools/obsidian_sync.py` is kept. It is correct, tested, and still does the job for a
+local mirror; nothing about it was the problem. What was wrong was pointing it at a
+public repository, and that is now impossible here rather than merely discouraged.
+
+**The lesson is about the order of operations.** This branch spent its effort making the
+tool find the vault, and only finding it revealed that the destination was the real
+question. Discovery was still worth building — the question it answers was costing a
+round trip every session, and the answer is what surfaced the hazard. But a job that
+begins "wire A to B" deserves one look at what B actually is before the wiring is the
+part that gets careful.
