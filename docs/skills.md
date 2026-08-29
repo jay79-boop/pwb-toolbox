@@ -19,9 +19,13 @@ That cost is real but second-order at this scale — the descriptions are worth
 roughly a thousand tokens against a ~7,000-word `CLAUDE.md`. The first-order
 cost is **trigger collision**: the more near-neighbour skills exist, the more
 often the model loads the wrong one, and the more description text has to be
-spent on disambiguation instead of triggering. `build-puzzle-process` spends
-half its description telling the model *not* to load it. That is the shape of
-the problem, and it gets worse faster than the token cost does.
+spent on disambiguation instead of triggering. It gets worse faster than the
+token cost does.
+
+The worked example is `build-puzzle-process`, which spent half its description
+telling the model *not* to load it — and was retired on 2026-08-29 for exactly
+that. When a description has to argue against its own trigger, the skill is
+already telling you it does not belong.
 
 ## The three-way split
 
@@ -91,6 +95,15 @@ directory of near-miss descriptions is the collision problem in a costume.
 
 ## Vendored skills are exempt from the bar
 
-`ui-ux-pro-max` and `build-puzzle-process` track upstream. They are not held to
-the path or description checks, are not reformatted by `black`, and are
-restored by `uipro init` — prune the extra companions again after any upgrade.
+`ui-ux-pro-max` tracks upstream. It is not held to the path or description
+checks, is not reformatted by `black`, and is restored by `uipro init` — prune
+the extra companions again after any upgrade.
+
+**The exemption is a claim about provenance, and it is checkable.** A skill is
+vendored if re-running its installer would bring it back; `git log` over the
+directory says which commit put it there. `build-puzzle-process` was carried in
+the `VENDORED` set for a week on the strength of the word alone — it arrived by
+hand in the same commit that extracted `process-mapping` from it, six days after
+`uipro init`, and `uipro init` would never have restored it. That mislabel is
+not cosmetic: everything in `VENDORED` is exempt from the description budget, so
+a wrong entry spends always-loaded context that the test then reports as free.
