@@ -348,3 +348,31 @@ def test_the_rule_appends_and_never_rewrites(home):
 def test_check_does_not_write_the_rule(home):
     assert installer.main(["--check"]) == 0
     assert not (home / ".claude" / "CLAUDE.md").exists()
+
+
+def test_a_real_run_reports_the_rule_as_added_not_missing(home, capsys):
+    """The pre-write state was printed on a real run, so a rule that WAS written
+    reported as 'missing' -- which reads as a failure to anyone running it."""
+
+    installer.main([])
+
+    out = capsys.readouterr().out
+    assert "Standing rule in" in out
+    assert "added" in out.split("Standing rule in")[1].splitlines()[0]
+    assert "missing" not in out.split("Standing rule in")[1].splitlines()[0]
+
+
+def test_check_still_reports_the_rule_as_missing(home, capsys):
+    installer.main(["--check"])
+
+    out = capsys.readouterr().out
+    assert "missing" in out.split("Standing rule in")[1].splitlines()[0]
+
+
+def test_a_second_real_run_reports_already_present(home, capsys):
+    installer.main([])
+    capsys.readouterr()
+    installer.main([])
+
+    out = capsys.readouterr().out
+    assert "already present" in out.split("Standing rule in")[1].splitlines()[0]

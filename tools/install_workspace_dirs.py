@@ -495,14 +495,18 @@ def main(argv=None):
             print("    (all %d already present)" % len(BLOCKLIST))
 
     state, rule_path = add_rule(home, True)
-    print("\nStanding rule in %s: %s" % (rule_path, state))
 
     if args.check:
+        print("\nStanding rule in %s: %s" % (rule_path, state))
         print("\n--check: nothing was written. Re-run without --check to apply.")
         return 0
 
+    # Report what the run DID, not what it found. Printing the pre-write state
+    # on a real run said "missing" about a rule the next line then wrote, which
+    # reads as a failure.
     if state != "already present":
-        add_rule(home, False)
+        state, rule_path = add_rule(home, False)
+    print("\nStanding rule in %s: %s" % (rule_path, state))
 
     if added or dropped or deny_added:
         error = write_settings(path, settings, keep, deny)
