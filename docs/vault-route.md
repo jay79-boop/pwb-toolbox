@@ -111,12 +111,26 @@ sessions read `C:\Users\Gexio\.claude\skills\`. Since the 2026-08-28 nightly,
 
 That makes one check possible that was not possible before: **diff what a session
 was served against what the machine actually runs.** Doing it turned up a genuine
-split — 23,171 bytes on the account, 19,659 on the machine, byte-identical to a
-revision staged in the vault the same day. The promotion reached the account and
-never reached the disk, so the two halves of the fleet have been reading different
-rulebooks: a cloud session knows the `LastTaskResult` codes, that every console
-there reports `MainWindowHandle = 0`, and that a hook registered by bare command
-name never runs. A local session knows none of it.
+split. The promotion reached the account and never reached the disk, so the two
+halves of the fleet have been reading different rulebooks: a cloud session knows
+the `LastTaskResult` codes — including that `267009` means *still running*, not
+hung — that every console there reports `MainWindowHandle = 0`, and that a hook
+registered by bare command name never runs. A local session knows none of it.
+
+**Do not read the numbers below as the current state.** The account copy moved
+between two measurements taken the same day, which is the more useful lesson than
+either figure:
+
+| Measured | Account (served to a cloud session) | Machine (this repo's mirror) |
+| --- | --- | --- |
+| 2026-08-29, morning | 23,171 bytes | 19,659 bytes |
+| 2026-08-29, later | **22,135** bytes, 351 lines | **19,659** bytes, 321 lines |
+
+The machine side did not move; the account side did, and shrank, because that
+revision also pushed the `pwb-toolbox` remote topology down into this repo's own
+`CLAUDE.md` where a test can reach it. So the drift is not one-directional — at
+the second measurement 46 lines existed only on the machine and 76 only on the
+account. **Re-measure before quoting either number.**
 
 That is the local-versus-cloud asymmetry `CLAUDE.md` says has cost days before,
 except here it is the file describing the asymmetry that differs.
