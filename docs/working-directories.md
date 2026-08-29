@@ -76,6 +76,11 @@ asking is not a formality — it is the whole mechanism. In the desktop app, the
 Do not keep a list of your repositories in this file. It goes stale silently;
 ask the session to enumerate them at read time instead.
 
+That example is not hypothetical: `ray-vault` is the Obsidian vault, and the
+route is written up in [vault-route.md](vault-route.md) — including the one rule
+that is not obvious from here, which is that a session may read it and must never
+push to it.
+
 ## The four mechanisms, and what each actually grants
 
 | You want | Use |
