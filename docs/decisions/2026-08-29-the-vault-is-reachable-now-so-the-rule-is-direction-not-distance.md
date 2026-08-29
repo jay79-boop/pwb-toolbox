@@ -72,6 +72,27 @@ Adding `git pull --rebase` ahead of the commit would make two-way writes safe. T
 file is on the owner's machine, so it is theirs to apply, and the rule holds until
 they do.
 
+## The first thing the route was used for, and the correction it needed
+
+The route's first real use was a drift check: diff the `gexio-machine` skill this
+session was served against the copy the owner's machine runs, which the vault
+mirrors nightly. They differ — 23,171 bytes on the account against 19,659 on the
+machine — so cloud and local sessions have been reading different rulebooks.
+
+**The first reading of that was wrong, and the way it was wrong is the lesson.**
+Two copies were compared — the machine mirror and a revision staged in the vault —
+and the gap was read as "staged, never installed". Both files were in the vault;
+neither was the copy this session actually loads. The account copy is byte-identical
+to the staged one, so the revision *was* installed, to the account, and the machine
+is what is behind.
+
+A concurrent session found the same drift and read it correctly, which is how the
+error surfaced — and checking it took loading the skill and looking for a phrase
+from the new material rather than trusting either account. **Comparing two copies
+tells you they differ; it does not tell you which one you are running.** The
+instrument has to be in the comparison, and in this case the instrument was the
+one copy nobody had looked at.
+
 ## What it cannot catch, said plainly
 
 The guard sees a mirrored folder, the vault's root index files, and a quoted note

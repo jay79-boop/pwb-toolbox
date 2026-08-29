@@ -102,37 +102,32 @@ in
 [a tool that needs a local path should find it](decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md):
 it proves exclusion was *considered*, which is the most a check can do.
 
-## The worked example: a skill this route still cannot install
+## The worked example: what the route is actually good for
 
-The vault's Working Style folder holds a staged revision of the `gexio-machine`
-skill, dated 2026-08-29 and never installed. Against the copy mirrored under
-`Backups/`, it adds about fifty lines of genuinely expensive knowledge: the four
-Task Scheduler `LastTaskResult` codes and what each actually means, the finding
-that every console here reports `MainWindowHandle = 0` so no scheme can identify a
-window by handle, and the rule that a hook registered by bare command name is
-listed, accepted, and never runs.
+The `gexio-machine` skill loads into every session the owner runs, from two
+different places: cloud sessions read an uploaded copy from their account, local
+sessions read `C:\Users\Gexio\.claude\skills\`. Since the 2026-08-28 nightly,
+`backup-claude-config.ps1` mirrors the *machine* copy into this vault repo.
 
-This is the sharpest illustration of the route's shape:
+That makes one check possible that was not possible before: **diff what a session
+was served against what the machine actually runs.** Doing it turned up a genuine
+split — 23,171 bytes on the account, 19,659 on the machine, byte-identical to a
+revision staged in the vault the same day. The promotion reached the account and
+never reached the disk, so the two halves of the fleet have been reading different
+rulebooks: a cloud session knows the `LastTaskResult` codes, that every console
+there reports `MainWindowHandle = 0`, and that a hook registered by bare command
+name never runs. A local session knows none of it.
 
-- **Reading it is trivial** — it was found and diffed from a cloud session in
-  seconds, which before this route was impossible.
-- **Installing it is still out of reach.** The skill loads from `~/.claude/skills/`
-  on the owner's Windows machine. No cloud session can write there, and pushing the
-  vault's `Backups/` mirror would not install anything — that tree is a backup, and
-  the sync that maintains it only ever runs machine → GitHub.
+That is the local-versus-cloud asymmetry `CLAUDE.md` says has cost days before,
+except here it is the file describing the asymmetry that differs.
 
-So `CLAUDE.md`'s standing claim is still true, and now for a sharper reason than
-"a cloud session cannot durably edit it": the *staging* is durable, the
-*installation* is not. Finding one is our job; applying it is theirs.
+**Verify this by loading the skill and looking for a phrase, not by counting
+lines.** The same file measured 317 lines by `wc -l` and 245 by PowerShell's
+`Measure-Object -Line`; a byte count or a distinctive string settles it and a line
+count does not.
 
-To install the staged revision, find it rather than assuming a path — the same
-rule that governs `tools/obsidian_sync.py`. In PowerShell:
-
-```powershell
-$v = Get-ChildItem -Path $HOME -Recurse -Depth 6 -Filter "VAULT-INDEX.md" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-```
-
-then look beside it for `gexio-machine-SKILL-proposed-2026-08-29.md`, back up the
-current `$HOME\.claude\skills\gexio-machine\SKILL.md`, and copy over it. The
-backup is not optional: that description loads into every session on the machine,
-so a bad copy is felt everywhere at once.
+So the route's value is not that it can install anything — it cannot, and the fix
+for the drift above is a copy onto the owner's disk. It is that **a cloud session
+is the right instrument for finding drift precisely because it is on the far side
+of it.** It reads what it was served and what the machine holds, and neither copy
+can hide behind the other.

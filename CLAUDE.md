@@ -55,9 +55,10 @@ thing you would do if it were yours.
 This is a standing preference and it is not limited to this repository. The
 cross-project copy belongs in the `gexio-machine` skill, which is synced from
 their account — a cloud session cannot durably edit it, so that copy has to be
-written from a local session or pasted by them. It *can* stage one: the vault
-carries a proposed revision a session wrote and could not install, which is the
-worked example in `docs/vault-route.md`.
+written from a local session or pasted by them. What a cloud session *can* now do is
+check whether the copy it was served matches the one the machine runs — the vault
+mirrors the machine copy nightly. Doing that found the two disagreeing, which is
+the worked example in `docs/vault-route.md`.
 
 ## Do the work. Hand back only what genuinely needs them
 

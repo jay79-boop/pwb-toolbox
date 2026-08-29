@@ -44,6 +44,11 @@ the owner's machine and does `git add -A`, `git commit`, `git push` with **no
 night's backup is rejected, and the script's own advice for fixing it cannot
 succeed. The cost lands on the owner, at night, in a file they did not touch.
 
+A second mechanism covers the `Backups/` subtree specifically, and it bites even
+if a push somehow lands: that tree is refreshed from the machine every night, so an
+edit there is overwritten and then committed in its reverted form. The skill's own
+"Keeping this current" section states this. Two independent reasons, one rule.
+
 So a push is not a judgement call. Anything that belongs in the vault — a daily
 note, a decision, a lesson — goes to a **local** session, which is on the right
 side of that script. Say so plainly rather than doing it and reporting after; the
