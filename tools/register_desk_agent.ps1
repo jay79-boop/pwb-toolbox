@@ -250,6 +250,25 @@ Write-Host 'Reading the tasks back from Windows:'
 Write-Host ''
 $ok = 0
 $strays = 0
+# LastTaskResult is only the script's exit code once a run has ENDED. In between,
+# Windows parks one of the SCHED_S_* status codes there: six-digit decimals, all
+# of them SUCCESS HRESULTs (0x000413xx), none of them explained by the console.
+# So a long number here is a state, not a failure -- and the two that matter most
+# both look like nothing is wrong. 267011 means the task has never once fired.
+# 267009 means a run is still in flight, and while it is, Windows SKIPS the next
+# occurrence rather than starting a second copy: one hung run turns a schedule
+# off with no error anywhere. Decode all of them so neither has to be looked up.
+$schedCodes = @{
+  '267008' = '267008 = SCHED_S_TASK_READY: finished, waiting for its next run.'
+  '267009' = '267009 = SCHED_S_TASK_RUNNING: a run is in flight RIGHT NOW.'
+  '267010' = '267010 = SCHED_S_TASK_DISABLED: registered, but it will not fire.'
+  '267011' = '267011 = SCHED_S_TASK_HAS_NOT_RUN: it has never fired.'
+  '267012' = '267012 = SCHED_S_TASK_NO_MORE_RUNS: nothing left on the schedule.'
+  '267013' = '267013 = SCHED_S_TASK_NOT_SCHEDULED: no trigger set to run it.'
+  '267014' = '267014 = SCHED_S_TASK_TERMINATED: the last run was killed.'
+  '267015' = '267015 = SCHED_S_TASK_NO_VALID_TRIGGERS: triggers missing or off.'
+  '267045' = '267045 = SCHED_S_TASK_QUEUED: waiting for an earlier run to end.'
+}
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
   # A job that is off must not read as MISSING -- that is this script's word
@@ -302,8 +321,13 @@ foreach ($j in $jobs) {
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'
   }
-  if ("$rc" -eq '267011') {
-    Write-Host '            267011 = SCHED_S_TASK_HAS_NOT_RUN: it has never fired.'
+  if ($schedCodes.ContainsKey("$rc")) {
+    Write-Host ('            ' + $schedCodes["$rc"])
+  }
+  if ("$rc" -eq '267009') {
+    Write-Host '            A run that stays RUNNING is hung. Windows will skip every'
+    Write-Host '            later occurrence until it ends, so the job goes quiet with'
+    Write-Host '            no error. End it in Task Scheduler, then read its log.'
   }
   $ok++
 }

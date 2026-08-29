@@ -139,6 +139,46 @@ def test_a_stray_registration_is_reported_after_the_tally():
     assert "STILL REGISTERED" in tail
 
 
+def test_every_scheduler_status_code_is_decoded_in_the_read_back():
+    # LastTaskResult is the script's exit code only once a run has ENDED. Before
+    # that Windows parks a SCHED_S_* status there instead: six-digit decimals
+    # that are all SUCCESS HRESULTs (0x000413xx) and all read as failures to
+    # anyone who has not looked them up. The read-back prints the number, so it
+    # has to print what the number means -- 267011 was decoded here for a year
+    # while its eight siblings were not, which is how 267009 came to be asked
+    # about from scratch.
+    body = read(SCHEDULER)
+    for code, name in {
+        "267008": "SCHED_S_TASK_READY",
+        "267009": "SCHED_S_TASK_RUNNING",
+        "267010": "SCHED_S_TASK_DISABLED",
+        "267011": "SCHED_S_TASK_HAS_NOT_RUN",
+        "267012": "SCHED_S_TASK_NO_MORE_RUNS",
+        "267013": "SCHED_S_TASK_NOT_SCHEDULED",
+        "267014": "SCHED_S_TASK_TERMINATED",
+        "267015": "SCHED_S_TASK_NO_VALID_TRIGGERS",
+        "267045": "SCHED_S_TASK_QUEUED",
+    }.items():
+        assert "'%s' = '%s = %s" % (code, code, name) in body, (
+            "the read-back must decode LastTaskResult %s (%s); a bare number "
+            "leaves the reader unable to tell a state from a failure" % (code, name)
+        )
+
+
+def test_a_running_task_is_named_as_blocking_its_own_schedule():
+    # 267009 is the expensive one, and the only one whose meaning is not enough
+    # on its own. MultipleInstances defaults to IgnoreNew, so while one run
+    # hangs Windows skips every later occurrence rather than starting a second
+    # copy: the schedule stops with no error, no missed-run count and a task
+    # that still reads healthy. The line has to say that, not just "running".
+    tail = read(SCHEDULER).split("$schedCodes.ContainsKey", 1)[1]
+    running = tail.split("'267009'", 1)[1].split("$ok++", 1)[0]
+    assert "skip" in running.lower() and "hung" in running.lower(), (
+        "a task sitting at 267009 must be reported as hung and as suppressing "
+        "its own later runs, or it reads as a job that is merely busy"
+    )
+
+
 def test_the_removal_branch_does_not_claim_the_task_was_absent():
     body = read(SCHEDULER).split("$weekdays", 1)[1]
     disabled = body.split("if (-not $j.Enabled) {", 1)[1].split("continue", 1)[0]
