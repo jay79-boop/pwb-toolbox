@@ -21,8 +21,16 @@
   Repository root. Defaults to two levels above this script, so it follows the
   checkout it was run from rather than assuming which one that is.
 
+.PARAMETER AddDir
+  Extra directories to hand the agent, on top of the ones its job gets by
+  default. Repeatable. A path that does not exist is logged and dropped rather
+  than passed on, so a wrong path cannot take the whole run down with it.
+
 .EXAMPLE
   .\tools\desk_agent\run_job.ps1 -Job premarket
+
+.EXAMPLE
+  .\tools\desk_agent\run_job.ps1 -Job journal -AddDir 'D:\somewhere\else'
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +38,9 @@ param(
   [ValidateSet('premarket', 'alerts', 'journal', 'pine_loop', 'review')]
   [string] $Job,
 
-  [string] $RepoRoot
+  [string] $RepoRoot,
+
+  [string[]] $AddDir = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -155,6 +165,38 @@ $tvBefore = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
 $tvWasAlreadyRunning = $tvBefore.Count -gt 0
 Write-Log ("tradingview already running: " + $tvWasAlreadyRunning)
 
+# -- directories the agent may read beyond the repo -----------------------------
+# A headless session is confined to its working directory. The journal job's
+# entire subject -- trade-journal.html -- lives outside it, so without this that
+# job could do nothing but log the same blocker, which it did on five
+# consecutive weekdays while the paper record moved twice underneath it. The
+# agent cannot fix this for itself: widening its own access is precisely what
+# the guardrail forbids, so it kept filing the request instead. This is the
+# answer to that request.
+#
+# Scoped per job on purpose. Handing every job the journal folder would put a
+# personal document inside the blast radius of an hourly unattended run with no
+# business reading it; the other jobs keep the narrower boundary they have now.
+$jobDirs = @{
+  journal = @(Join-Path $HOME 'OneDrive\trade-journal')
+}
+
+$claudeArgs = @('-p')
+foreach ($dir in (@($jobDirs[$Job]) + $AddDir)) {
+  if ([string]::IsNullOrWhiteSpace($dir)) { continue }
+  # Drop a path that is not there rather than passing it on. A bad --add-dir
+  # takes down a run that had nothing else wrong with it, and the resulting
+  # failure names the flag rather than the job -- the same class of misleading
+  # evidence this launcher exists to prevent. Logged either way, so a journal
+  # run that finds nothing to read still says why in its own log.
+  if (Test-Path -LiteralPath $dir) {
+    $claudeArgs += @('--add-dir', $dir)
+    Write-Log ("added dir: " + $dir)
+  } else {
+    Write-Log ("NOT added, path does not exist: " + $dir)
+  }
+}
+
 # -- run -----------------------------------------------------------------------
 $prompt = @(
   'You are the desk agent running unattended.',
@@ -168,7 +210,7 @@ $prompt = @(
 
 Push-Location $RepoRoot
 try {
-  $output = $prompt | & $claude -p 2>&1 | Out-String
+  $output = $prompt | & $claude @claudeArgs 2>&1 | Out-String
   $code = $LASTEXITCODE
 } catch {
   $output = $_.Exception.Message
