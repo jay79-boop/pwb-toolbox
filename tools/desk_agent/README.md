@@ -204,7 +204,7 @@ independently:
 
 | | what it is | where it lives |
 | --- | --- | --- |
-| signs in with no human | `AutoAdminLogon` | Windows registry, set by Sysinternals Autologon |
+| signs in with no human | **ARSO** | Settings toggle, plus a policy under `Policies\System` |
 | awake at the scheduled minute | `WakeToRun` | the task, set by `register_desk_agent.ps1` |
 | wake timers not disabled | power plan | Windows power options |
 
@@ -227,14 +227,51 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1
 That reports all three and names the fix for each. It is read-only, so it is
 safe to run at any time.
 
-**It does not set the sign-in up itself, on purpose.** Storing the password
-correctly means writing an LSA secret. Sysinternals Autologon already does that,
-is published by Microsoft, and is tested; a hand-rolled equivalent here would be
+### A PIN is not the account password
+
+This section originally said the first row was `AutoAdminLogon`, set with
+Sysinternals Autologon. **That was wrong for this machine**, and it was wrong for
+one question rather than one day: the owner signs in with a Windows Hello PIN.
+
+A PIN is a *device-local* credential sealed in the TPM. It unlocks a secret
+already on the machine; it is not the account password and cannot stand in for
+one. Autologon needs the real password, so the advice would have sent the owner
+hunting for a Microsoft-account password they had never typed, to enable
+something they do not need. On current builds it would not even have got that
+far -- the password field is hidden until
+`DevicePasswordLessBuildVersion` under
+`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device` is
+set to `0`.
+
+**ARSO is the route that fits, and it is the better one regardless.** Automatic
+Restart Sign-On signs the last user back in after a restart or cold boot,
+rehydrates the session from secrets the LSA persisted, **and locks the device
+immediately**. So the desktop the scheduled tasks need exists, with no password
+stored anywhere and no open desktop left behind for whoever walks past. It is
+the Settings toggle at:
+
+> Settings > Accounts > Sign-in options > Additional settings >
+> "Use my sign-in info to automatically finish setting up after an update"
+
+Full autologon is still available and the checker still reports it, as Route B.
+It boots to an **unlocked** desktop, so anyone who powers the machine on is
+inside it -- worth it only if ARSO cannot be made to work.
+
+**The checker does not configure either route.** Storing a password correctly
+means writing an LSA secret, and Sysinternals Autologon already does that, is
+published by Microsoft, and is tested; a hand-rolled equivalent here would be
 untested P/Invoke against the credential store written by someone with no
-Windows machine to run it on. What the checker *does* do is look for the mistake
-the shortcut guides teach -- putting the password in
-`Winlogon\DefaultPassword`, where it sits in plaintext and any local user can
-read it -- and say so loudly if it finds it.
+Windows machine to run it on. What the checker *does* own is the mistake the
+shortcut guides teach -- putting the password in `Winlogon\DefaultPassword`,
+where it sits in plaintext and any local user can read it -- and it says so
+loudly if it finds it.
+
+**And it will not tell you the toggle is on.** The per-user ARSO consent is not
+readable from a script. The checker reports the *policy* that can block ARSO
+outright, points at the Settings toggle, and then says plainly that it did not
+verify it -- rather than printing "all clear" over a thing it never checked,
+which is the exact bug this file records twice already. The real proof is the
+next 07:00 run appearing in the log after an overnight reboot.
 
 ### Locking the screen after an unattended sign-in
 
