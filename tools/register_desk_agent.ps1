@@ -150,7 +150,13 @@ foreach ($j in $jobs) {
       Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
       Write-Host ("turned OFF " + $name + " -- removed the existing task")
     } catch {
-      Write-Host ("turned OFF " + $name + " -- was not registered")
+      # Do NOT claim the task was absent. Unregister-ScheduledTask throws both
+      # when there is no such task and when the removal fails, and those differ
+      # by whether an hourly job still fires on Monday. Seen live on
+      # 2026-08-29: this printed "was not registered" for a task the previous
+      # run had left Ready with 8 triggers, and nothing in the output could say
+      # which of the two had happened. The read-back below is what settles it.
+      Write-Host ("turned OFF " + $name + " -- no task removed (already absent, or the removal failed)")
     }
     continue
   }
@@ -188,13 +194,30 @@ Write-Host ''
 Write-Host 'Reading the tasks back from Windows:'
 Write-Host ''
 $ok = 0
+$strays = 0
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
-  # Without this a job that is off reads as MISSING, which is the word this
-  # script uses for a registration that failed. Off on purpose and broken must
-  # not print the same way.
+  # A job that is off must not read as MISSING -- that is this script's word
+  # for a registration that failed, and off-on-purpose is not broken.
+  #
+  # But ASK WINDOWS; do not just say it. The first version of this branch
+  # printed that line straight out of the source file, having checked nothing,
+  # which is precisely the mistake this whole script exists to prevent: its own
+  # header says the printed line is not evidence and the read-back is. A job
+  # turned off here is only really off once Windows agrees, and a stray
+  # registration keeps firing on its old schedule with the source claiming
+  # otherwise.
   if (-not $j.Enabled) {
-    Write-Host ("  OFF       " + $name + "  -- disabled in register_desk_agent.ps1, not scheduled")
+    $stray = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+    if ($stray) {
+      Write-Host ("  STILL ON  " + $name + "  -- disabled here, but WINDOWS STILL HAS IT")
+      Write-Host ("            state: " + $stray.State + "   triggers: " + @($stray.Triggers).Count)
+      Write-Host '            It will keep firing on its old schedule. Remove it by hand in'
+      Write-Host '            Task Scheduler, or run this script with -Remove and then again.'
+      $strays++
+    } else {
+      Write-Host ("  OFF       " + $name + "  -- disabled here, and confirmed gone from Windows")
+    }
     continue
   }
   $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
@@ -235,6 +258,12 @@ $off    = $jobs.Count - $wanted
 
 Write-Host ''
 Write-Host ("Registered " + $ok + " of " + $wanted + " enabled tasks (" + $off + " turned off).")
+if ($strays -gt 0) {
+  # Last line, so it cannot scroll off above the summary and be missed.
+  Write-Host ("WARNING: " + $strays + " task(s) are turned off here but STILL REGISTERED in Windows.")
+  Write-Host '         They will keep firing. This run did not leave the machine in the state'
+  Write-Host '         this file describes.'
+}
 Write-Host ''
 Write-Host 'To test one right now without waiting for its trigger:'
 Write-Host ('  powershell -NoProfile -ExecutionPolicy Bypass -File "' + $runner + '" -Job premarket -RepoRoot "' + $RepoRoot + '"')

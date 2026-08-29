@@ -110,6 +110,50 @@ def test_a_disabled_job_is_unregistered_rather_than_skipped():
     )
 
 
+def read_back_disabled_branch():
+    """The read-back loop's branch for a job that is turned off."""
+    body = read(SCHEDULER).split("Reading the tasks back from Windows", 1)[1]
+    return body.split("if (-not $j.Enabled) {", 1)[1].split("continue", 1)[0]
+
+
+def test_a_disabled_job_is_verified_against_windows_not_just_announced():
+    # Seen live 2026-08-29. The removal above printed "was not registered" for
+    # a task the previous run had left Ready with 8 triggers, and the read-back
+    # printed "not scheduled" straight out of this file having checked nothing
+    # -- so the output could not say whether the task was gone or still firing.
+    # This script's own header says the printed line is not evidence and the
+    # read-back is; the disabled branch was the one place that forgot it.
+    branch = read_back_disabled_branch()
+    assert "Get-ScheduledTask" in branch, (
+        "the read-back must ask Windows whether a disabled task is really "
+        "gone, not repeat what the source file says about it"
+    )
+    assert "STILL ON" in branch and "$strays" in branch
+
+
+def test_a_stray_registration_is_reported_after_the_tally():
+    # A warning above the summary line scrolls off; this one has to be the
+    # last thing printed, or a run that left the machine wrong reads as clean.
+    tail = read(SCHEDULER).split("enabled tasks (", 1)[1]
+    assert "$strays -gt 0" in tail
+    assert "STILL REGISTERED" in tail
+
+
+def test_the_removal_branch_does_not_claim_the_task_was_absent():
+    body = read(SCHEDULER).split("$weekdays", 1)[1]
+    disabled = body.split("if (-not $j.Enabled) {", 1)[1].split("continue", 1)[0]
+    # Unregister-ScheduledTask throws both when there is no such task and when
+    # the removal fails. Those differ by whether an hourly job fires on Monday.
+    # Only what is PRINTED matters here -- the comment above that code quotes
+    # the old wording on purpose, to say what it was and why it was wrong.
+    printed = "\n".join(ln for ln in disabled.splitlines() if "Write-Host" in ln)
+    assert "was not registered" not in printed, (
+        "the catch cannot tell 'no such task' from 'removal failed', so it "
+        "must not assert either"
+    )
+    assert "no task removed" in printed
+
+
 def test_remove_still_covers_every_job_including_the_disabled_ones():
     # -Remove iterates the whole table before the Enabled check exists, which
     # is the reason a retired job stays in it.
