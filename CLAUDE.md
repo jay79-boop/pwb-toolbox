@@ -102,8 +102,16 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-Two rules that are *not* in the skill:
+Three rules that are *not* in the skill:
 
+- **Never indent prose underneath a checkbox.** Four-space indentation renders
+  as a *code block*, and a code block reads as "paste this". On 2026-08-29 they
+  pasted a sentence of explanation — "Docs, one skill, one test..." — into
+  PowerShell and got `Missing argument in parameter list`, twice. Nothing ran and
+  nothing broke, but the step stalled and the reply had to be sent again. Put the
+  explanation on the checkbox's own line, or in prose above the block. **An
+  indented block inside a NEEDS YOU item means "this is pasteable" and nothing
+  else.**
 - **If a step is also explained in prose above, it still gets repeated in the
   block.** The block is the checklist of record.
 - **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
