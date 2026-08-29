@@ -228,6 +228,7 @@ python tools/engagement.py list           # readiness engagements and where each
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_watch.py check          # which sessions did the desk not report?
+python tools/obsidian_sync.py sync --vault PATH --dry-run  # mirror an Obsidian vault into docs/journal (local machine only)
 ```
 
 `docs/layout.md` lists the rest with what each is for.
