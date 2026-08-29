@@ -65,6 +65,17 @@ $lockTaskName = 'PWB-LockOnLogon'
 $agentPrefix  = 'PWB-DeskAgent-'
 $wakeTimerGuid = 'bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d'
 
+function Get-PolicyValue([string] $name) {
+  # ARSO's policy lives under Policies\System, NOT under Winlogon where the
+  # rest of the sign-in values are. Two keys, and reading the wrong one reports
+  # "not set" for a policy that is switched on -- the shape of wrong answer this
+  # script exists to avoid.
+  $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+  $item = Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue
+  if ($null -eq $item) { return $null }
+  return $item.$name
+}
+
 function Get-WinlogonValue([string] $name) {
   # -ErrorAction SilentlyContinue on Get-ItemProperty returns $null for a
   # missing value AND for a missing key, which is the answer we want in both
@@ -140,20 +151,62 @@ Write-Host ''
 
 $problems = 0
 
-# 1. Does it sign itself in?
+# 1. Does it sign itself in? There are TWO routes and they are not equivalent.
+#
+# The first version of this script knew only about AutoAdminLogon and told
+# anyone without it to run Sysinternals Autologon. That advice is WRONG for this
+# machine and was corrected on 2026-08-29 when the owner said they sign in with a
+# PIN: a Windows Hello PIN is a device-local credential sealed in the TPM, not
+# the account password, and Autologon needs the password. Following that advice
+# would have sent them hunting for a Microsoft-account password they had never
+# typed, to enable something they do not need.
+#
+# ARSO is the route that fits a PIN, and it is the better one regardless: it
+# signs the last user back in after a restart or cold boot, rehydrates the
+# session, AND LOCKS IT immediately -- so the desktop the scheduled tasks need
+# exists, with no password stored anywhere and no open desktop left behind.
+$arsoPolicy = Get-PolicyValue 'DisableAutomaticRestartSignOn'
 $auto   = Get-WinlogonValue 'AutoAdminLogon'
 $user   = Get-WinlogonValue 'DefaultUserName'
 $domain = Get-WinlogonValue 'DefaultDomainName'
 $plain  = Get-WinlogonValue 'DefaultPassword'
 
-Write-Host '1. Automatic sign-in'
-if ("$auto" -eq '1') {
-  Write-Host ('   ON    AutoAdminLogon=1, user: ' + $domain + '\' + $user)
-} else {
-  Write-Host ('   OFF   AutoAdminLogon=' + $(if ($null -eq $auto) { '(not set)' } else { $auto }))
-  Write-Host '         Nothing signs this machine in, so a task needing a desktop cannot run'
-  Write-Host '         after a reboot. Set it with Sysinternals Autologon (see the README).'
+Write-Host '1. Signing in after a restart'
+Write-Host ''
+Write-Host '   Route A -- ARSO, the one that works with a PIN. Recommended.'
+if ("$arsoPolicy" -eq '1') {
+  Write-Host '     BLOCKED  DisableAutomaticRestartSignOn=1: a policy turns ARSO off outright.'
+  Write-Host '              The Settings toggle cannot override this. Clear it in an ADMIN'
+  Write-Host '              PowerShell, then set the toggle:'
+  Write-Host "                Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name DisableAutomaticRestartSignOn"
   $problems++
+} else {
+  $arsoShown = if ($null -eq $arsoPolicy) { 'not set' } else { $arsoPolicy }
+  Write-Host ('     not blocked by policy (DisableAutomaticRestartSignOn=' + $arsoShown + ')')
+  # Deliberately NOT reported as "on". The per-user consent behind the Settings
+  # toggle is not reliably readable from here, and this script's whole premise
+  # is that a printed line is not evidence. Saying where to look beats asserting
+  # a state that was never checked -- which is the exact bug fixed in #154.
+  Write-Host '     The toggle itself is per-user and this script cannot read it. Confirm it at:'
+  Write-Host '       Settings > Accounts > Sign-in options > Additional settings >'
+  Write-Host '       "Use my sign-in info to automatically finish setting up after an update"'
+  Write-Host '     Real proof is the next 07:00 run appearing in the log after an overnight'
+  Write-Host '     reboot. Nothing readable here can stand in for that.'
+}
+
+Write-Host ''
+Write-Host '   Route B -- full autologon. Needs the account PASSWORD, not a PIN.'
+if ("$auto" -eq '1') {
+  Write-Host ('     ON     AutoAdminLogon=1, user: ' + $domain + '\' + $user)
+} else {
+  Write-Host ('     off    AutoAdminLogon=' + $(if ($null -eq $auto) { '(not set)' } else { $auto }))
+  Write-Host '     Not a problem if Route A is on -- this one boots to an UNLOCKED desktop,'
+  Write-Host '     so anyone who powers the machine on is inside it. Only worth it if ARSO'
+  Write-Host '     cannot be made to work. It needs the real account password (a Microsoft'
+  Write-Host '     account password is resettable at account.live.com) and, on current'
+  Write-Host '     builds, DevicePasswordLessBuildVersion set to 0 under'
+  Write-Host '     HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
+  Write-Host '     before the password field appears at all.'
 }
 
 # The one finding worth shouting about. Plenty of guides tell you to set
@@ -258,7 +311,16 @@ if ($lock) {
 
 Write-Host ''
 if ($problems -eq 0) {
-  Write-Host 'All clear: this machine can sign itself in, wake itself, and the tasks want a desktop.'
+  # NOT "all clear". Nothing above read the ARSO toggle, because it cannot be
+  # read from here, and a summary that rounds "I could not check this" up to
+  # "this is fine" is the whole failure mode this script was written against.
+  # Say what was verified, and name the one thing that was not.
+  Write-Host 'Nothing here is broken: no blocking policy, the tasks want a desktop, and they will'
+  Write-Host 'wake the machine for their trigger.'
+  Write-Host ''
+  Write-Host 'ONE thing above was not verified and cannot be from here: the per-user ARSO toggle'
+  Write-Host 'in Settings. Confirm that by eye. The actual proof is the next 07:00 run appearing'
+  Write-Host 'in the log after an overnight reboot.'
 } else {
   Write-Host ('' + $problems + ' thing(s) above will stop an unattended run. Each one names its fix.')
 }

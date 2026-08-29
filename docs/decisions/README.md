@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-29 | [A PIN is not the account password](2026-08-29-a-pin-is-not-the-account-password.md) |
 | 2026-08-29 | [The LogonType is not the bug; the missing desktop is](2026-08-29-the-logon-type-is-not-the-bug.md) |
 | 2026-08-29 | [Retiring `build-puzzle-process`, and what its "vendored" label was hiding](2026-08-29-retiring-build-puzzle-process.md) |
 | 2026-08-29 | [A check that hardcodes its input is not a check](2026-08-29-a-check-that-hardcodes-its-input-is-not-a-check.md) |
