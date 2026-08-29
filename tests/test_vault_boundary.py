@@ -131,7 +131,7 @@ def test_no_vault_root_index_file_is_tracked():
 
 def test_no_tracked_file_quotes_a_vault_path():
     """The snippet case: content pasted in with its source path attached."""
-    offenders = []
+    offenders, scanned = [], 0
     for rel in _tracked_files():
         if rel in FINGERPRINT_ALLOWED:
             continue
@@ -142,9 +142,19 @@ def test_no_tracked_file_quotes_a_vault_path():
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue  # binary, or a symlink to nowhere: no prose to leak
+        scanned += 1
         found = _first_note_path(text)
         if found:
             offenders.append(f"{rel}: {found!r}")
+
+    # Floor the files actually *read*, not just the ones enumerated. Every
+    # `continue` above is a silent skip, so a bad root or a decoding change
+    # could empty this loop and leave the assertion below passing on nothing --
+    # and "reading no file" and "reading the wrong file" are the same defect,
+    # per docs/decisions/2026-08-29-a-check-that-hardcodes-its-input-is-not-a-check.md.
+    assert (
+        scanned > 100
+    ), f"only read {scanned} tracked files -- did the scan skip everything?"
     assert not offenders, (
         f"Tracked files quote vault paths: {offenders[:5]}. Cite the vault by "
         f"repo name, never by note path -- see docs/vault-route.md."
