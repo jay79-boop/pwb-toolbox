@@ -110,13 +110,46 @@ sessions read `C:\Users\Gexio\.claude\skills\`. Since the 2026-08-28 nightly,
 `backup-claude-config.ps1` mirrors the *machine* copy into this vault repo.
 
 That makes one check possible that was not possible before: **diff what a session
-was served against what the machine actually runs.** Doing it turned up a genuine
-split — 23,171 bytes on the account, 19,659 on the machine, byte-identical to a
-revision staged in the vault the same day. The promotion reached the account and
-never reached the disk, so the two halves of the fleet have been reading different
-rulebooks: a cloud session knows the `LastTaskResult` codes, that every console
-there reports `MainWindowHandle = 0`, and that a hook registered by bare command
-name never runs. A local session knows none of it.
+was served against what the machine actually runs.** It found a real split — the
+promotion reached the account and never reached the disk, so the two halves of the
+fleet spent a day reading different rulebooks: a cloud session knew the
+`LastTaskResult` codes, that every console there reports `MainWindowHandle = 0`,
+and that a hook registered by bare command name never runs. A local session knew
+none of it.
+
+### The half of that check that is not what it looks like
+
+The two sides of the diff are **not** equally trustworthy, and the asymmetry is
+easy to miss because both are just files on disk in the container.
+
+| Side | What you are reading | How current |
+| --- | --- | --- |
+| Account | `~/.claude/skills/synced/<id>/gexio-machine/SKILL.md` | **live** — the store re-syncs mid-session, so re-reading the path is enough |
+| Machine | the vault's `Backups/claude-config/skills/…` | **a snapshot**, last written by the 22:00 nightly |
+
+So the machine side lags by up to a day — and on the one day that matters, the day
+a skill is promoted, it is *guaranteed* to lag, because the promotion happens after
+the previous night's run. Worse, the mirror does not go stale visibly: an unchanged
+file is simply not committed, so a mirror that is eleven days old looks exactly like
+a mirror that is current.
+
+That is not hypothetical. On 2026-08-29 the mirror read 19,659 bytes while the
+account read 22,135 — but the mirrored blob had been untouched since commit
+`7c3e438` on **2026-08-18**, and the machine copy had in fact been replaced that
+morning, after the last nightly. A session quoting the mirror as "what the machine
+runs today" would have reported a drift in the wrong direction, with a real byte
+count behind it.
+
+**So date the mirror before you quote it.** One command, and it is not optional:
+
+```bash
+git -C /home/user/ray-vault log -1 --format='%h %ad' --date=iso \
+  -- Backups/claude-config/skills/gexio-machine/SKILL.md
+```
+
+If that date is older than the last change you are asking about, the mirror cannot
+answer the question and **no local session can be reached from here to answer it
+either** — say so, rather than reporting the snapshot as the state.
 
 That is the local-versus-cloud asymmetry `CLAUDE.md` says has cost days before,
 except here it is the file describing the asymmetry that differs.
