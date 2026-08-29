@@ -241,6 +241,7 @@ python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
@@ -303,6 +304,21 @@ own playbook. Two things are deliberate and both look like oversights:
 Autonomy ceiling is "everything except order entry", on a TradingView login with
 no broker connected. Reasoning in `docs/tradingview-agent-security.md`; setup in
 `tools/desk_agent/README.md`.
+
+**Whether a job needs a desktop is a per-job fact, and it decides how its task
+is registered.** A Windows task set to run whether the user is logged on or not
+gets a logon session with **no desktop** — fatal to a job driving TradingView
+Desktop, irrelevant to one that does not. `premarket` and `journal` read their
+levels from bar data via `tools/desk_levels.py` and render their own images
+headless, so their tasks carry a stored credential and run signed in or not;
+`alerts` and `pine_loop` still drive the chart and still need a desktop. The
+fact lives in `register_desk_agent.ps1`'s `$jobs` table as `NeedsDesktop`, is
+mirrored in `run_job.ps1` and `autologon.ps1`, and a test asserts all three
+agree. **`S4U` is banned for every job regardless** — it carries no credentials,
+so DPAPI secrets and OneDrive paths both fail at run time, unattended. Two
+decision records:
+`docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md` and
+`docs/decisions/2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md`.
 
 ## Backtesting: two things that produced confidently wrong answers
 

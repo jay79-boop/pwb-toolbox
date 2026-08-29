@@ -174,11 +174,35 @@ if (-not $claude) {
 }
 Write-Log ("claude: " + $claude)
 
+# Which jobs still drive TradingView Desktop.
+#
+# Since 2026-08-29 `premarket` and `journal` do not: they read session levels,
+# the prior day's range and their fair value gaps from bar data through
+# tools/desk_levels.py, and render their own chart images headless. That is
+# what lets their scheduled tasks take a logon type with no desktop -- see
+# register_desk_agent.ps1, whose $jobs table carries the same fact as
+# NeedsDesktop and is checked against this list by
+# tests/test_desk_agent_launcher.py.
+#
+# This is a LIST rather than a deletion of the block below. `alerts` is off but
+# not retired, and `pine_loop` runs on demand; both still want the chart, and
+# both still want it closed behind them.
+$desktopJobs = @('alerts', 'pine_loop')
+$needsDesktop = $desktopJobs -contains $Job
+Write-Log ("needs a desktop: " + $needsDesktop)
+
 # Whether TradingView was already running decides whether we are allowed to
 # close it afterwards. If the owner had it open, killing it would destroy their
 # session; if the agent started it, leaving it open would leave an
 # unauthenticated debug port on the machine -- which is the risk
 # docs/tradingview-agent-security.md exists for.
+#
+# Asked even for a desktop-free job, and deliberately. The question this
+# answers is "did WE open it", and the honest answer for a job that never
+# launches anything is "no, and there is nothing here to close" -- which is
+# what the shutdown block below then reports. Skipping the query would make a
+# desktop-free run silent about a TradingView the owner had open, and silence
+# is what this launcher exists to remove.
 $tvBefore = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
 $tvWasAlreadyRunning = $tvBefore.Count -gt 0
 Write-Log ("tradingview already running: " + $tvWasAlreadyRunning)
@@ -216,15 +240,33 @@ foreach ($dir in (@($jobDirs[$Job]) + $AddDir)) {
 }
 
 # -- run -----------------------------------------------------------------------
-$prompt = @(
+$promptLines = @(
   'You are the desk agent running unattended.',
   ('Read tools/desk_agent/playbook.md, then tools/desk_agent/jobs/' + $Job + '.md,'),
-  'and carry out that job now.',
-  'If you need a chart and the CDP port is not up, call tv_launch: this launcher',
-  'closes TradingView after you exit, so launching is no longer a one-way door.',
+  'and carry out that job now.'
+)
+if ($needsDesktop) {
+  $promptLines += @(
+    'If you need a chart and the CDP port is not up, call tv_launch: this launcher',
+    'closes TradingView after you exit, so launching is no longer a one-way door.'
+  )
+} else {
+  # Say it in the negative as well as the positive. This session may have no
+  # desktop at all -- the task can be registered to run with nobody signed in
+  # -- and an agent that reaches for tv_launch there burns its run discovering
+  # that Electron has nowhere to draw, then reports a chart problem rather than
+  # the instruction problem it actually hit.
+  $promptLines += @(
+    'This job reads bar data, NOT a chart. Do NOT call tv_launch or any TradingView',
+    'tool: this task may be running with no desktop, where they cannot work.',
+    'Use tools/desk_levels.py for levels and for any chart image you need.'
+  )
+}
+$promptLines += @(
   'Append exactly one run record when you finish, as the playbook describes -',
   'including if you did nothing.'
-) -join ' '
+)
+$prompt = $promptLines -join ' '
 
 Push-Location $RepoRoot
 try {
@@ -245,7 +287,19 @@ try {
     $tvAfter = @(Get-Process -Name 'TradingView*' -ErrorAction SilentlyContinue)
     if ($tvAfter.Count -eq 0) {
       Write-Log 'no TradingView process to close'
+      # For a desktop-free job that is the expected outcome rather than a
+      # nothing-happened, and it is worth saying which of the two this was.
+      if (-not $needsDesktop) { Write-Log 'desktop-free job: none was expected' }
     } else {
+      # A desktop-free job that nonetheless left a TradingView behind ignored
+      # its own instruction not to launch one. Still closed -- the rule is
+      # close what this run opened, whatever opened it -- but said out loud,
+      # because on a task with no desktop that launch cannot have worked and
+      # whatever the run reported about a chart is not to be believed.
+      if (-not $needsDesktop) {
+        Write-Log 'WARNING: a desktop-free job started TradingView. It was told not to.'
+        Write-Log '         Distrust anything this run said about a chart, and closing it now.'
+      }
       foreach ($proc in $tvAfter) {
         try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
       }

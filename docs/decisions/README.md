@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-29 | [The jobs stopped needing a desktop, so the tasks stopped needing one](2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md) |
 | 2026-08-29 | [The LogonType is not the bug; the missing desktop is](2026-08-29-the-logon-type-is-not-the-bug.md) |
 | 2026-08-29 | [A check that hardcodes its input is not a check](2026-08-29-a-check-that-hardcodes-its-input-is-not-a-check.md) |
 | 2026-08-29 | [Skills, docs and pull requests are all Claude-facing](2026-08-29-skills-docs-and-prs-are-all-claude-facing.md) |

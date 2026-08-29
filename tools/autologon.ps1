@@ -3,21 +3,33 @@
   Report whether this machine can run the desk agent with nobody signed in.
 
 .DESCRIPTION
-  The desk agent's scheduled tasks are registered with a LogonType of
-  Interactive, and that is deliberate. Both enabled jobs drive TradingView
-  Desktop -- premarket reads session levels off the chart, journal captures
-  chart images -- and an Electron app needs a real desktop to render on.
+  WHICH JOBS STILL NEED THIS IS NOW A PER-JOB QUESTION, and answering it for
+  the whole agent at once is how this report would call a successful conversion
+  a fault.
 
-  It is tempting to answer "it did not run because I was not signed in" by
-  setting the tasks to run whether the user is logged on or not. That does not
-  work here. S4U and Password logon types get a session with NO DESKTOP, so the
-  tasks would fire on time and then fail at the first chart call. A job that
-  does not run is at least honest about it; a job that runs against no desktop
-  produces a gameplan built on whatever the failure left behind.
+  A scheduled task that runs whether the user is logged on or not gets a logon
+  session with NO DESKTOP. That is fatal to a job that drives TradingView
+  Desktop, an Electron app with nowhere to render: it would fire on time and
+  fail at the first chart call, producing a gameplan built on whatever the
+  failure left behind. A job that does not run is at least honest about it.
+  That was the whole argument in
+  docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md, and for a chart
+  job it still stands.
 
-  The fix is to make the machine sign ITSELF in, so a desktop session exists
-  for the tasks to use. That is three separate things, and all three have to be
-  true before a 07:00 job on an unattended machine actually produces anything:
+  Since 2026-08-29, premarket and journal do not read a chart. They take their
+  session levels, prior-day range and fair value gaps from bar data through
+  tools/desk_levels.py and render their own images headless, so their tasks are
+  registered against a stored credential and need no desktop and no sign-in at
+  all. Only `alerts`, which is currently OFF, still drives the chart.
+
+  So this script reports two different things:
+
+    * For a task that needs a desktop -- automatic sign-in has to work, and the
+      three conditions below all have to be true.
+    * For a task that does not -- it should NOT be Interactive, because that is
+      then the only thing still tying it to a signed-in machine.
+
+  The three conditions, when a desktop job exists:
 
     1. the machine signs in without a human      -- AutoAdminLogon
     2. the machine is awake at the scheduled minute -- WakeToRun, and wake
@@ -30,6 +42,9 @@
   published by Microsoft. Rolling our own here would be untested P/Invoke
   against the credential store, which is the last place to put code nobody can
   run before shipping it.
+
+  If no registered task needs a desktop, it says so and stops treating a
+  missing auto sign-in as a problem -- because then it is not one.
 
 .PARAMETER EnableLock
   Register a task that locks the workstation shortly after every logon, so an
@@ -64,6 +79,18 @@ $winlogon     = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 $lockTaskName = 'PWB-LockOnLogon'
 $agentPrefix  = 'PWB-DeskAgent-'
 $wakeTimerGuid = 'bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d'
+
+# Task-name suffixes whose job still drives TradingView Desktop, and therefore
+# still needs a real desktop to render into. This is the ONLY reason anything
+# in this file exists, so getting it wrong is how the report starts lying.
+#
+# It has to be repeated here rather than read from register_desk_agent.ps1's
+# $jobs table: this script is run on its own, often from a different directory,
+# and a report that fails when it cannot find another file is worse than one
+# carrying a short list. tests/test_desk_agent_launcher.py asserts this list
+# agrees with that table, which is the same arrangement the job names already
+# have across three files.
+$desktopTasks = @('Alerts')
 
 function Get-WinlogonValue([string] $name) {
   # -ErrorAction SilentlyContinue on Get-ItemProperty returns $null for a
@@ -140,6 +167,23 @@ Write-Host ''
 
 $problems = 0
 
+# Which registered tasks actually still need a desktop. Everything in sections
+# 1 and 2 exists to serve those and only those, so this has to be settled
+# before either runs -- otherwise a machine whose every job is desktop-free
+# gets told off for not signing itself in, which is a fault report about a
+# requirement that no longer exists.
+$agentTasks = @(Get-ScheduledTask -TaskName ($agentPrefix + '*') -ErrorAction SilentlyContinue)
+$desktopNeeded = $false
+foreach ($t in $agentTasks) {
+  if ($desktopTasks -contains $t.TaskName.Substring($agentPrefix.Length)) { $desktopNeeded = $true }
+}
+if ($agentTasks.Count -gt 0 -and -not $desktopNeeded) {
+  Write-Host 'No registered task needs a desktop. Automatic sign-in is therefore optional'
+  Write-Host 'here: sections 1 and 2 are reported for information and are not counted as'
+  Write-Host 'problems. Section 3 is the one that matters.'
+  Write-Host ''
+}
+
 # 1. Does it sign itself in?
 $auto   = Get-WinlogonValue 'AutoAdminLogon'
 $user   = Get-WinlogonValue 'DefaultUserName'
@@ -151,9 +195,14 @@ if ("$auto" -eq '1') {
   Write-Host ('   ON    AutoAdminLogon=1, user: ' + $domain + '\' + $user)
 } else {
   Write-Host ('   OFF   AutoAdminLogon=' + $(if ($null -eq $auto) { '(not set)' } else { $auto }))
-  Write-Host '         Nothing signs this machine in, so a task needing a desktop cannot run'
-  Write-Host '         after a reboot. Set it with Sysinternals Autologon (see the README).'
-  $problems++
+  if ($desktopNeeded) {
+    Write-Host '         Nothing signs this machine in, so a task needing a desktop cannot run'
+    Write-Host '         after a reboot. Set it with Sysinternals Autologon (see the README).'
+    $problems++
+  } else {
+    Write-Host '         Fine as it is: no registered task needs a desktop, so nothing here'
+    Write-Host '         depends on the machine signing itself in.'
+  }
 }
 
 # The one finding worth shouting about. Plenty of guides tell you to set
@@ -229,15 +278,32 @@ if ($tasks.Count -eq 0) {
   foreach ($t in $tasks) {
     $wake  = $t.Settings.WakeToRun
     $logon = $t.Principal.LogonType
-    Write-Host ('   ' + $t.TaskName.PadRight(24) + ' LogonType: ' + "$logon".PadRight(12) + ' WakeToRun: ' + $wake)
+    $suffix = $t.TaskName.Substring($agentPrefix.Length)
+    $wantsDesktop = $desktopTasks -contains $suffix
+    $desktopless  = @('S4U', 'Password') -contains "$logon"
+    $need = if ($wantsDesktop) { 'needs a desktop' } else { 'no desktop needed' }
+    Write-Host ('   ' + $t.TaskName.PadRight(24) + ' LogonType: ' + "$logon".PadRight(12) +
+                ' WakeToRun: ' + "$wake".PadRight(6) + ' ' + $need)
     if (-not $wake) {
       Write-Host '         WakeToRun is off -- re-run tools\register_desk_agent.ps1.'
       $problems++
     }
-    if ("$logon" -ne 'Interactive') {
-      Write-Host '         NOT Interactive. These jobs drive TradingView Desktop and need a'
-      Write-Host '         desktop; S4U and Password do not get one. Re-run register_desk_agent.ps1.'
-      $problems++
+    if ($wantsDesktop) {
+      if ($desktopless) {
+        # The trap this whole file exists for, caught after the fact.
+        Write-Host '         WRONG: this job drives TradingView Desktop, and this logon'
+        Write-Host '         type gets none. It will fire on time and then'
+        Write-Host '         fail at the first chart call. Re-run register_desk_agent.ps1.'
+        $problems++
+      }
+    } elseif (-not $desktopless) {
+      # NOT counted as a problem. The job works exactly as it always did; it is
+      # simply still tied to a signed-in machine for no reason left in the
+      # code. Counting it would make a working desk report as broken, which is
+      # the failure mode this rewrite exists to remove.
+      Write-Host '         This job needs no desktop but is registered Interactive, so it'
+      Write-Host '         still only runs while you are signed in. Re-run'
+      Write-Host '         register_desk_agent.ps1 and give it the password to lift that.'
     }
   }
 }
@@ -258,7 +324,13 @@ if ($lock) {
 
 Write-Host ''
 if ($problems -eq 0) {
-  Write-Host 'All clear: this machine can sign itself in, wake itself, and the tasks want a desktop.'
+  if ($desktopNeeded) {
+    Write-Host 'All clear: this machine can sign itself in, wake itself, and every task that'
+    Write-Host 'needs a desktop is set to get one.'
+  } else {
+    Write-Host 'All clear: no registered task needs a desktop, so nothing here depends on this'
+    Write-Host 'machine signing itself in. The tasks run whether you are logged on or not.'
+  }
 } else {
   Write-Host ('' + $problems + ' thing(s) above will stop an unattended run. Each one names its fix.')
 }

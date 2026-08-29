@@ -15,12 +15,28 @@
   TradingView nor the local disk, so it runs as a cloud Routine instead. See
   tools/desk_agent/README.md.
 
+  Each job in the table below declares whether it NEEDS A DESKTOP, and that
+  one field decides how its task is registered. A job that drives TradingView
+  Desktop is registered Interactive and only runs while somebody is signed in,
+  because an Electron app must have somewhere to draw. A job that reads its
+  levels from bar data is registered against a stored credential and runs
+  whether anyone is signed in or not. Supplying the password is prompted for
+  once, and -NoStoredCredential declines it.
+
 .PARAMETER RepoRoot
   The checkout the tasks should run in. Defaults to the OneDrive checkout,
   which is the canonical one.
 
 .PARAMETER Remove
   Unregister the tasks instead of creating them.
+
+.PARAMETER TaskUser
+  The account a desktop-free task runs as. Defaults to the current user, whose
+  OneDrive holds both the repository and the trade journal.
+
+.PARAMETER NoStoredCredential
+  Register every task Interactive, even the ones that need no desktop. They
+  then work exactly as before and need the machine signed in.
 
 .EXAMPLE
   .\tools\register_desk_agent.ps1
@@ -31,7 +47,16 @@
 [CmdletBinding()]
 param(
   [string] $RepoRoot = 'C:\Users\Gexio\OneDrive\pwb-toolbox',
-  [switch] $Remove
+  [switch] $Remove,
+
+  # Who a desktop-free task runs as. Defaults to the current user, which is the
+  # account whose OneDrive holds both the repository and the trade journal.
+  [string] $TaskUser = ("$env:USERDOMAIN\$env:USERNAME"),
+
+  # Register the desktop-free tasks with Interactive anyway. For a machine that
+  # is always signed in and where supplying a password is not wanted -- the
+  # jobs still work, they just go back to needing a live desktop session.
+  [switch] $NoStoredCredential
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +78,7 @@ $prefix = 'PWB-DeskAgent-'
 $jobs = @(
   @{ Name = 'Premarket'; Job = 'premarket'; Hours = @(7); Minute = 0
      Enabled = $true
+     NeedsDesktop = $false
      Desc = 'Pre-market gameplan before the open.' },
 
   # OFF since 2026-08-29. Twenty-five consecutive runs, hourly through every
@@ -68,12 +94,38 @@ $jobs = @(
   # back to $true is the whole of turning it on again.
   @{ Name = 'Alerts';    Job = 'alerts';    Hours = @(9, 10, 11, 12, 13, 14, 15, 16); Minute = 0
      Enabled = $false
+     NeedsDesktop = $true
      Desc = 'Alert triage each hour through the session.' },
 
   @{ Name = 'Journal';   Job = 'journal';   Hours = @(16); Minute = 30
      Enabled = $true
+     NeedsDesktop = $false
      Desc = 'Capture the day into the trade journal after the close.' }
 )
+
+# NeedsDesktop is the field that decides the LogonType, and it is the whole
+# point of this file since 2026-08-29.
+#
+# A task set to run whether the user is logged on or not gets a logon session
+# with NO DESKTOP. While every job drove TradingView Desktop -- an Electron app
+# -- that made the desktopless logon types strictly worse than a task that
+# never fires: a run that fails at the first chart call still produces a
+# gameplan, on time, looking exactly like a real one. That is the argument in
+# docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md and it still holds
+# for any job left in the $true column.
+#
+# `premarket` and `journal` no longer read a chart. They get their levels from
+# bar data through tools/desk_levels.py and render their own images headless,
+# so they have nothing to render into a desktop and can take a logon type that
+# has none. `alerts` still drives the chart, and stays.
+#
+# Password rather than S4U, deliberately. S4U stores no password, which reads
+# as the safer option, but it also carries NO CREDENTIALS: DPAPI-protected
+# secrets do not decrypt and network paths are not reachable as the user. Both
+# of these jobs run Claude Code, whose own stored authentication is exactly
+# that kind of secret, and the journal job reads a document under OneDrive. S4U
+# would fail both -- and fail them at run time, unattended, in a way that looks
+# like a broken agent rather than a wrong logon type.
 
 if ($Remove) {
   foreach ($j in $jobs) {
@@ -207,6 +259,39 @@ $settings = New-ScheduledTaskSettingsSet `
 $weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
 $registered = @()
 
+# Ask for the password ONCE, and only when a desktop-free job is actually being
+# registered. A machine that only runs chart jobs is never prompted, and
+# -NoStoredCredential opts out entirely at the cost of going back to needing a
+# live desktop.
+#
+# Read-Host -AsSecureString rather than a parameter: a password on the command
+# line goes into the PowerShell history file in clear text, and a hand-edited
+# command is how a password ends up pasted into a chat window.
+$deskFree = @($jobs | Where-Object { $_.Enabled -and -not $_.NeedsDesktop })
+$taskPassword = $null
+if ($deskFree.Count -gt 0 -and -not $NoStoredCredential) {
+  Write-Host ''
+  Write-Host ('These jobs need no desktop and can run while nobody is signed in: ' +
+              (($deskFree | ForEach-Object { $_.Job }) -join ', '))
+  Write-Host ("Windows stores the password for them as an LSA secret, against " + $TaskUser + ".")
+  Write-Host 'Leave it blank to register them Interactive instead (needs you signed in).'
+  $secure = Read-Host -Prompt ("Windows password for " + $TaskUser) -AsSecureString
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+    $taskPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+  } finally {
+    # Zero the unmanaged copy whatever happened above. The managed string below
+    # is unavoidable -- Register-ScheduledTask takes a plain [string] -- but
+    # there is no reason to leave a second copy lying in unmanaged memory.
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+  }
+  if ([string]::IsNullOrEmpty($taskPassword)) {
+    $taskPassword = $null
+    Write-Host 'No password given: registering everything Interactive.'
+  }
+  Write-Host ''
+}
+
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
 
@@ -245,17 +330,48 @@ foreach ($j in $jobs) {
     $triggers += New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At $at
   }
 
+  # THE BRANCH THIS WHOLE FILE TURNS ON.
+  #
+  # A job that needs a desktop is registered with no credentials at all, which
+  # leaves Windows' own default of Interactive -- it then runs only while
+  # somebody is signed in, which for a job that has to render an Electron
+  # window is not a limitation but a requirement.
+  #
+  # A job that needs no desktop is registered against a stored credential, and
+  # runs whether anyone is signed in or not. Note that -User and -Password
+  # together are what select the Password logon type; there is no -LogonType
+  # here, and passing one would be a second way to say the same thing.
+  $common = @{
+    TaskName    = $name
+    Action      = $action
+    Trigger     = $triggers
+    Settings    = $settings
+    Description = $j.Desc
+    Force       = $true
+  }
+  if ($j.NeedsDesktop -or -not $taskPassword) {
+    $how = 'Interactive (needs you signed in)'
+  } else {
+    $common['User'] = $TaskUser
+    $common['Password'] = $taskPassword
+    $how = 'stored credential, no desktop needed'
+  }
+
   try {
-    Register-ScheduledTask -TaskName $name `
-                           -Action $action `
-                           -Trigger $triggers `
-                           -Settings $settings `
-                           -Description $j.Desc `
-                           -Force | Out-Null
+    Register-ScheduledTask @common | Out-Null
   } catch {
     Write-Host ("FAILED to register " + $name + ": " + $_.Exception.Message)
+    # Name the likely cause rather than leaving the raw COM message alone. A
+    # wrong password fails here and nowhere else, and the message Windows
+    # returns for it does not say "password".
+    if ($common.ContainsKey('Password')) {
+      Write-Host ('           ' + $name + ' was being registered against ' + $TaskUser + '.')
+      Write-Host '           If that account or password is wrong, this is where it shows up.'
+      Write-Host '           Re-run with -NoStoredCredential to register it Interactive instead.'
+    }
     continue
   }
+  Write-Host ("registered " + $name + " -- " + $how)
   $registered += $name
 }
 
@@ -324,23 +440,37 @@ foreach ($j in $jobs) {
   Write-Host ("            next run: " + $next)
   Write-Host ("            last run: " + $last + "   result: " + $rc)
   Write-Host ("            StartWhenAvailable: " + $swa)
-  # Interactive is CORRECT here and must stay. It is tempting to read "runs only
-  # while the user is logged on" as the bug and switch this to S4U or Password so
-  # the task fires with nobody signed in -- that was asked for on 2026-08-29, and
-  # it is a trap. A task set to run whether the user is logged on or not gets a
-  # logon session with NO DESKTOP. Both of these jobs drive TradingView Desktop,
-  # an Electron app: premarket reads session levels off the chart and journal
-  # captures chart images. They would fire on time and fail at the first chart
-  # call -- a job that does not run, converted into a job that runs and is wrong.
+  # The right LogonType is now a per-job question, and the read-back has to ask
+  # it per job or it reports a successful conversion as a fault.
   #
-  # The fix for "nobody is signed in" is to make the machine sign ITSELF in, so a
-  # real desktop exists for these tasks to use. tools/autologon.ps1 reports whether
-  # it does, and the note below points there rather than at this flag.
+  # For a job that still drives TradingView, Interactive is CORRECT and must
+  # stay. Reading "runs only while the user is logged on" as the bug and
+  # switching it to S4U or Password is the trap of 2026-08-29: such a task gets
+  # a logon session with NO DESKTOP, so an Electron app has nowhere to render.
+  # It would fire on time and fail at the first chart call -- a job that does
+  # not run, converted into a job that runs and is wrong.
+  #
+  # For a job that reads its levels from bar data there is no desktop to lose,
+  # and Interactive is now the weaker setting rather than the safe one: it is
+  # the only reason such a task still needs the machine signed in at all.
   $logon = $task.Principal.LogonType
   Write-Host ("            LogonType: " + $logon + "   RunAs: " + $task.Principal.UserId)
-  if ("$logon" -eq 'Interactive') {
-    Write-Host '            NOTE: needs a signed-in desktop -- these jobs drive TradingView.'
-    Write-Host '                  Check unattended sign-in with: tools\autologon.ps1'
+  $desktopless = @('S4U', 'Password') -contains "$logon"
+  if ($j.NeedsDesktop) {
+    if ($desktopless) {
+      Write-Host '            WRONG: this job drives TradingView and has no desktop to draw in.'
+      Write-Host '                   It will fire on time and fail at the first chart call.'
+      Write-Host '                   Re-register it, or set it back to Interactive by hand.'
+    } else {
+      Write-Host '            NOTE: needs a signed-in desktop -- this job drives TradingView.'
+      Write-Host '                  Check unattended sign-in with: tools\autologon.ps1'
+    }
+  } elseif ($desktopless) {
+    Write-Host '            GOOD: no desktop needed, and none required. Runs signed in or not.'
+  } else {
+    Write-Host '            NOTE: this job needs no desktop, but is registered Interactive,'
+    Write-Host '                  so it still only runs while you are signed in. Re-run this'
+    Write-Host '                  script and supply the password to lift that.'
   }
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'
