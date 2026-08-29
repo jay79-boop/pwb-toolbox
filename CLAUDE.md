@@ -341,6 +341,23 @@ removed at their request: it is a personal document and this fork is public.
   whole file — never patch the inlined copy, or the tested version and the
   running version stop being the same code.
 
+## Nor is the Obsidian vault — do not mirror it here
+
+`tools/obsidian_sync.py` can mirror the vault into `docs/journal`. **Decided
+2026-08-29: it is not pointed at this repository.** `docs/journal/` is gitignored
+and `--commit`/`--push` refuse there, so a sync into this fork now fails by
+design rather than by anyone remembering.
+
+The reason is not that the vault is dangerous — the content checked clean. It is
+that a session here needs the vault's *rules*, and `docs/vault-operating-manual.md`
+already carries those, canonically. Mirroring the rest into a public fork bought
+nothing. Two sessions built opposite halves of this on the same day without
+knowing, so: **do not re-point it here, and do not work around the guard.** Use
+it for a local mirror if you want one.
+
+Reasoning in
+`docs/decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md`.
+
 ## The user's local checkout
 
 Windows, PowerShell 5.1, at `C:\Users\Gexio\OneDrive\pwb-toolbox`, Python 3.12.
