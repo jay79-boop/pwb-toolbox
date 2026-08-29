@@ -386,6 +386,11 @@ top-level directories and points here for the detail.
   `vault-operating-manual.md` (the Obsidian vault's standing rules, operating
   rules and note schema — canonical here; the vault's personal half stays out of
   this public fork and lives only locally and in a private artifact),
+  `vault-route.md` (how a cloud session attaches and reads that vault, which is
+  the private repo `jay79-boop/ray-vault`, and why the route is read-only: the
+  owner's nightly backup pushes without pulling, so a commit from a session
+  breaks it. The procedure is the `vault-route` skill; `tests/test_vault_boundary.py`
+  fails CI if vault content lands in this fork),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that

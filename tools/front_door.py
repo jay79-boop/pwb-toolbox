@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Skills that track upstream. They are not part of this desk and listing them
 # would suggest the owner commissioned them -- see docs/skills.md.
-VENDORED = {"ui-ux-pro-max", "build-puzzle-process"}
+VENDORED = {"ui-ux-pro-max"}
 
 
 @dataclass

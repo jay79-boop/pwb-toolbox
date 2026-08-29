@@ -184,10 +184,15 @@ Per map:
 ## Where this came from
 
 Adapted from a Puzzle (puzzleapp.io) process-building skill, stripped of that
-tool's MCP mechanics. The original is kept verbatim at
-`.claude/skills/build-puzzle-process/SKILL.md` — read it only if you are
-actually building in Puzzle. Its RACI model and per-step data-attribute
-model were deliberately left out here: they are built for org charts with
-hourly rates and a data dictionary behind them, and are ceremony for a
-one-person shop. If an engagement ever needs them for a client's team, take
-them from the original rather than reinventing them.
+tool's MCP mechanics. That original was kept alongside this file for a week and
+retired on 2026-08-29 — the Puzzle MCP is not connected here, so its trigger
+could never fire, and it was costing description budget on every turn to say so.
+It is recoverable in full:
+
+    git show 0b168fd:.claude/skills/build-puzzle-process/SKILL.md
+
+Its RACI model and per-step data-attribute model were deliberately left out of
+this skill: they are built for org charts with hourly rates and a data
+dictionary behind them, and are ceremony for a one-person shop. If an
+engagement ever needs them for a client's team, take them from that commit
+rather than reinventing them.
