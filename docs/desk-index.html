@@ -1,0 +1,345 @@
+<title>Desk Index</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --page:#fbfbfa; --card:#ffffff; --sunken:#f5f5f3;
+  --ink:#141413; --ink-2:#57564f; --ink-3:#8a8880;
+  --rule:#e6e5e0; --rule-2:#f0efec;
+  --ai:#2a78d6;     --ai-bg:#e9f1fc;     --ai-edge:#c2dbf6;
+  --person:#c4491d; --person-bg:#fdece5; --person-edge:#f7cdb9;
+  --auto:#57564f;   --auto-bg:#f0efec;   --auto-edge:#dedcd5;
+  --good:#00701f; --good-bg:#e3f4e6;
+  --warn:#9a6200; --warn-bg:#fbf1dc;
+  --bad:#b5292a;  --bad-bg:#fdeaea;
+  --display:"Newsreader",Georgia,"Times New Roman",serif;
+  --body:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--page); color:var(--ink);
+  font-family:var(--body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 20px 96px}
+h1,h2,h3{font-family:var(--display);font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:clamp(2rem,5vw,3rem);line-height:1.1;letter-spacing:-.015em}
+h2{font-size:clamp(1.35rem,3vw,1.75rem);line-height:1.2}
+h3{font-size:1.05rem;line-height:1.3}
+p{margin:0}
+a{color:var(--ai);text-underline-offset:2px}
+a:focus-visible,input:focus-visible,button:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--ai); outline-offset:2px; border-radius:2px;
+}
+.eyebrow{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+header.masthead{
+  border-bottom:1px solid var(--rule); padding:56px 0 28px; margin-bottom:36px;
+  display:flex; flex-direction:column; gap:14px;
+}
+.lede{color:var(--ink-2);max-width:64ch;font-size:1.05rem}
+.stamp{
+  font-family:var(--mono);font-size:.72rem;color:var(--ink-3);
+  display:flex;flex-wrap:wrap;gap:6px 16px;font-variant-numeric:tabular-nums;
+}
+section{margin-top:52px;display:flex;flex-direction:column;gap:18px}
+.sec-head{display:flex;flex-direction:column;gap:6px}
+.sec-note{color:var(--ink-2);max-width:66ch;font-size:.92rem}
+.count{
+  font-family:var(--mono);font-size:.72rem;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;vertical-align:.35em;margin-left:8px;
+  font-weight:400;
+}
+/* live-state panel: the thing this page deliberately does not carry */
+.derive{
+  background:var(--warn-bg); border:1px solid #e8d3a4; border-left:4px solid var(--warn);
+  border-radius:3px; padding:18px 20px; display:flex; flex-direction:column; gap:10px;
+}
+.derive h2{font-size:1.1rem}
+.derive p{color:#6b4700;font-size:.92rem;max-width:66ch}
+.derive ul{margin:0;padding-left:18px;color:#6b4700;font-size:.92rem;
+  display:flex;flex-direction:column;gap:6px}
+.derive a{color:#7c4f00;font-weight:600}
+.grid{display:grid;gap:8px}
+.card{
+  background:var(--card); border:1px solid var(--rule); border-radius:3px;
+  padding:11px 14px; display:flex; flex-direction:column; gap:4px;
+  border-left:3px solid var(--auto);
+}
+.card.person{border-left-color:var(--person)}
+.card.ai{border-left-color:var(--ai)}
+.card.auto{border-left-color:var(--auto)}
+.card .name{
+  font-family:var(--mono); font-size:.83rem; color:var(--ink);
+  word-break:break-word; font-weight:500;
+}
+.card .blurb{color:var(--ink-2);font-size:.92rem}
+.blurb code,.dec p code{
+  font-family:var(--mono);font-size:.85em;background:var(--sunken);
+  padding:1px 4px;border-radius:2px;color:var(--ink);
+}
+.card .blurb:empty::after{
+  content:"no one-line description in the source";
+  color:var(--ink-3); font-style:italic;
+}
+.chip{
+  align-self:flex-start; font-family:var(--mono); font-size:.65rem;
+  letter-spacing:.06em; text-transform:uppercase; padding:2px 7px;
+  border-radius:2px; border:1px solid var(--auto-edge);
+  background:var(--auto-bg); color:var(--auto);
+}
+.chip.person{background:var(--person-bg);border-color:var(--person-edge);color:var(--person)}
+.chip.ai{background:var(--ai-bg);border-color:var(--ai-edge);color:var(--ai)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+.legend span{display:flex;align-items:center;gap:7px;font-size:.82rem;color:var(--ink-2)}
+.swatch{width:11px;height:11px;border-radius:2px;flex:none}
+/* decisions */
+.filter{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  position:sticky;top:0;background:var(--page);padding:10px 0;z-index:5;
+  border-bottom:1px solid var(--rule-2);
+}
+.filter input{
+  flex:1 1 260px; min-width:0; font-family:var(--body); font-size:.92rem;
+  padding:9px 12px; border:1px solid var(--rule); border-radius:3px;
+  background:var(--card); color:var(--ink);
+}
+.filter input::placeholder{color:var(--ink-3)}
+.hits{font-family:var(--mono);font-size:.72rem;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.dec{
+  display:grid; grid-template-columns:92px 1fr; gap:4px 18px;
+  padding:14px 0; border-bottom:1px solid var(--rule-2);
+}
+.dec .date{
+  font-family:var(--mono);font-size:.74rem;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;padding-top:3px;
+}
+.dec h3{font-size:.98rem}
+.dec p{color:var(--ink-2);font-size:.9rem;grid-column:2}
+.empty{color:var(--ink-3);font-style:italic;padding:20px 0}
+footer{
+  margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);
+  color:var(--ink-3);font-size:.85rem;display:flex;flex-direction:column;gap:8px;
+}
+footer code{font-family:var(--mono);font-size:.8rem;color:var(--ink-2)}
+@media (max-width:560px){
+  .dec{grid-template-columns:1fr;gap:4px}
+  .dec p{grid-column:1}
+  header.masthead{padding-top:36px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+<header class="masthead">
+  <span class="eyebrow">pwb-toolbox</span>
+  <h1>Desk Index</h1>
+  <p class="lede">Everything this desk has, what it is for, and every decision
+  on record &mdash; so none of it has to be remembered between sittings.</p>
+  <div class="stamp"><span>built from fdfc34c 29 August 2026</span>
+  <span>27 commands &middot; 9 skills &middot;
+  9 pages &middot; 31 decisions</span></div>
+</header>
+
+<div class="derive">
+  <h2>What is <em>not</em> on this page</h2>
+  <p>Open pull requests, whether CI is green, what <code>main</code> points at,
+  and any count of them. Those were written down for months and were wrong
+  within hours every time, so this desk keeps them nowhere and derives them
+  when asked. A dashboard that carried them anyway was retired on 29 August
+  2026, and that record turns down a static rebuild by name &mdash; this page
+  is the durable half only.</p>
+  <ul>
+    <li><strong>Where things stand right now</strong> &mdash; ask any session.
+    It opens with the branch, the working tree, open pull requests and their
+    CI, gathered at the moment you ask.</li>
+    <li><strong>What is waiting on you</strong> &mdash; the
+    <a href="https://claude.ai/code/artifact/a9da0f16-1b7f-4658-a21f-70271be5c413">Action
+    Ledger</a>, where ticking a box costs nothing and the tick survives.</li>
+    <li><strong>The pull requests themselves</strong> &mdash;
+    <a href="https://github.com/jay79-boop/pwb-toolbox/pulls">on GitHub</a>,
+    which is the only copy that is never stale.</li>
+  </ul>
+</div>
+
+<section>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--person)"></span>you type it</span>
+    <span><span class="swatch" style="background:var(--ai)"></span>Claude loads it without being asked</span>
+    <span><span class="swatch" style="background:var(--auto)"></span>you open it, or import it</span>
+  </div>
+</section>
+
+<section id="commands">
+  <div class="sec-head">
+    <h2>Commands you can run<span class="count">27</span></h2>
+    <p class="sec-note">Lifted from the <code>## Commands</code> block of <code>CLAUDE.md</code>, which is where they are already written in your own words.</p>
+  </div>
+  <div class="grid">
+<div class="card person" data-search="pytest tests/ -v full suite (~28s cold / ~15s warm)"><span class="name">pytest tests/ -v</span><span class="blurb">full suite (~28s cold / ~15s warm)</span></div>
+<div class="card person" data-search="black pwb_toolbox/ tools/ tests/ format; ci checks this exact scope"><span class="name">black pwb_toolbox/ tools/ tests/</span><span class="blurb">format; CI checks this exact scope</span></div>
+<div class="card person" data-search="black --check --diff pwb_toolbox/ tools/ tests/ what ci runs"><span class="name">black --check --diff pwb_toolbox/ tools/ tests/</span><span class="blurb">what CI runs</span></div>
+<div class="card person" data-search="node static/option-lab.test.js greeks/ladder math (also run by pytest)"><span class="name">node static/option-lab.test.js</span><span class="blurb">greeks/ladder math (also run by pytest)</span></div>
+<div class="card person" data-search="node static/journal-shots.test.js screenshot sizing/budget (also run by pytest)"><span class="name">node static/journal-shots.test.js</span><span class="blurb">screenshot sizing/budget (also run by pytest)</span></div>
+<div class="card person" data-search="node static/process-grammar.test.js branch grammar (also run by pytest)"><span class="name">node static/process-grammar.test.js</span><span class="blurb">branch grammar (also run by pytest)</span></div>
+<div class="card person" data-search="node static/strategy-lab-stats.test.js dashboard math (also run by pytest)"><span class="name">node static/strategy-lab-stats.test.js</span><span class="blurb">dashboard math (also run by pytest)</span></div>
+<div class="card person" data-search="pytest tests/test_skills.py -q skills: live paths, description budget"><span class="name">pytest tests/test_skills.py -q</span><span class="blurb">skills: live paths, description budget</span></div>
+<div class="card person" data-search="python tools/trade_card.py plan --help pre-trade card + hold-time checker"><span class="name">python tools/trade_card.py plan --help</span><span class="blurb">pre-trade card + hold-time checker</span></div>
+<div class="card person" data-search="python tools/analyze_trades.py export.csv diagnose a schwab transaction export"><span class="name">python tools/analyze_trades.py export.csv</span><span class="blurb">diagnose a Schwab transaction export</span></div>
+<div class="card person" data-search="python tools/spend_watch.py audit snapshot.json what is draining the window"><span class="name">python tools/spend_watch.py audit snapshot.json</span><span class="blurb">what is draining the window</span></div>
+<div class="card person" data-search="python tools/spend_watch.py session &lt;transcript&gt;.jsonl is this session too big"><span class="name">python tools/spend_watch.py session &lt;transcript&gt;.jsonl</span><span class="blurb">is this session too big</span></div>
+<div class="card person" data-search="python tools/install_spend_hook.py --check size warning in every session? (local only)"><span class="name">python tools/install_spend_hook.py --check</span><span class="blurb">size warning in EVERY session? (local only)</span></div>
+<div class="card person" data-search="python tools/install_workspace_dirs.py --diagnose why can&#x27;t this chat see my other repo?"><span class="name">python tools/install_workspace_dirs.py --diagnose</span><span class="blurb">why can&#x27;t this chat see my other repo?</span></div>
+<div class="card person" data-search="python tools/night_lab.py plan queue tonight&#x27;s stress jobs"><span class="name">python tools/night_lab.py plan</span><span class="blurb">queue tonight&#x27;s stress jobs</span></div>
+<div class="card person" data-search="python tools/season_scan.py report seasonality: report + watchlist + json"><span class="name">python tools/season_scan.py report</span><span class="blurb">seasonality: report + watchlist + json</span></div>
+<div class="card person" data-search="python tools/calibration_audit.py --symbols spy is our option math calibrated?"><span class="name">python tools/calibration_audit.py --symbols SPY</span><span class="blurb">is our option math calibrated?</span></div>
+<div class="card person" data-search="python -m tools.strategy_lab live run dashboard on :8771"><span class="name">python -m tools.strategy_lab</span><span class="blurb">live run dashboard on :8771</span></div>
+<div class="card person" data-search="python tools/reversal_15m_sim.py bars.csv --post send that run to it"><span class="name">python tools/reversal_15m_sim.py bars.csv --post</span><span class="blurb">send that run to it</span></div>
+<div class="card person" data-search="python tools/fetch_bars.py btc/usdt --exchange coinbase --days 365 --out a.csv bars with real volume"><span class="name">python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv</span><span class="blurb">bars with real volume</span></div>
+<div class="card person" data-search="python tools/engagement.py list readiness engagements and where each stands"><span class="name">python tools/engagement.py list</span><span class="blurb">readiness engagements and where each stands</span></div>
+<div class="card person" data-search="python tools/ai_company.py gates can any agent commit money unsupervised?"><span class="name">python tools/ai_company.py gates</span><span class="blurb">can any agent commit money unsupervised?</span></div>
+<div class="card person" data-search="python -m tools.desk_agent.runlog summary --last 20 is the agent actually working"><span class="name">python -m tools.desk_agent.runlog summary --last 20</span><span class="blurb">is the agent actually working</span></div>
+<div class="card person" data-search="python tools/desk_watch.py check which sessions did the desk not report?"><span class="name">python tools/desk_watch.py check</span><span class="blurb">which sessions did the desk not report?</span></div>
+<div class="card person" data-search="python tools/obsidian_sync.py vaults which obsidian vaults exist here (local machine only)"><span class="name">python tools/obsidian_sync.py vaults</span><span class="blurb">which Obsidian vaults exist here (local machine only)</span></div>
+<div class="card person" data-search="python tools/obsidian_sync.py sync --dry-run mirror the vault into docs/journal; finds it itself"><span class="name">python tools/obsidian_sync.py sync --dry-run</span><span class="blurb">mirror the vault into docs/journal; finds it itself</span></div>
+<div class="card person" data-search="python tools/front_door.py build rebuild the desk index: what we have, and every decision"><span class="name">python tools/front_door.py build</span><span class="blurb">rebuild the desk index: what we have, and every decision</span></div>
+  </div>
+</section>
+
+<section id="skills">
+  <div class="sec-head">
+    <h2>What Claude loads by itself<span class="count">9</span></h2>
+    <p class="sec-note">You never see these fire. Each one carries a procedure worth not retyping, and the text below is the description that decides whether it loads.</p>
+  </div>
+  <div class="grid">
+<div class="card ai" data-search="agent-fleet operating protocol for the owner&#x27;s multi-agent fleet — two lead sessions, a project lead per active project, ic sessions under them."><span class="name">agent-fleet</span><span class="blurb">Operating protocol for the owner&#x27;s multi-agent fleet — two lead sessions, a project lead per active project, IC sessions under them.</span></div>
+<div class="card ai" data-search="backtest-trust how to actually run the two checks that must pass before a backtest number in this repo is believed or quoted — `verify_timezone` across a winter and a summer month, then `noise_floor()` against a second vendor — and how to read what each prints."><span class="name">backtest-trust</span><span class="blurb">How to actually run the two checks that must pass before a backtest number in this repo is believed or quoted — <code>verify_timezone</code> across a winter AND a summer month, then <code>noise_floor()</code> against a second vendor — and how to read what each prints.</span></div>
+<div class="card ai" data-search="engagement-flow run a business through the ai &amp; automation readiness framework — audit, process map, bottlenecks, readiness scoring, prioritization, quick wins, target design, stakeholder deck, approval, implementation plan, go-live."><span class="name">engagement-flow</span><span class="blurb">Run a business through the AI &amp; automation readiness framework — audit, process map, bottlenecks, readiness scoring, prioritization, quick wins, target design, stakeholder deck, approval, implementation plan, go-live.</span></div>
+<div class="card ai" data-search="lab-standard the construction standard behind this repo&#x27;s measurement labs (`backtest_lab`, `season_scan`, `calibration_audit`, `night_lab`, `crypto_scan`, `prop_sim`, `spec_desk`, `kronos_lab`, `spend_watch`) — pure core, convict-and-acquit tests on planted synthetic data, no network in tests, a `docs/`…"><span class="name">lab-standard</span><span class="blurb">The construction standard behind this repo&#x27;s measurement labs (<code>backtest_lab</code>, <code>season_scan</code>, <code>calibration_audit</code>, <code>night_lab</code>, <code>crypto_scan</code>, <code>prop_sim</code>, <code>spec_desk</code>, <code>kronos_lab</code>, <code>spend_watch</code>) — pure core, convict-and-acquit tests on planted synthetic data, no network in tests, a <code>docs/</code>…</span></div>
+<div class="card ai" data-search="pine-converter close the next gap in the pine→backtrader converter (`pwb_toolbox.converting`) by measurement rather than guess — sweep the corpus, read the ranking correctly, fix the top sole-blocker, re-sweep to prove the number moved, and test through a real cerebro."><span class="name">pine-converter</span><span class="blurb">Close the next gap in the Pine→Backtrader converter (<code>pwb_toolbox.converting</code>) by measurement rather than guess — sweep the corpus, read the ranking correctly, fix the top sole-blocker, re-sweep to prove the number moved, and test through a real cerebro.</span></div>
+<div class="card ai" data-search="pre-trade-pack build a pre-trade pack for a ticker before a manual order goes in — quote and context, option greeks and decay, the trade_card commitment card with every gate run, position sizing against the account, and a locked-thesis block ready to paste into the trade journal before execution."><span class="name">pre-trade-pack</span><span class="blurb">Build a pre-trade pack for a ticker before a manual order goes in — quote and context, option greeks and decay, the trade_card commitment card with every gate run, position sizing against the account, and a locked-thesis block ready to paste into the trade journal BEFORE execution.</span></div>
+<div class="card ai" data-search="process-mapping the craft standard for drawing a business process as a map — branch grammar (loop-back, divergence, converge), labeled connectors, go-to steps for long loop-backs, verb-first step titles, person/automation/ai-agent executors, duration x frequency costing, and mini-sop notes."><span class="name">process-mapping</span><span class="blurb">The craft standard for drawing a business process as a map — branch grammar (loop-back, divergence, converge), labeled connectors, go-to steps for long loop-backs, verb-first step titles, Person/Automation/AI-agent executors, duration x frequency costing, and mini-SOP notes.</span></div>
+<div class="card ai" data-search="spend-safety how to keep an automated or unattended agent from spending real money — the layered safeguards, the pre-flight checklist for any new paid service, and the rule that a guardrail must never block legitimate automation."><span class="name">spend-safety</span><span class="blurb">How to keep an automated or unattended agent from spending real money — the layered safeguards, the pre-flight checklist for any new paid service, and the rule that a guardrail must never block legitimate automation.</span></div>
+<div class="card ai" data-search="steward repo-specific cap on pull-request stewardship for pwb-toolbox."><span class="name">steward</span><span class="blurb">Repo-specific cap on pull-request stewardship for pwb-toolbox.</span></div>
+  </div>
+</section>
+
+<section id="pages">
+  <div class="sec-head">
+    <h2>Pages that open in a browser<span class="count">9</span></h2>
+    <p class="sec-note">Single files, no build step. Titles are read from each page itself.</p>
+  </div>
+  <div class="grid">
+<div class="card auto" data-search="static/blueprint-builder.html blueprint builder - operations framework"><span class="name">static/blueprint-builder.html</span><span class="blurb">Blueprint Builder - Operations Framework</span></div>
+<div class="card auto" data-search="static/blueprint-dashboard.html blueprint dashboard - visual operations map"><span class="name">static/blueprint-dashboard.html</span><span class="blurb">Blueprint Dashboard - Visual Operations Map</span></div>
+<div class="card auto" data-search="static/flow-canvas.html flow canvas"><span class="name">static/flow-canvas.html</span><span class="blurb">Flow Canvas</span></div>
+<div class="card auto" data-search="static/karaoke-box.html karaoke box"><span class="name">static/karaoke-box.html</span><span class="blurb">Karaoke Box</span></div>
+<div class="card auto" data-search="static/spicy-lab.html spicy lab"><span class="name">static/spicy-lab.html</span><span class="blurb">Spicy Lab</span></div>
+<div class="card auto" data-search="static/strategy-lab.html strategy lab"><span class="name">static/strategy-lab.html</span><span class="blurb">Strategy Lab</span></div>
+<div class="card auto" data-search="docs/desk-index.html desk index"><span class="name">docs/desk-index.html</span><span class="blurb">Desk Index</span></div>
+<div class="card auto" data-search="docs/index.html pwb-toolbox — backtesting for people who care about the fill"><span class="name">docs/index.html</span><span class="blurb">pwb-toolbox — backtesting for people who care about the fill</span></div>
+<div class="card auto" data-search="docs/one-person-ai-company.html one-person ai company"><span class="name">docs/one-person-ai-company.html</span><span class="blurb">One-Person AI Company</span></div>
+  </div>
+</section>
+
+<section id="library">
+  <div class="sec-head">
+    <h2>The shipped library<span class="count">8</span></h2>
+    <p class="sec-note">One line per subpackage, read from its own docstring.</p>
+  </div>
+  <div class="grid">
+<div class="card auto" data-search="pwb_toolbox.backtesting `basestrategy`: convenience strategy parent class that keeps a progress bar, records nav history, exposes `is_tradable`, and returns the latest portfolio sizing."><span class="name">pwb_toolbox.backtesting</span><span class="blurb"><code>BaseStrategy</code>: Convenience strategy parent class that keeps a progress bar, records NAV history, exposes <code>is_tradable</code>, and returns the latest portfolio sizing.</span></div>
+<div class="card auto" data-search="pwb_toolbox.converting convert pinescript strategies into backtrader ones."><span class="name">pwb_toolbox.converting</span><span class="blurb">Convert PineScript strategies into Backtrader ones.</span></div>
+<div class="card auto" data-search="pwb_toolbox.datasets load daily stock price data for specific symbols using the load_dataset function."><span class="name">pwb_toolbox.datasets</span><span class="blurb">Load daily stock price data for specific symbols using the load_dataset function.</span></div>
+<div class="card auto" data-search="pwb_toolbox.execution the module `pwb_toolbox.execution.optimal_limit_order` implements the optimal limit‑order placement framework described in [optimal portfolio liquidation with limit orders](https://arxiv.org/abs/1106.3279) by guéant, lehalle, and tapia."><span class="name">pwb_toolbox.execution</span><span class="blurb">The module <code>pwb_toolbox.execution.optimal_limit_order</code> implements the optimal limit‑order placement framework described in [Optimal Portfolio Liquidation with Limit Orders](https://arxiv.org/abs/1106.3279) by Guéant, Lehalle, and Tapia.</span></div>
+<div class="card auto" data-search="pwb_toolbox.journal trade-journal parsing and diagnostics."><span class="name">pwb_toolbox.journal</span><span class="blurb">Trade-journal parsing and diagnostics.</span></div>
+<div class="card auto" data-search="pwb_toolbox.options option pricing and hold-time analytics for long single-leg positions."><span class="name">pwb_toolbox.options</span><span class="blurb">Option pricing and hold-time analytics for long single-leg positions.</span></div>
+<div class="card auto" data-search="pwb_toolbox.performance "><span class="name">pwb_toolbox.performance</span><span class="blurb"></span></div>
+<div class="card auto" data-search="pwb_toolbox.scraping collect pinescript and thinkscript source code from the web."><span class="name">pwb_toolbox.scraping</span><span class="blurb">Collect PineScript and thinkScript source code from the web.</span></div>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="sec-head">
+    <h2>Every decision on record<span class="count">31</span></h2>
+    <p class="sec-note">One file per decision, newest first. A later correction
+    is a new entry that supersedes an old one &mdash; nothing here is ever
+    rewritten, so an entry may have been overtaken.</p>
+  </div>
+  <div class="filter">
+    <input id="q" type="search" placeholder="Filter decisions &mdash; try noise floor, spend, routine, timezone"
+           aria-label="Filter decisions">
+    <span class="hits" id="hits">31 shown</span>
+  </div>
+  <div id="decs">
+<article class="dec" data-search="the vault rules are public; the vault is not the obsidian vault&#x27;s operating half — standing rules, the nine ai operating rules, the note schema and field values, and the working preferences — is canonical in this repository at `docs/vault-operating-manual.md`. its personal half — the profile, an active legal matter, the topic-note index that names it, and the night-by-night history of how the vault was built — stays out, and lives only… 2026-08-29"><span class="date">2026-08-29</span><h3>The vault rules are public; the vault is not</h3><p>The Obsidian vault&#x27;s operating half — standing rules, the nine AI operating rules, the note schema and field values, and the working preferences — is canonical in this repository at <code>docs/vault-operating-manual.md</code>. Its personal half — the profile, an active legal matter, the topic-note index that names it, and the night-by-night history of how the vault was built — stays out, and lives only…</p></article>
+<article class="dec" data-search="the morning scan died on a *successful* `git fetch` the desk-watch protocol; that file said the cause was unknown and outside this repository, and it is now known. the bug: in `scripts\spicy-desk-morning-scan.ps1` (the owner&#x27;s machine, not this repo), the opportunistic fast-forward block runs ```powershell git fetch jay 2&gt;&amp;1 | out-string | add-content -path $log -encoding utf8 ``` under a file-level `$erroractionpreference… 2026-08-29"><span class="date">2026-08-29</span><h3>The morning scan died on a *successful* `git fetch`</h3><p>the desk-watch protocol; that file said the cause was unknown and outside this repository, and it is now known. The bug: in <code>Scripts\spicy-desk-morning-scan.ps1</code> (the owner&#x27;s machine, not this repo), the opportunistic fast-forward block runs ``<code>powershell git fetch jay 2&gt;&amp;1 | Out-String | Add-Content -Path $log -Encoding utf8 </code>`<code> under a file-level </code>$ErrorActionPreference…</p></article>
+<article class="dec" data-search="skills, docs and pull requests are all claude-facing; the owner had no door none of them, and the framing is the finding. all three are written for a claude session to read. 2026-08-29"><span class="date">2026-08-29</span><h3>Skills, docs and pull requests are all Claude-facing; the owner had no door</h3><p>none of them, and the framing is the finding. All three are written for a Claude session to read.</p></article>
+<article class="dec" data-search="retiring the live work dashboard retire it. do not rebuild it as a static page. 2026-08-29"><span class="date">2026-08-29</span><h3>Retiring the Live Work Dashboard</h3><p>Retire it. Do not rebuild it as a static page.</p></article>
+<article class="dec" data-search="a tool that needs a local path should find it, not ask for it `tools/obsidian_sync.py` discovers the vault itself. `--vault` is optional and now only an override. 2026-08-29"><span class="date">2026-08-29</span><h3>A tool that needs a local path should find it, not ask for it</h3><p><code>tools/obsidian_sync.py</code> discovers the vault itself. <code>--vault</code> is optional and now only an override.</p></article>
+<article class="dec" data-search="vwap measured against the noise floor: no tradeable edge (pr #127) the vwap setups have now been run against the two-vendor noise floor that the lab&#x27;s own decision entry said no number would be believed without. on btc, three years, real matched volume, costs charged: all three setups lose, and the loss is transaction cost. gross edge is approximately zero. 2026-08-25"><span class="date">2026-08-25</span><h3>VWAP measured against the noise floor: no tradeable edge (PR #127)</h3><p>The VWAP setups have now been run against the two-vendor noise floor that the lab&#x27;s own decision entry said no number would be believed without. On BTC, three years, real matched volume, costs charged: all three setups lose, and the loss is transaction cost. Gross edge is approximately zero.</p></article>
+<article class="dec" data-search="the one-person ai company as a checkable reference a framework for running a local service business with agents enters this repository as data with checks attached, not as prose that describes itself. `docs/blueprint-one-person-ai-company.json` is the architecture in the existing blueprint schema; `tools/ai_company.py` is the part that can be computed; `docs/one-person-ai-company.md` is the reasoning. 2026-08-25"><span class="date">2026-08-25</span><h3>The one-person AI company as a checkable reference</h3><p>A framework for running a local service business with agents enters this repository as data with checks attached, not as prose that describes itself. <code>docs/blueprint-one-person-ai-company.json</code> is the architecture in the existing blueprint schema; <code>tools/ai_company.py</code> is the part that can be computed; <code>docs/one-person-ai-company.md</code> is the reasoning.</p></article>
+<article class="dec" data-search="the brake was on the connector, not on the path give `ccxtconnector` the same two-key live-order brake `ibconnector` has, and move the shared primitives into `pwb_toolbox/execution/_live_guard.py` so the two connectors cannot drift on what &quot;live&quot; means. sandbox is exempt, reads off the connected exchange, and an exchange that is not demonstrably in sandbox is treated as live. 2026-08-25"><span class="date">2026-08-25</span><h3>The brake was on the connector, not on the path</h3><p>Give <code>CCXTConnector</code> the same two-key live-order brake <code>IBConnector</code> has, and move the shared primitives into <code>pwb_toolbox/execution/_live_guard.py</code> so the two connectors cannot drift on what &quot;live&quot; means. Sandbox is exempt, reads off the connected exchange, and an exchange that is not demonstrably in sandbox is treated as live.</p></article>
+<article class="dec" data-search="vwap lab: the fade as candidate, the crossover as control (pr #111) add the vwap strategy family — `pwb_toolbox/backtesting/vwap.py` (`sessionvwap` indicator with volume-weighted σ bands; `vwapstrategy` with three setups), `tools/vwap_lab.py` (driver through `backtest_lab`: costs charged, bps-normalised, two-vendor noise floor per setup), and `pine/vwap_strategy.pine` (the tradingview reading of the same rules). a sourced vwap section joins… 2026-08-24"><span class="date">2026-08-24</span><h3>VWAP lab: the fade as candidate, the crossover as control (PR #111)</h3><p>Add the VWAP strategy family — <code>pwb_toolbox/backtesting/vwap.py</code> (<code>SessionVwap</code> indicator with volume-weighted σ bands; <code>VwapStrategy</code> with three setups), <code>tools/vwap_lab.py</code> (driver through <code>backtest_lab</code>: costs charged, bps-normalised, two-vendor noise floor per setup), and <code>pine/vwap_strategy.pine</code> (the TradingView reading of the same rules). A sourced VWAP section joins…</p></article>
+<article class="dec" data-search="the stream&#x27;s second haul: the night, the timeframe, the model three more things from the same live stream, chosen by the owner from a ranked list. all three are measurements of things we were already assuming, and none of them needed a new nightly command — each folds into a job the scheduled task already runs. 2026-08-24"><span class="date">2026-08-24</span><h3>The stream&#x27;s second haul: the night, the timeframe, the model</h3><p>Three more things from the same live stream, chosen by the owner from a ranked list. All three are measurements of things we were already assuming, and none of them needed a new nightly command — each folds into a job the scheduled task already runs.</p></article>
+<article class="dec" data-search="the ledger&#x27;s shape is the defect, and a clean merge proved it fold the two competing lead-agent ledger corrections (#112, #114) into one update, and record what arming the fleet measured. fleet paused at the owner&#x27;s instruction the same night — routines disabled, lead sessions kept, resumable with two calls. 2026-08-24"><span class="date">2026-08-24</span><h3>The ledger&#x27;s shape is the defect, and a clean merge proved it</h3><p>Fold the two competing lead-agent ledger corrections (#112, #114) into one update, and record what arming the fleet measured. Fleet paused at the owner&#x27;s instruction the same night — Routines disabled, lead sessions kept, resumable with two calls.</p></article>
+<article class="dec" data-search="the dollars were never dollars stop pricing this account&#x27;s work in dollars. 2026-08-24"><span class="date">2026-08-24</span><h3>The dollars were never dollars</h3><p>Stop pricing this account&#x27;s work in dollars.</p></article>
+<article class="dec" data-search="stream intel: costs closed, prop evals priced a live stream&#x27;s backtest-hygiene argument was distilled into `docs/field-notes-prop-firms-and-data.md` and acted on the same day. four changes: `reversal_15m_sim` now charges costs by default (1bp round trip, `--no-costs` to compare) with the export bridge netting the friction so the night lab&#x27;s r stays consistent; the sim reports profit factor, sortino, max drawdown in r, and a chronological… 2026-08-24"><span class="date">2026-08-24</span><h3>Stream intel: costs closed, prop evals priced</h3><p>A live stream&#x27;s backtest-hygiene argument was distilled into <code>docs/field-notes-prop-firms-and-data.md</code> and acted on the same day. Four changes: <code>reversal_15m_sim</code> now charges costs by default (1bp round trip, <code>--no-costs</code> to compare) with the export bridge netting the friction so the night lab&#x27;s R stays consistent; the sim reports profit factor, Sortino, max drawdown in R, and a chronological…</p></article>
+<article class="dec" data-search="guard the irreversible path, not the whole surface bound what can actually cost money, after measuring the window drain showed that token metering was never this repo&#x27;s largest exposure. `docs/token-drain-2026-08-24.md` has the measurement; `docs/spend-safety.md` has the ranked inventory of every surface that can reach a card; the `spend-safety` skill carries the rules to future sessions and other projects. 2026-08-24"><span class="date">2026-08-24</span><h3>Guard the irreversible path, not the whole surface</h3><p>Bound what can actually cost money, after measuring the window drain showed that token metering was never this repo&#x27;s largest exposure. <code>docs/token-drain-2026-08-24.md</code> has the measurement; <code>docs/spend-safety.md</code> has the ranked inventory of every surface that can reach a card; the <code>spend-safety</code> skill carries the rules to future sessions and other projects.</p></article>
+<article class="dec" data-search="deleting a merged head branch orphans any pr stacked on it salvaged from three superseded ledger branches (`claude/claude-md-state`, `claude/fleet-lead-a-ledger`, `claude/ledger-accuracy-lead-b`), which were closed without merging because they each rewrote a `claude.md` state block that no longer exists. everything else they carried was already on `main`; this was the one fact that was not written down anywhere. 2026-08-24"><span class="date">2026-08-24</span><h3>Deleting a merged head branch orphans any PR stacked on it</h3><p>Salvaged from three superseded ledger branches (<code>claude/claude-md-state</code>, <code>claude/fleet-lead-a-ledger</code>, <code>claude/ledger-accuracy-lead-b</code>), which were closed without merging because they each rewrote a <code>CLAUDE.md</code> state block that no longer exists. Everything else they carried was already on <code>main</code>; this was the one fact that was not written down anywhere.</p></article>
+<article class="dec" data-search="agent fleet: liveness by scheduler, judgment by model (pr #109) write the owner&#x27;s multi-agent daily driver down and fix its architecture on paper before arming anything: `docs/agent-fleet.md` (critique and design) plus the `agent-fleet` skill (the operating procedure). the two lead agents stop being each other&#x27;s watchdog — mutual restart cannot catch correlated failures, proven twice in one day when usage-limit outages stopped both leads and the task they… 2026-08-24"><span class="date">2026-08-24</span><h3>Agent fleet: liveness by scheduler, judgment by model (PR #109)</h3><p>Write the owner&#x27;s multi-agent daily driver down and fix its architecture on paper before arming anything: <code>docs/agent-fleet.md</code> (critique and design) plus the <code>agent-fleet</code> skill (the operating procedure). The two lead agents stop being each other&#x27;s watchdog — mutual restart cannot catch correlated failures, proven twice in one day when usage-limit outages stopped both leads and the task they…</p></article>
+<article class="dec" data-search="a written rule with no check behind it lasted eight hours rules about spend get a check that runs, or they do not count. `tools/spend_watch.py` gains a duplicate-routine detector, a negation-aware re-arm detector and a window that respects `ratelimittype`; a `userpromptsubmit` hook warns when the current session has itself grown expensive. 2026-08-24"><span class="date">2026-08-24</span><h3>A written rule with no check behind it lasted eight hours</h3><p>Rules about spend get a check that runs, or they do not count. <code>tools/spend_watch.py</code> gains a duplicate-Routine detector, a negation-aware re-arm detector and a window that respects <code>rateLimitType</code>; a <code>UserPromptSubmit</code> hook warns when the current session has itself grown expensive.</p></article>
+<article class="dec" data-search="a $290 session that did no work, and the cap that follows cap pr stewardship in this repo. `.claude/skills/steward/skill.md` is now read before any session acts on a ci or review event here. 2026-08-24"><span class="date">2026-08-24</span><h3>A $290 session that did no work, and the cap that follows</h3><p>Cap PR stewardship in this repo. <code>.claude/skills/steward/SKILL.md</code> is now read before any session acts on a CI or review event here.</p></article>
+<article class="dec" data-search="seasonality lab: calendar rotation measured, not remembered add `tools/season_scan.py` — batch seasonal analysis over the sector etfs, index baselines, crypto and the owner&#x27;s own names, with a three-gate evidence standard: within-year permutation test (2,000 reshuffles), split-half agreement across the years, and bh-fdr across the scanned grid. almanac folklore is pre-registered and judged one-sided on its own terms, verdicts published held/failed. 2026-08-23"><span class="date">2026-08-23</span><h3>Seasonality lab: calendar rotation measured, not remembered</h3><p>Add <code>tools/season_scan.py</code> — batch seasonal analysis over the sector ETFs, index baselines, crypto and the owner&#x27;s own names, with a three-gate evidence standard: within-year permutation test (2,000 reshuffles), split-half agreement across the years, and BH-FDR across the scanned grid. Almanac folklore is pre-registered and judged one-sided on its own terms, verdicts published HELD/FAILED.</p></article>
+<article class="dec" data-search="overnight stress lab on a local model (&quot;good night&quot;) add `tools/night_lab.py` — a 1am-8am unattended stress lab driven by a local ollama model, triggered by saying &quot;good night&quot;. four job kinds: adversarial attacks on open theses, shock scenarios over the closed record, parameter fragility sweeps, and leak-mining the paper history. 2026-08-23"><span class="date">2026-08-23</span><h3>Overnight stress lab on a local model (&quot;good night&quot;)</h3><p>Add <code>tools/night_lab.py</code> — a 1am-8am unattended stress lab driven by a local Ollama model, triggered by saying &quot;good night&quot;. Four job kinds: adversarial attacks on open theses, shock scenarios over the closed record, parameter fragility sweeps, and leak-mining the paper history.</p></article>
+<article class="dec" data-search="strategycomparator: the portfolio side (pr #90) a reusable harness, `pwb_toolbox.backtesting.comparator`, that runs several strategies over identical data and reports how they interact. 2026-08-22"><span class="date">2026-08-22</span><h3>StrategyComparator: the portfolio side (PR #90)</h3><p>A reusable harness, <code>pwb_toolbox.backtesting.comparator</code>, that runs several strategies over identical data and reports how they interact.</p></article>
+<article class="dec" data-search="speculative desk: walled-off high-risk paper pot (&quot;trade spicy&quot;) add a second, deliberately speculative track beside the core program: `tools/spec_desk.py` (ledger + rules) and `docs/spec-desk.md` (agent protocol). four lanes — 15–45 dte option buys, 0–7 dte lotteries (sub-capped at 2.5%), momentum stocks, defined-risk credit spreads. 2026-08-22"><span class="date">2026-08-22</span><h3>Speculative desk: walled-off high-risk paper pot (&quot;trade spicy&quot;)</h3><p>Add a second, deliberately speculative track beside the core program: <code>tools/spec_desk.py</code> (ledger + rules) and <code>docs/spec-desk.md</code> (agent protocol). Four lanes — 15–45 DTE option buys, 0–7 DTE lotteries (sub-capped at 2.5%), momentum stocks, defined-risk credit spreads.</p></article>
+<article class="dec" data-search="paper-first trading program: wisdom base + crypto scanner + condor mock run start a paper-first trading program with hard gates to live money. three pieces shipped together: `docs/trading-wisdom.md` (ten sourced, machine-enforceable risk rules and the evidence base), `tools/crypto_scan.py` (the &quot;trade crypto&quot; screener over evidence-backed momentum signals), and a weekly spx/xsp iron condor mock run starting monday (paper only, collecting expected-move-vs-realized data). 2026-08-22"><span class="date">2026-08-22</span><h3>Paper-first trading program: wisdom base + crypto scanner + condor mock run</h3><p>Start a paper-first trading program with hard gates to live money. Three pieces shipped together: <code>docs/trading-wisdom.md</code> (ten sourced, machine-enforceable risk rules and the evidence base), <code>tools/crypto_scan.py</code> (the &quot;trade crypto&quot; screener over evidence-backed momentum signals), and a weekly SPX/XSP iron condor mock run starting Monday (paper only, collecting expected-move-vs-realized data).</p></article>
+<article class="dec" data-search="kronos foundation model: measured, no zero-shot edge (pr #93) before integrating the kronos k-line foundation model (shiyu-coder/kronos) anywhere, measure it with `tools/kronos_lab.py`. result on kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all post-training-cutoff 2026 data: btc-usd 46.7% direction hit rate (p=0.70), es=f 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse than persistence on both. 2026-08-22"><span class="date">2026-08-22</span><h3>Kronos foundation model: measured, no zero-shot edge (PR #93)</h3><p>Before integrating the Kronos K-line foundation model (shiyu-coder/Kronos) anywhere, measure it with <code>tools/kronos_lab.py</code>. Result on Kronos-small, zero-shot, 60 non-overlapping 12-bar windows of hourly bars, all post-training-cutoff 2026 data: BTC-USD 46.7% direction hit rate (p=0.70), ES=F 51.7% (p=0.90), information coefficients ≈ 0 on both, path error worse than persistence on both.</p></article>
+<article class="dec" data-search="desk agent + risk model (pr #78) build an agent that enforces position limits, exposure caps, and live risk alerts across all three strategies. 2026-08-22"><span class="date">2026-08-22</span><h3>Desk Agent + Risk Model (PR #78)</h3><p>Build an agent that enforces position limits, exposure caps, and live risk alerts across all three strategies.</p></article>
+<article class="dec" data-search="cross-instrument backtest lab (pr #87) build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis. 2026-08-22"><span class="date">2026-08-22</span><h3>Cross-Instrument Backtest Lab (PR #87)</h3><p>Build a harness to test all three strategies side-by-side on identical data, with full correlation and diversification analysis.</p></article>
+<article class="dec" data-search="blueprint as operating system turn claude.md into a machine-readable operating system that drives both the dashboard and claude&#x27;s decision context. 2026-08-22"><span class="date">2026-08-22</span><h3>Blueprint as Operating System</h3><p>Turn CLAUDE.md into a machine-readable operating system that drives both the dashboard and Claude&#x27;s decision context.</p></article>
+<article class="dec" data-search="live work dashboard build github-connected dashboard instead of static blueprint. 2026-08-20"><span class="date">2026-08-20</span><h3>Live Work Dashboard</h3><p>Build GitHub-connected dashboard instead of static blueprint.</p></article>
+<article class="dec" data-search="converter test coverage test `pwb_toolbox.converting` by compiling generated backtrader code + running on synthetic bars, not just parsing. 2026-08-15"><span class="date">2026-08-15</span><h3>Converter Test Coverage</h3><p>Test <code>pwb_toolbox.converting</code> by compiling generated Backtrader code + running on synthetic bars, not just parsing.</p></article>
+<article class="dec" data-search="ict am/ob strategy refactor hoist computed security reads instead of subscripting floats in `next()`. 2026-08-10"><span class="date">2026-08-10</span><h3>ICT AM/OB Strategy Refactor</h3><p>Hoist computed security reads instead of subscripting floats in <code>next()</code>.</p></article>
+<article class="dec" data-search="t-bill ladder offline-first design accept `--rate` overrides instead of calling treasury when live data blocked. 2026-08-01"><span class="date">2026-08-01</span><h3>T-Bill Ladder Offline-First Design</h3><p>Accept <code>--rate</code> overrides instead of calling Treasury when live data blocked.</p></article>
+  </div>
+  <p class="empty" id="none" hidden>Nothing matches that.</p>
+</section>
+
+<footer>
+  <span>Generated by <code>python tools/front_door.py build</code>. Every line
+  above is read from the repository &mdash; nothing on this page is typed into
+  it, so re-running the command is the only way to change it.</span>
+  <span>House style: <code>docs/page-style.md</code>. The rule about what may
+  not be recorded: <code>CLAUDE.md</code>, under <em>The ledger</em>.</span>
+</footer>
+</div>
+
+<script>
+(function () {
+  var q = document.getElementById('q');
+  var hits = document.getElementById('hits');
+  var none = document.getElementById('none');
+  var rows = Array.prototype.slice.call(
+    document.querySelectorAll('#decs .dec'));
+  function apply() {
+    var term = q.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (row) {
+      var match = !term || row.dataset.search.indexOf(term) !== -1;
+      row.hidden = !match;
+      if (match) shown++;
+    });
+    hits.textContent = shown + ' shown';
+    none.hidden = shown !== 0;
+  }
+  q.addEventListener('input', apply);
+  apply();
+})();
+</script>

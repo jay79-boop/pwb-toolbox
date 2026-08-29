@@ -188,6 +188,25 @@ until the agent is moved.
 
 **The account is deliberately not named here.** This fork is public.
 
+### Two plan limits that look like broken tooling
+
+The login is on the **Basic** plan. Both of the limits below were mistaken for a
+broken tool before the cause was found, and both fail the way this repo keeps
+running into — quietly, with a plausible-looking result.
+
+- **Bar replay below the daily timeframe is Premium-only, and `replay_start`
+  answers `not started` rather than erroring.** The playbook explicitly permits
+  replay's simulated buy/sell (it is not an order), so an agent will reach for
+  it, retry it, and screenshot the result before anything mentions a paywall.
+  Read `not started` on an intraday chart as the plan limit, not as a failed
+  call.
+- **TradingView Desktop reopens on BTCUSD, 1D, with its six default studies** —
+  on every relaunch *and* on every MCP reconnect, which the debug-port dance
+  makes routine. Symbol, timeframe and any injected script all have to be
+  re-applied before a result is read. Skip it and the number gets taken off the
+  wrong instrument, or off an empty chart, and nothing about the screenshot says
+  so.
+
 ## The journal job reads one directory outside the repository
 
 `trade-journal.html` is on your disk and not in this repo, and a headless

@@ -243,7 +243,8 @@ python tools/ai_company.py gates          # can any agent commit money unsupervi
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
-python tools/obsidian_sync.py sync --dry-run  # mirror the vault into docs/journal; finds it itself
+python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
+python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
 ```
 
 `docs/layout.md` lists the rest with what each is for.
@@ -340,6 +341,23 @@ removed at their request: it is a personal document and this fork is public.
   opens from `file://`. Edit the module here, run the tests, then re-inline the
   whole file — never patch the inlined copy, or the tested version and the
   running version stop being the same code.
+
+## Nor is the Obsidian vault — do not mirror it here
+
+`tools/obsidian_sync.py` can mirror the vault into `docs/journal`. **Decided
+2026-08-29: it is not pointed at this repository.** `docs/journal/` is gitignored
+and `--commit`/`--push` refuse there, so a sync into this fork now fails by
+design rather than by anyone remembering.
+
+The reason is not that the vault is dangerous — the content checked clean. It is
+that a session here needs the vault's *rules*, and `docs/vault-operating-manual.md`
+already carries those, canonically. Mirroring the rest into a public fork bought
+nothing. Two sessions built opposite halves of this on the same day without
+knowing, so: **do not re-point it here, and do not work around the guard.** Use
+it for a local mirror if you want one.
+
+Reasoning in
+`docs/decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md`.
 
 ## The user's local checkout
 

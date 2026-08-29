@@ -11,6 +11,12 @@ top-level directories and points here for the detail.
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
 - `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
+- `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
+  every command, skill, page, subpackage and decision, each one-liner read from
+  the file it describes rather than kept in a list beside it. Carries **no** live
+  state — open pull requests, CI and SHAs are derived at read time by the rule in
+  `CLAUDE.md` under *The ledger*, and `tests/test_front_door.py` fails if a later
+  session adds any
 - `tools/analyze_trades.py` — turns a Schwab transaction export into a diagnosis of your trading
 - `tools/bill_ladder.py` — settles roll-vs-hold on the T-bill curve, sizes a
   ladder from the maturities Treasury actually sells, and prices the state-tax
@@ -255,7 +261,11 @@ top-level directories and points here for the detail.
   silently clobbers a directory it did not create. A `.syncignore` file at the
   vault root (gitignore-style patterns) excludes anything that should not
   leave the vault; `.obsidian/`, `.trash/`, and other dotfolders are always
-  excluded. `--commit`/`--push` wraps the git side. Must run where the vault's
+  excluded. **`docs/journal/` is gitignored and the vault is not mirrored into
+  this repo at all** (decided 2026-08-29 — the vault turned out to be the Claude
+  config repo, and this fork is public), so `--commit`/`--push` refuse here
+  rather than staging nothing and reporting success; they still work for a
+  checkout that tracks the mirror. Must run where the vault's
   files are readable — a local machine or WSL, never a cloud session, which has
   no access to the vault at all (`tests/test_obsidian_sync.py`)
 - `tools/install_workspace_dirs.py` — ends "it can only see one repo" for local
