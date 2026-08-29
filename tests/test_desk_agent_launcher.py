@@ -248,3 +248,67 @@ def test_a_missing_directory_is_dropped_rather_than_passed_on():
         "that had nothing else wrong with it, and the failure names the flag "
         "rather than the job"
     )
+
+
+# ------------------------------------------- saying which version just ran --
+#
+# A registration run used to print a summary and nothing else, so "did that use
+# the version with my fix in it?" could only be answered by recognising the
+# wording of the output -- which is how a run against a stale checkout went
+# undiagnosed on 2026-08-29. The script now names the commit behind each moving
+# part. These pin that it keeps doing so, and that it cannot grow into the
+# staleness check CLAUDE.md warns against.
+
+
+def test_the_run_names_the_commit_behind_every_moving_part():
+    src = read(SCHEDULER)
+    assert (
+        "'rev-parse', '--short', 'HEAD'" in src
+    ), "the checkout's commit is never read"
+    assert re.search(
+        r"Get-FileVersion \$\w+ 'tools/register_desk_agent\.ps1'", src
+    ), "the running script's own version is never reported"
+    assert re.search(
+        r"Get-FileVersion \$\w+ 'tools/desk_agent/run_job\.ps1'", src
+    ), "the launcher's version is never reported -- the copy is what executes"
+
+
+def test_the_summary_line_carries_the_version():
+    # It is the line that gets read at a glance and pasted back, so a version
+    # reported only in a header that has scrolled away is not reported at all.
+    lines = [
+        line
+        for line in read(SCHEDULER).splitlines()
+        if "Write-Host" in line and "Registered " in line
+    ]
+    assert len(lines) == 1, lines
+    assert "$version" in lines[0], lines[0]
+
+
+def test_an_uncommitted_edit_is_not_reported_as_a_clean_commit():
+    body = read(SCHEDULER).split("function Get-FileVersion {", 1)[1].split("\n}", 1)[0]
+    assert "'status', '--porcelain'" in body, (
+        "a commit id is a lie about a file with uncommitted edits on top of it, "
+        "and that is exactly what a half-finished session leaves behind"
+    )
+
+
+def test_a_machine_without_git_still_registers_the_tasks():
+    # Registration is the job; reporting the version is commentary on it. A git
+    # call that throws under `$ErrorActionPreference = 'Stop'` would turn a
+    # working registration into no registration at all.
+    body = read(SCHEDULER).split("function Get-Git {", 1)[1].split("\n}", 1)[0]
+    assert "try {" in body and "} catch {" in body
+    assert "2>$null" in body, "native stderr under Stop is its own way to die"
+    assert body.count("return ''") == 2, "both failure paths must degrade quietly"
+
+
+def test_staleness_is_not_reported_as_an_ahead_behind_count():
+    """CLAUDE.md: an ahead/behind count compares two refs, not two trees."""
+    src = read(SCHEDULER)
+    assert "rev-list" not in src and "--count" not in src, (
+        "an ahead/behind count reads 'up to date' whenever the checkout sits on "
+        "a branch that already contains the ref it is compared with -- which is "
+        "the exact confusion this version stamp exists to end"
+    )
+    assert "fetch" not in src, "registering scheduled tasks must not touch the network"

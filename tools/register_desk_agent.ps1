@@ -121,9 +121,64 @@ Copy-Item -LiteralPath $source -Destination $runner -Force
 # name the real cause.
 [IO.File]::WriteAllText((Join-Path $installDir 'repo_root.txt'), $RepoRoot, (New-Object Text.UTF8Encoding $false))
 
+# Say which commit every moving part came from. Until this existed, a run
+# printed a summary line and nothing on it named the version that produced it,
+# so on 2026-08-29 a run against a stale checkout was caught only by somebody
+# recognising the wording of its own output -- and the diagnosis stayed
+# unproven afterwards, because the evidence had never been printed.
+#
+# Deliberately NOT an ahead/behind count against a remote. That compares two
+# refs rather than two working trees, and reads "up to date" whenever the
+# checkout sits on a branch that already contains the ref it is compared with.
+# CLAUDE.md carries that trap; a per-file commit and date sidesteps it.
+function Get-Git {
+  param([string] $Root, [string[]] $GitArgs)
+  try {
+    $out = & git -C $Root @GitArgs 2>$null
+    if ($LASTEXITCODE -ne 0) { return '' }
+    return ("$out").Trim()
+  } catch {
+    return ''   # git is not on PATH; every caller below degrades to a note
+  }
+}
+
+function Get-FileVersion {
+  param([string] $Root, [string] $RelPath)
+  $stamp = Get-Git $Root @('log', '-1', '--format=%h %ad', '--date=short', '--', $RelPath)
+  if (-not $stamp) { return '(no commit found -- not a git checkout?)' }
+  # A commit id is a lie about a file with uncommitted edits sitting on top of
+  # it, and that is exactly the state a half-finished session leaves behind.
+  if (Get-Git $Root @('status', '--porcelain', '--', $RelPath)) {
+    return ($stamp + '  EDITED, not committed')
+  }
+  return $stamp
+}
+
+$branch  = Get-Git $RepoRoot @('rev-parse', '--abbrev-ref', 'HEAD')
+$head    = Get-Git $RepoRoot @('rev-parse', '--short', 'HEAD')
+$version = if ($head) { $branch + ' @ ' + $head } else { '(not a git checkout)' }
+
+# Which copy of THIS script is running is a different question from which
+# checkout the tasks will use. A second checkout exists at
+# C:\Users\Gexio\pwb-toolbox, so running one checkout's script against the
+# other's -RepoRoot is a real way to read the wrong file's version and believe
+# it. Report the running file from its own tree, and name that tree when the
+# two differ.
+$selfRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { $RepoRoot }
+# A trailing backslash on -RepoRoot is the one difference that is not a
+# difference; string comparison is already case-insensitive here.
+$sameTree = $selfRoot.TrimEnd('\') -eq $RepoRoot.TrimEnd('\')
+
 Write-Host ("Launcher installed at: " + $runner)
 Write-Host ("  repo root: " + $RepoRoot + "  (written to repo_root.txt beside it)")
-Write-Host ("  copied from " + $source + " -- re-run this script after changing it)")
+Write-Host ("  checkout:  " + $version)
+Write-Host ("  this script:  " + (Get-FileVersion $selfRoot 'tools/register_desk_agent.ps1'))
+Write-Host ("  launcher:     " + (Get-FileVersion $RepoRoot 'tools/desk_agent/run_job.ps1'))
+Write-Host ("  copied from " + $source + " -- re-run this script after changing it")
+if (-not $sameTree) {
+  Write-Host ("  WARNING: this script is running out of " + $selfRoot + ", which is not the repo root above.")
+  Write-Host '           Those are two different checkouts and they can hold different versions.'
+}
 
 # StartWhenAvailable is the flag whose absence silently eats overnight runs on a
 # machine that was asleep at the scheduled minute. AllowStartIfOnBatteries and
@@ -257,7 +312,9 @@ $wanted = @($jobs | Where-Object { $_.Enabled }).Count
 $off    = $jobs.Count - $wanted
 
 Write-Host ''
-Write-Host ("Registered " + $ok + " of " + $wanted + " enabled tasks (" + $off + " turned off).")
+# The version rides on the summary line as well as appearing at the top,
+# because the summary is the line that gets read at a glance and pasted back.
+Write-Host ("Registered " + $ok + " of " + $wanted + " enabled tasks (" + $off + " turned off), from " + $version + ".")
 if ($strays -gt 0) {
   # Last line, so it cannot scroll off above the summary and be missed.
   Write-Host ("WARNING: " + $strays + " task(s) are turned off here but STILL REGISTERED in Windows.")
