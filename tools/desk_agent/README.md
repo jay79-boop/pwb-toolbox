@@ -59,6 +59,17 @@ skipped — the run **unregisters** it, so re-running this is how a job gets
 turned off on the machine and not just in the source. `alerts` is currently the
 only one.
 
+**The read-back covers the disabled ones too, and it asks Windows.** Turning a
+job off has two failure modes that look identical in the output:
+`Unregister-ScheduledTask` throws both when there is no such task and when the
+removal fails, so the removal line cannot tell you which happened — and the
+first version of the read-back printed `not scheduled` straight out of the
+source file, having checked nothing. A run could therefore report a job off
+while Windows kept firing it on the old schedule. The read-back now queries
+Windows for a disabled job and prints `STILL ON` with the live trigger count if
+one survives, plus a warning below the tally so it cannot scroll past.
+
+
 Run one immediately, without waiting for its trigger:
 
 ```powershell
