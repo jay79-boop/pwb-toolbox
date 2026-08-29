@@ -222,6 +222,32 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
+- `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
+  plain markdown: `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
+  of non-note files are copied alongside and rewritten, frontmatter passes
+  through untouched. `docs/journal` is treated as fully generated — every run
+  wipes and rewrites it, guarded by a `.obsidian-sync-marker` so it never
+  silently clobbers a directory it did not create. A `.syncignore` file at the
+  vault root (gitignore-style patterns) excludes anything that should not
+  leave the vault; `.obsidian/`, `.trash/`, and other dotfolders are always
+  excluded. `--commit`/`--push` wraps the git side. Must run where the vault's
+  files are readable — a local machine or WSL, never a cloud session, which has
+  no access to the vault at all (`tests/test_obsidian_sync.py`)
+- `tools/install_workspace_dirs.py` — ends "it can only see one repo" for local
+  sessions by registering the **home directory** in
+  `permissions.additionalDirectories` in user-level settings, so every repo
+  including ones created later is reachable with nothing to re-run. A scanned
+  list was the first design and was wrong: a snapshot goes stale on the next
+  `git init`, which is the failure it exists to end (`--repos-only` still does
+  it). The breadth is paired with deny rules, which outrank every allow —
+  `~/.claude/projects` (transcripts carrying SSNs and claim numbers),
+  credentials, `.ssh`, `.aws`, `AppData` — and deny governs Read/Edit only, so a
+  program under those paths still runs. `--diagnose` names which of the two
+  causes you are in and writes nothing; the other cause is a cloud session, where
+  the repo was never cloned and no setting can help. Merges, backs up,
+  idempotent, refuses to overwrite unparseable JSON
+  (`tests/test_install_workspace_dirs.py`); both causes and the four mechanisms
+  are in `docs/working-directories.md`
 - `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
   puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
   go-to steps, status/owner coloring, layered auto-layout, undo, and
@@ -298,6 +324,9 @@ top-level directories and points here for the detail.
   `skills.md` (the bar for turning a repeated job into a skill, the two homes a
   skill can live in, and the retirement rule — with `prompts/` as its staging
   area for long prompts not yet packaged),
+  `vault-operating-manual.md` (the Obsidian vault's standing rules, operating
+  rules and note schema — canonical here; the vault's personal half stays out of
+  this public fork and lives only locally and in a private artifact),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that

@@ -57,6 +57,35 @@ cross-project copy belongs in the `gexio-machine` skill, which is synced from
 their account — a cloud session cannot durably edit it, so that copy has to be
 written from a local session or pasted by them.
 
+## Do the work. Hand back only what genuinely needs them
+
+Asked for on 2026-08-28, after a reply handed over four steps of which one — "run
+`git log --oneline jay/main..main` and paste it back" — was answerable from the
+session in two commands. It was: their `main` tracks `origin`, which is *upstream*
+in the OneDrive checkout, and upstream carried a commit the fork did not. Fetching
+upstream and diffing the two settled it with no round trip at all.
+
+**Before any item goes in a NEEDS YOU block, it has to survive one question: is
+there any route by which this session could do it?** If yes, do it.
+
+Only these are genuinely theirs:
+
+- a credential, a code, or an answer only they hold
+- a GUI action, or a click in a service this session cannot reach
+- a command that must run on their Windows machine when the session is in the
+  cloud and has no path to that disk
+- a decision that changes money, scope, or something hard to reverse
+
+Everything else is ours: reading files, running the suite, checking CI, git
+archaeology, working out which commit diverged and why, comparing two remotes,
+fetching a public repo to answer a question about it, writing the code and
+opening the PR. **"Run this and tell me what it says" is almost always a failure
+to try it here first.**
+
+And batch what is left. One paste that does three things beats three numbered
+steps; a diagnostic step that only feeds the next step should just be folded into
+it.
+
 ## Flagging action items
 
 Anything the user has to do themselves — export a key, restart something, click
@@ -188,6 +217,7 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
@@ -197,6 +227,7 @@ python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python tools/obsidian_sync.py sync --vault PATH --dry-run  # mirror an Obsidian vault into docs/journal (local machine only)
 ```
 
 `docs/layout.md` lists the rest with what each is for.
