@@ -19,7 +19,11 @@ SKILLS = pathlib.Path(__file__).resolve().parent.parent / ".claude" / "skills"
 
 # Vendored skills track upstream and are restored by `uipro init`. They are not
 # ours to reformat, retitle or shrink -- see the last section of docs/skills.md.
-VENDORED = {"ui-ux-pro-max", "build-puzzle-process"}
+# Keep this set to skills that really are restored by an upstream installer:
+# anything listed here is exempt from the description budget below, so a wrong
+# entry hides its cost. `build-puzzle-process` sat here for a week without
+# qualifying, and was retired on 2026-08-29.
+VENDORED = {"ui-ux-pro-max"}
 
 # Description text is paid for on every turn of every session, fired or not.
 # These are tripwires for creep, not hard limits on useful prose: raise them
