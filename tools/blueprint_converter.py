@@ -151,13 +151,13 @@ def row_to_step(row: Any) -> Dict[str, Any]:
 
 def load_json_blueprint(file_path: str) -> Dict[str, Any]:
     """Load a blueprint from JSON file."""
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_json_blueprint(blueprint: Dict[str, Any], file_path: str) -> None:
     """Save a blueprint to JSON file."""
-    with open(file_path, "w") as f:
+    with open(file_path, "w", encoding="utf-8") as f:
         json.dump(blueprint, f, indent=2)
     print(f"✅ Saved to {file_path}")
 

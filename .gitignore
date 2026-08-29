@@ -56,3 +56,15 @@ night_lab/*
 # owner watches and the report derives from it; this fork is public.
 season/*
 !season/README.md
+# Pine converter corpus (docs/converter-corpus.md) - fetched scripts and their
+# manifest. Regenerable by re-running the fetch, and large; not source.
+corpus/
+
+# market_close render output - per-segment TTS script text, regenerated every
+# run and derived from the day's tape.
+render/
+
+# planner_watch local run state. Machine-specific, and the .bak is a scratch
+# copy of the example rather than the tracked example itself.
+watch-state.json
+watch-state.example.bak
