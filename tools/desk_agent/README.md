@@ -54,6 +54,22 @@ It registers every **enabled** task, then reads each one back from Windows and
 prints the next run time. The read-back is the point: `Register-ScheduledTask`
 can fail while the surrounding script still prints that it worked.
 
+Every run also names the commit behind each moving part — the checkout, the copy
+of this script that is running, and the launcher it installs — so the output
+answers "was that the current version?" without anything else being consulted.
+It could not before: on 2026-08-29 a run against a stale checkout was caught
+only because somebody recognised the wording of its own summary line, and the
+diagnosis was never actually proven. A file carrying uncommitted edits is marked
+`EDITED, not committed`, since the commit id is a lie about it, and running the
+script out of one checkout while pointing `-RepoRoot` at the other prints a
+warning naming both.
+
+It is deliberately **not** an ahead/behind count against a remote. That compares
+two refs rather than two working trees, and reports "up to date" whenever the
+checkout sits on a branch that already contains the ref — the trap `CLAUDE.md`
+names, and the one that made the 2026-08-29 diagnosis ambiguous in the first
+place.
+
 A job with `Enabled = $false` in that script's `$jobs` table is not merely
 skipped — the run **unregisters** it, so re-running this is how a job gets
 turned off on the machine and not just in the source. `alerts` is currently the
