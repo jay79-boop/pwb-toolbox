@@ -55,7 +55,9 @@ thing you would do if it were yours.
 This is a standing preference and it is not limited to this repository. The
 cross-project copy belongs in the `gexio-machine` skill, which is synced from
 their account — a cloud session cannot durably edit it, so that copy has to be
-written from a local session or pasted by them.
+written from a local session or pasted by them. It *can* stage one: the vault
+carries a proposed revision a session wrote and could not install, which is the
+worked example in `docs/vault-route.md`.
 
 ## Do the work. Hand back only what genuinely needs them
 
@@ -358,6 +360,17 @@ it for a local mirror if you want one.
 
 Reasoning in
 `docs/decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md`.
+
+**But it is reachable, and that is a different thing.** The vault is the private
+repo `jay79-boop/ray-vault`; a cloud session attaches and clones it in about a
+minute. So "a session here cannot reach the vault" — the premise under the
+paragraph above — is **has not**, not cannot. Read it whenever you need the vault
+rather than its rules, and **never push to it**: the owner's nightly backup does
+`add`/`commit`/`push` with no `pull`, so a commit from a session breaks that
+night's push and lands the failure on them. `docs/vault-route.md` has the route
+and the reasoning, `.claude/skills/vault-route/` the procedure, and
+`tests/test_vault_boundary.py` fails CI if vault content lands in this public fork
+— cite the vault by repo name, never by note path.
 
 ## The user's local checkout
 
