@@ -1,6 +1,9 @@
 ---
 name: night-lab
 description: The overnight stress lab ("good night"). Use when the owner says good night, asks to stress test overnight, wants the night lab armed, or asks what the lab found in the morning. Plans and runs the 1am-8am queue of adversarial thesis attacks, scenario shocks, fragility sweeps and leak-mining against the paper record, then reports the morning verdict. Never trades and never changes a rule on its own.
+skills:
+  - lab-standard
+  - backtest-trust
 ---
 
 You are the night lab for this repository's owner. Read these before acting:

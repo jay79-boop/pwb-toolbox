@@ -4,11 +4,14 @@
     python -m tools.market_close --preview
     python -m tools.market_close --kicker-file kicker.txt --out close.txt
     python -m tools.market_close --segments render/
+    python -m tools.market_close --demo --description close.txt --bio-line bio.txt
 
 ``--segments`` is the one worth knowing about: it writes the script out one
 numbered file per block, which is the order you paste them into ElevenLabs.
 ``--preview`` is the one you'll type most: tape and movers only, to check the
-figures read correctly before committing to a render.
+figures read correctly before committing to a render. ``--description`` and
+``--bio-line`` write the ElevenLabs credit text (with the affiliate link) for
+the platforms the finished video is posted to — see ``description.py``.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
-from . import free, market, script
+from . import description, free, market, script
 from .script import ScriptOptions
 
 
@@ -133,6 +136,26 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="also write one numbered file per segment, in render order",
     )
+    parser.add_argument(
+        "--description",
+        type=Path,
+        metavar="PATH",
+        help="also write a YouTube/long-form description crediting ElevenLabs, "
+        "with the affiliate link, to this path",
+    )
+    parser.add_argument(
+        "--bio-line",
+        type=Path,
+        metavar="PATH",
+        help="also write a one-line ElevenLabs credit for a link-in-bio platform "
+        "(Instagram, TikTok) to this path",
+    )
+    parser.add_argument(
+        "--elevenlabs-link",
+        metavar="URL",
+        help="override the ElevenLabs credit link (else $ELEVENLABS_AFFILIATE_LINK, "
+        "else the default affiliate link)",
+    )
     return parser
 
 
@@ -178,6 +201,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Re-run after the close for the final numbers."
         )
 
+    options = ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker)
+
     if args.preview:
         text = script.preview(facts)
         if not text:
@@ -190,11 +215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "the market. The opening story is the only part a stranger has a "
                 "reason to care about; write one."
             )
-        text = script.render(
-            facts,
-            ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
-            full=args.full,
-        )
+        text = script.render(facts, options, full=args.full)
 
     offenders = warn_on_digits(text)
     if offenders:
@@ -214,6 +235,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             target = args.segments / f"{position:02d}-{name}.txt"
             target.write_text(body + "\n", encoding="utf-8")
         _log(f"wrote segments to {args.segments}/")
+
+    if args.description is not None:
+        args.description.write_text(
+            description.video_description(
+                facts.session_date, options, link=args.elevenlabs_link
+            ),
+            encoding="utf-8",
+        )
+        _log(f"wrote {args.description}")
+
+    if args.bio_line is not None:
+        args.bio_line.write_text(
+            description.bio_line(link=args.elevenlabs_link) + "\n", encoding="utf-8"
+        )
+        _log(f"wrote {args.bio_line}")
 
     if args.out is not None:
         args.out.write_text(text, encoding="utf-8")

@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import pytest
 
-from tools.market_close import free, market, script, spoken
+from tools.market_close import description, free, market, script, spoken
 from tools.market_close.cli import main, warn_on_digits
 from tools.market_close.market import MarketFacts, Quote
 from tools.market_close.script import ScriptOptions
@@ -1357,3 +1357,94 @@ def test_cli_leaves_unrelated_files_in_the_segment_directory(tmp_path):
 
     assert keep.read_text(encoding="utf-8") == "mine\n"
     assert also_keep.read_text(encoding="utf-8") == "mine too\n"
+
+
+# --------------------------------------------------------------------------
+# credit text (description / bio)
+# --------------------------------------------------------------------------
+
+
+def test_affiliate_link_defaults_to_the_raw_url():
+    assert description.affiliate_link() == description._DEFAULT_LINK
+
+
+def test_affiliate_link_prefers_an_explicit_override():
+    assert (
+        description.affiliate_link("https://example.com/x") == "https://example.com/x"
+    )
+
+
+def test_affiliate_link_reads_the_env_var(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_AFFILIATE_LINK", "https://example.com/masked")
+    assert description.affiliate_link() == "https://example.com/masked"
+
+
+def test_affiliate_link_override_wins_over_the_env_var(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_AFFILIATE_LINK", "https://example.com/masked")
+    assert description.affiliate_link("https://example.com/explicit") == (
+        "https://example.com/explicit"
+    )
+
+
+def test_video_description_carries_the_link_and_the_show():
+    text = description.video_description(
+        DAY_TWO, ScriptOptions(anchor="Robin Vale", show="the Closing Bell")
+    )
+    assert description.affiliate_link() in text
+    assert "the Closing Bell" in text
+    assert "Robin Vale" in text
+    assert "2026-08-13" in text
+
+
+def test_video_description_uses_the_resolved_link(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_AFFILIATE_LINK", "https://example.com/masked")
+    text = description.video_description(DAY_TWO, ScriptOptions())
+    assert "https://example.com/masked" in text
+    assert description._DEFAULT_LINK not in text
+
+
+def test_bio_line_is_one_line_and_carries_the_link():
+    line = description.bio_line()
+    assert "\n" not in line
+    assert description.affiliate_link() in line
+
+
+def test_cli_writes_a_description_and_bio_line(tmp_path):
+    desc = tmp_path / "description.txt"
+    bio = tmp_path / "bio.txt"
+    assert (
+        main(
+            [
+                "--demo",
+                "--description",
+                str(desc),
+                "--bio-line",
+                str(bio),
+            ]
+        )
+        == 0
+    )
+    assert description.affiliate_link() in desc.read_text(encoding="utf-8")
+    assert description.affiliate_link() in bio.read_text(encoding="utf-8")
+
+
+def test_cli_elevenlabs_link_overrides_the_credit_link(tmp_path):
+    desc = tmp_path / "description.txt"
+    bio = tmp_path / "bio.txt"
+    assert (
+        main(
+            [
+                "--demo",
+                "--description",
+                str(desc),
+                "--bio-line",
+                str(bio),
+                "--elevenlabs-link",
+                "https://example.com/masked",
+            ]
+        )
+        == 0
+    )
+    assert "https://example.com/masked" in desc.read_text(encoding="utf-8")
+    assert "https://example.com/masked" in bio.read_text(encoding="utf-8")
+    assert description._DEFAULT_LINK not in desc.read_text(encoding="utf-8")
