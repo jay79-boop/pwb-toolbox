@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-29 | [Retiring the Live Work Dashboard](2026-08-29-retiring-the-live-work-dashboard.md) |
 | 2026-08-29 | [The vault rules are public; the vault is not](2026-08-29-the-vault-rules-are-public-the-vault-is-not.md) |
 | 2026-08-25 | [VWAP measured against the noise floor: no tradeable edge (PR #127)](2026-08-25-vwap-measured-against-the-noise-floor-no-tradeable-edge.md) |
 | 2026-08-25 | [The brake was on the connector, not on the path](2026-08-25-the-brake-was-on-the-connector-not-the-path.md) |
