@@ -23,7 +23,11 @@ top-level directories and points here for the detail.
 - `tools/planner_watch.py` — reads that workbook's Watch tab, published as CSV,
   and says when a rung is within reach, a holding has moved, or a position has
   outgrown its limit. Skips anything without a live price rather than alerting
-  on a number somebody typed months ago
+  on a number somebody typed months ago. ⚠️ **The Watch tab is gid
+  `1408071685`.** gid `236071579` is a *plan* tab whose rows parse as zero
+  holdings and zero plans, and the run then prints "Nothing needs a decision" —
+  a clean all-clear that is indistinguishable from a healthy one. Pointing it
+  at the wrong tab is silent (captured 2026-08-19)
 - `tools/engagement.py` — tracks a business through the AI & automation
   readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
   from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
@@ -121,6 +125,16 @@ top-level directories and points here for the detail.
   than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/desk_watch.py` — names every trading session the desk failed to
+  report. Built after three consecutive morning scans (2026-08-25 to 08-27)
+  left no record and nothing said so for four days: a scan that fails silently
+  leaves the same evidence as a quiet market — no plans, nothing to do — so
+  only the calendar separates them. Walks NYSE sessions from date rules (no
+  table to maintain) and separates *missing* from *empty*, because a file the
+  wrapper created and never filled is the failure itself, not a pass. Exits
+  non-zero so a wrapper can react. It is a detector, not a guard: it cannot
+  make the scan write its file, and it does not read what was written.
+  Protocol in `docs/desk-watch.md`
 - `tools/night_lab.py` — the "good night" command: unattended trade stress
   testing between 1am and 8am, driven by a local Ollama model. The design rule
   is **the model proposes, Python computes** — an LLM cannot calculate a
