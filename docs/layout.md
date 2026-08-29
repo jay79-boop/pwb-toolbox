@@ -23,7 +23,11 @@ top-level directories and points here for the detail.
 - `tools/planner_watch.py` — reads that workbook's Watch tab, published as CSV,
   and says when a rung is within reach, a holding has moved, or a position has
   outgrown its limit. Skips anything without a live price rather than alerting
-  on a number somebody typed months ago
+  on a number somebody typed months ago. ⚠️ **The Watch tab is gid
+  `1408071685`.** gid `236071579` is a *plan* tab whose rows parse as zero
+  holdings and zero plans, and the run then prints "Nothing needs a decision" —
+  a clean all-clear that is indistinguishable from a healthy one. Pointing it
+  at the wrong tab is silent (captured 2026-08-19)
 - `tools/engagement.py` — tracks a business through the AI & automation
   readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
   from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
