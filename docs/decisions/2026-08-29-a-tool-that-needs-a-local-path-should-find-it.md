@@ -55,3 +55,34 @@ Making discovery automatic is exactly what raises this stake. Before, the person
 the vault path had at least looked at the vault that turn. Now the tool can find and
 mirror a vault nobody has thought about, which is convenient in the same motion that it
 is dangerous.
+
+## What discovery actually found, and the second fix it forced
+
+Run against the real machine, the registry named two vaults:
+`C:\Users\Gexio\OneDrive\.claude` and `C:\Users\Gexio\OneDrive\.claude\Projects`.
+
+That is not a notes folder. It is the owner's Claude configuration repo — hooks, skills,
+plans, scheduled tasks — and `Projects/` is the session-transcript tree, which the
+`gexio-machine` skill describes as "verbatim chat logs carrying SSNs, claim numbers and
+financial detail", kept out of git by the vault's own `.gitignore`.
+
+`obsidian_sync.py` read `.syncignore` and nothing else, so **every protection that
+`.gitignore` already provided would have been bypassed** by a mirror into `docs/journal`
+on a public fork. A simulation of that vault shape mirrored 4 notes including the
+transcripts; with the fix it mirrors 2 and reports the 2 it held back.
+
+So the tool now honours the vault's own git ignore rules, via `git check-ignore` rather
+than by parsing `.gitignore` — that gets nested ignore files, negation and precedence
+right, and it consults the index, so a file the owner deliberately tracks is still
+mirrored. `--no-gitignore` turns it off.
+
+**The general point is reuse over inference.** A vault that is a git repo already carries
+a curated list of what must not leave it, maintained by the person who knows why. That
+list is a better exclusion set than anything this tool could infer, and it was sitting
+there unread. Prefer the safety list a user already maintains to a parallel one that
+must be kept in sync by hand.
+
+**And it sharpens the earlier point about discovery.** Automatic discovery is what made
+this urgent: the tool can now find, and mirror, a vault nobody has looked at this turn.
+Convenience and hazard arrived in the same commit, which is why the guard belongs in the
+same one.

@@ -21,8 +21,10 @@ against wiping a directory this tool did not create; pass --force to bypass
 it (e.g. on the very first run against a docs/journal that already holds
 something else).
 
-Exclude anything that should never leave the vault by adding lines to a
-`.syncignore` file at the vault root (gitignore-style glob patterns, one per
+A vault that is itself a git repo has its `.gitignore` honoured too, so a
+curated list of what must not be committed is reused rather than rewritten;
+`--no-gitignore` turns that off. Exclude anything else that should never leave
+the vault by adding lines to a `.syncignore` file at the vault root (gitignore-style glob patterns, one per
 line, '#' comments allowed). `.obsidian/`, `.trash/`, `.git/`, and any other
 dotfile or dotfolder are always excluded, along with OS junk files.
 """
@@ -342,8 +344,51 @@ def _matches_ignore(rel_posix: str, patterns: list[str]) -> bool:
     return False
 
 
-def iter_vault_files(vault_root: Path, ignore_patterns: list[str]) -> list[Path]:
-    """List every file in the vault that should be mirrored, in a stable order."""
+def gitignored_paths(vault_root: Path, rel_paths: list[Path]) -> set[Path]:
+    """Ask git which of `rel_paths` the vault's own ignore rules exclude.
+
+    Delegating to `git check-ignore` beats parsing `.gitignore` here: it gets
+    nested ignore files, negation and precedence exactly right, and it consults
+    the index, so a file the owner deliberately tracks is never reported as
+    ignored. The point is reuse - a vault that is itself a git repo already has
+    a curated list of what must not be committed, maintained by the person who
+    knows why. That list is a better exclusion set than anything this tool
+    would infer, and it is already correct.
+
+    Returns an empty set when the vault is not a git repo, when git is missing,
+    or on any git error: the caller still has `.syncignore` and the dotfile
+    rules, and a hard failure here would block a legitimate sync.
+    """
+    if not rel_paths:
+        return set()
+    payload = "\0".join(p.as_posix() for p in rel_paths) + "\0"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(vault_root), "check-ignore", "--stdin", "-z"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    # 0 = some ignored, 1 = none ignored; anything else (128 = not a repo) is
+    # not an answer, so fall back to excluding nothing.
+    if proc.returncode not in (0, 1):
+        return set()
+    return {Path(name) for name in proc.stdout.split("\0") if name}
+
+
+def iter_vault_files(
+    vault_root: Path,
+    ignore_patterns: list[str],
+    respect_gitignore: bool = True,
+) -> list[Path]:
+    """List every file in the vault that should be mirrored, in a stable order.
+
+    Three exclusion sources, narrowest last: dotfiles and OS junk, the vault's
+    `.syncignore`, and - when the vault is a git repo - its own ignore rules.
+    """
     result = []
     for path in sorted(vault_root.rglob("*")):
         if not path.is_file():
@@ -359,6 +404,12 @@ def iter_vault_files(vault_root: Path, ignore_patterns: list[str]) -> list[Path]
         if _matches_ignore(rel_posix, ignore_patterns):
             continue
         result.append(path)
+
+    if respect_gitignore and result:
+        rels = [p.relative_to(vault_root) for p in result]
+        ignored = gitignored_paths(vault_root, rels)
+        if ignored:
+            result = [p for p in result if p.relative_to(vault_root) not in ignored]
     return result
 
 
@@ -436,10 +487,15 @@ class SyncResult:
     notes_written: int = 0
     assets_copied: int = 0
     skipped: list[Path] = field(default_factory=list)
+    gitignored: int = 0
 
 
 def sync_vault(
-    vault_root: Path, output_dir: Path, dry_run: bool = False, force: bool = False
+    vault_root: Path,
+    output_dir: Path,
+    dry_run: bool = False,
+    force: bool = False,
+    respect_gitignore: bool = True,
 ) -> SyncResult:
     """Mirror `vault_root` into `output_dir`, converting notes to plain markdown."""
     vault_root = Path(vault_root)
@@ -456,7 +512,14 @@ def sync_vault(
             )
 
     ignore_patterns = load_syncignore(vault_root)
-    all_files = iter_vault_files(vault_root, ignore_patterns)
+    all_files = iter_vault_files(
+        vault_root, ignore_patterns, respect_gitignore=respect_gitignore
+    )
+    withheld = 0
+    if respect_gitignore:
+        withheld = len(
+            iter_vault_files(vault_root, ignore_patterns, respect_gitignore=False)
+        ) - len(all_files)
     note_paths = [p for p in all_files if p.suffix.lower() == ".md"]
     link_index = build_link_index(vault_root, all_files)
 
@@ -467,7 +530,7 @@ def sync_vault(
         text = note_path.read_text(encoding="utf-8")
         converted[rel] = convert_note(text, rel, link_index, referenced_assets)
 
-    result = SyncResult()
+    result = SyncResult(gitignored=withheld)
     if dry_run:
         result.notes_written = len(converted)
         result.assets_copied = len(referenced_assets)
@@ -614,6 +677,11 @@ def cli() -> None:
     help="Commit without a .syncignore. This fork is public - be sure.",
 )
 @click.option(
+    "--no-gitignore",
+    is_flag=True,
+    help="Mirror files the vault's own .gitignore excludes. Rarely what you want.",
+)
+@click.option(
     "--remote",
     default=None,
     help="git remote to push to (defaults to the branch's configured upstream).",
@@ -631,6 +699,7 @@ def sync(
     commit: bool,
     push: bool,
     allow_publish: bool,
+    no_gitignore: bool,
     remote: str | None,
     branch: str | None,
 ) -> None:
@@ -646,7 +715,17 @@ def sync(
         assert_publish_is_deliberate(vault_root, allow_publish)
 
     output_dir = repo / "docs" / "journal"
-    result = sync_vault(vault_root, output_dir, dry_run=dry_run, force=force)
+    result = sync_vault(
+        vault_root,
+        output_dir,
+        dry_run=dry_run,
+        force=force,
+        respect_gitignore=not no_gitignore,
+    )
+    if result.gitignored:
+        click.echo(
+            f"held back {result.gitignored} file(s) the vault's own .gitignore excludes"
+        )
 
     if dry_run:
         click.echo(

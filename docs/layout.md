@@ -243,6 +243,11 @@ top-level directories and points here for the detail.
   falling back to scanning for a folder holding `.obsidian/`, and reporting
   everywhere it looked when it finds nothing. It refuses to guess between two
   vaults, because a run wipes `docs/journal`. `vaults` lists what it can see.
+  A vault that is a git repo has its **own `.gitignore` honoured** via
+  `git check-ignore` (`--no-gitignore` opts out), reusing the exclusion list the
+  owner already maintains — this matters because the real vault is the Claude
+  config repo, whose `Projects/` transcripts are gitignored for carrying personal
+  detail.
   `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
   of non-note files are copied alongside and rewritten, frontmatter passes
   through untouched. `docs/journal` is treated as fully generated — every run

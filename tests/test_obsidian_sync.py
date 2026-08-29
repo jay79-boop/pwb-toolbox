@@ -16,6 +16,7 @@ import pytest
 
 from tools.obsidian_sync import (
     MARKER_NAME,
+    gitignored_paths,
     assert_publish_is_deliberate,
     build_link_index,
     commit_and_push,
@@ -491,3 +492,74 @@ def test_the_guard_does_not_touch_a_dry_run_or_a_plain_sync(tmp_path):
     assert sync_vault(vault, out, dry_run=True).notes_written == 1
     assert sync_vault(vault, out).notes_written == 1
     assert (out / "Note.md").exists()
+
+
+# --- Reusing the vault's own .gitignore --------------------------------------
+#
+# The real vault is a git repo whose .gitignore already excludes session
+# transcripts carrying personal detail. Honouring it reuses curation the owner
+# already maintains, instead of asking this tool to infer the same list.
+
+
+def _git_vault(root: Path, gitignore: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / ".gitignore").write_text(gitignore, encoding="utf-8")
+    return root
+
+
+def test_gitignored_files_are_not_mirrored(tmp_path):
+    vault = _git_vault(tmp_path / "vault", "Projects/\nsecrets.md\n")
+    _write(vault / "Notes.md", "keep me")
+    _write(vault / "secrets.md", "claim numbers")
+    _write(vault / "Projects" / "transcript.md", "a whole session")
+
+    kept = iter_vault_files(vault, [])
+
+    assert [p.name for p in kept] == ["Notes.md"]
+
+
+def test_gitignore_can_be_turned_off(tmp_path):
+    vault = _git_vault(tmp_path / "vault", "secrets.md\n")
+    _write(vault / "Notes.md", "keep me")
+    _write(vault / "secrets.md", "claim numbers")
+
+    kept = iter_vault_files(vault, [], respect_gitignore=False)
+
+    assert sorted(p.name for p in kept) == ["Notes.md", "secrets.md"]
+
+
+def test_a_tracked_file_is_mirrored_even_if_a_rule_would_match(tmp_path):
+    """Acquit: git does not ignore what is already tracked, and neither do we."""
+    vault = _git_vault(tmp_path / "vault", "")
+    _write(vault / "Notes.md", "tracked on purpose")
+    subprocess.run(["git", "-C", str(vault), "add", "Notes.md"], check=True)
+    (vault / ".gitignore").write_text("Notes.md\n", encoding="utf-8")
+
+    assert [p.name for p in iter_vault_files(vault, [])] == ["Notes.md"]
+
+
+def test_a_vault_that_is_not_a_git_repo_is_unaffected(tmp_path):
+    """Acquit: no repo means no answer from git, and nothing extra excluded."""
+    vault = tmp_path / "plain"
+    _write(vault / "Notes.md", "hi")
+    _write(vault / "Also.md", "hi")
+
+    assert gitignored_paths(vault, [Path("Notes.md")]) == set()
+    assert len(iter_vault_files(vault, [])) == 2
+
+
+def test_sync_reports_how_many_files_the_vault_withheld(tmp_path):
+    vault = _git_vault(tmp_path / "vault", "Projects/\n")
+    _write(vault / "Notes.md", "keep me")
+    _write(vault / "Projects" / "a.md", "private")
+    _write(vault / "Projects" / "b.md", "private")
+
+    result = sync_vault(vault, tmp_path / "out", dry_run=True)
+
+    assert result.notes_written == 1
+    assert result.gitignored == 2
+
+
+def test_gitignored_paths_returns_empty_for_an_empty_request(tmp_path):
+    assert gitignored_paths(tmp_path, []) == set()
