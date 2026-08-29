@@ -113,17 +113,6 @@ NOT_IN_THIS_TREE = {
         "Machine-local and gitignored. docs/local-checkout.md says outright that "
         "this is Claude Code behaviour, not a fact about this repository."
     ),
-    "docs/journal": (
-        "Deliberately absent and gitignored, by the 2026-08-29 decision that the "
-        "Obsidian vault is not mirrored into this public fork. CLAUDE.md, "
-        "docs/layout.md and that decision record all have to be able to name the "
-        "directory in order to say it must stay empty."
-    ),
-    "docs/journal/": (
-        "Same directory, written with the trailing slash the .gitignore entry "
-        "uses. The prose quotes the ignore rule verbatim, so both spellings "
-        "appear."
-    ),
     "tools/blueprint-xlsx-to-json.py": (
         "Never existed. The 2026-08-29 decision record names it as the broken "
         "reference this check was written to catch, so the record has to be able "
