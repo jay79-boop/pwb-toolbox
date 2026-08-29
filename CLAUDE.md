@@ -127,6 +127,20 @@ Two rules that are *not* in the skill:
   stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
   so they can tell at a glance which items are still theirs.
 
+  **Tick your own rows yourself, before the reply that reports them.** Asked for
+  2026-08-29, after a session finished a `who: claude` item and then told them to
+  tick it "since it costs you nothing". It cost something worse than tokens: **a
+  tick from them means *they* did it.** That is the signal the `who` field exists
+  to carry, and handing over a finished row to save a re-read destroys it. The
+  invariant to leave behind is that **every open row is `who: you`** — if one
+  isn't, the ledger is lying about who is blocked.
+
+  The bar for ticking is *verified*, not *believed*: tick when the work is
+  confirmed by something outside your own reasoning — a test run, an API read, a
+  file checked — and otherwise leave it open and say what is still unproven.
+  Never tick an item to tidy the list. Re-reading a large ledger to tick one row
+  is the cost of keeping the record true, and it is the right trade.
+
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`,
@@ -228,7 +242,8 @@ python tools/engagement.py list           # readiness engagements and where each
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_watch.py check          # which sessions did the desk not report?
-python tools/obsidian_sync.py sync --vault PATH --dry-run  # mirror an Obsidian vault into docs/journal (local machine only)
+python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
+python tools/obsidian_sync.py sync --dry-run  # mirror the vault into docs/journal; finds it itself
 ```
 
 `docs/layout.md` lists the rest with what each is for.
