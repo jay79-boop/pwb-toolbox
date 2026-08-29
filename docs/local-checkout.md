@@ -58,6 +58,26 @@ unrelated-looking error about a missing file. Write
 `git fetch jay <branch>; git merge --ff-only jay/<branch>` as one line, every time,
 and end it with a `Test-Path` on a file the new commit adds so success is visible.
 
+**Never pin a handed-over command to a feature branch.**
+`.github/workflows/delete-merged-branch.yml` deletes a PR's head branch the
+moment it merges, so a line built around `git fetch jay claude/<slug>` stops
+working at exactly the point the owner gets round to running it. It fails with
+`couldn't find remote ref`, which reads like a network fault rather than like
+success. Once the PR is merged the commit is on `main` — fetch that instead. If
+the branch has to be named because the PR is still open, say in the same line
+that it expires on merge. Seen on 2026-08-29; the workflow doing the deleting is
+ours and is working as designed, which is why this is a habit rather than a bug
+to fix.
+
+**Do not chain anything after `git log`, `git diff` or `git show`.** Git pipes
+long output through a pager, which parks at `(END)` and holds the line open
+waiting for a keypress. The output above it looks complete, so the natural move
+is to copy it and report back — and everything after the `;` runs only if you
+press `q` first. On 2026-08-29 a handed-over line listed 31 commits and then
+merged them; the reply came back ending in `(END)`, and the merge had not run.
+Nothing in that output says so. Write `git --no-pager log ...` in anything handed
+over, or put the log on a line of its own with nothing after it.
+
 **So use `jay` and `upstream` explicitly and never write a bare `origin`
 command.** `git fetch jay <branch>` now works identically in both — which was not
 true before: the second checkout had no `jay` remote at all, so the command this

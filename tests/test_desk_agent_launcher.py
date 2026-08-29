@@ -139,6 +139,46 @@ def test_a_stray_registration_is_reported_after_the_tally():
     assert "STILL REGISTERED" in tail
 
 
+def test_every_scheduler_status_code_is_decoded_in_the_read_back():
+    # LastTaskResult is the script's exit code only once a run has ENDED. Before
+    # that Windows parks a SCHED_S_* status there instead: six-digit decimals
+    # that are all SUCCESS HRESULTs (0x000413xx) and all read as failures to
+    # anyone who has not looked them up. The read-back prints the number, so it
+    # has to print what the number means -- 267011 was decoded here for a year
+    # while its eight siblings were not, which is how 267009 came to be asked
+    # about from scratch.
+    body = read(SCHEDULER)
+    for code, name in {
+        "267008": "SCHED_S_TASK_READY",
+        "267009": "SCHED_S_TASK_RUNNING",
+        "267010": "SCHED_S_TASK_DISABLED",
+        "267011": "SCHED_S_TASK_HAS_NOT_RUN",
+        "267012": "SCHED_S_TASK_NO_MORE_RUNS",
+        "267013": "SCHED_S_TASK_NOT_SCHEDULED",
+        "267014": "SCHED_S_TASK_TERMINATED",
+        "267015": "SCHED_S_TASK_NO_VALID_TRIGGERS",
+        "267045": "SCHED_S_TASK_QUEUED",
+    }.items():
+        assert "'%s' = '%s = %s" % (code, code, name) in body, (
+            "the read-back must decode LastTaskResult %s (%s); a bare number "
+            "leaves the reader unable to tell a state from a failure" % (code, name)
+        )
+
+
+def test_a_running_task_is_named_as_blocking_its_own_schedule():
+    # 267009 is the expensive one, and the only one whose meaning is not enough
+    # on its own. MultipleInstances defaults to IgnoreNew, so while one run
+    # hangs Windows skips every later occurrence rather than starting a second
+    # copy: the schedule stops with no error, no missed-run count and a task
+    # that still reads healthy. The line has to say that, not just "running".
+    tail = read(SCHEDULER).split("$schedCodes.ContainsKey", 1)[1]
+    running = tail.split("'267009'", 1)[1].split("$ok++", 1)[0]
+    assert "skip" in running.lower() and "hung" in running.lower(), (
+        "a task sitting at 267009 must be reported as hung and as suppressing "
+        "its own later runs, or it reads as a job that is merely busy"
+    )
+
+
 def test_the_removal_branch_does_not_claim_the_task_was_absent():
     body = read(SCHEDULER).split("$weekdays", 1)[1]
     disabled = body.split("if (-not $j.Enabled) {", 1)[1].split("continue", 1)[0]
@@ -375,3 +415,67 @@ def test_autologon_warns_that_a_locked_session_may_break_chart_capture():
         "nobody has proven it on this machine. The script has to say so, and name "
         "the symptom, or the first blank screenshot costs a day."
     )
+
+
+# ------------------------------------------- saying which version just ran --
+#
+# A registration run used to print a summary and nothing else, so "did that use
+# the version with my fix in it?" could only be answered by recognising the
+# wording of the output -- which is how a run against a stale checkout went
+# undiagnosed on 2026-08-29. The script now names the commit behind each moving
+# part. These pin that it keeps doing so, and that it cannot grow into the
+# staleness check CLAUDE.md warns against.
+
+
+def test_the_run_names_the_commit_behind_every_moving_part():
+    src = read(SCHEDULER)
+    assert (
+        "'rev-parse', '--short', 'HEAD'" in src
+    ), "the checkout's commit is never read"
+    assert re.search(
+        r"Get-FileVersion \$\w+ 'tools/register_desk_agent\.ps1'", src
+    ), "the running script's own version is never reported"
+    assert re.search(
+        r"Get-FileVersion \$\w+ 'tools/desk_agent/run_job\.ps1'", src
+    ), "the launcher's version is never reported -- the copy is what executes"
+
+
+def test_the_summary_line_carries_the_version():
+    # It is the line that gets read at a glance and pasted back, so a version
+    # reported only in a header that has scrolled away is not reported at all.
+    lines = [
+        line
+        for line in read(SCHEDULER).splitlines()
+        if "Write-Host" in line and "Registered " in line
+    ]
+    assert len(lines) == 1, lines
+    assert "$version" in lines[0], lines[0]
+
+
+def test_an_uncommitted_edit_is_not_reported_as_a_clean_commit():
+    body = read(SCHEDULER).split("function Get-FileVersion {", 1)[1].split("\n}", 1)[0]
+    assert "'status', '--porcelain'" in body, (
+        "a commit id is a lie about a file with uncommitted edits on top of it, "
+        "and that is exactly what a half-finished session leaves behind"
+    )
+
+
+def test_a_machine_without_git_still_registers_the_tasks():
+    # Registration is the job; reporting the version is commentary on it. A git
+    # call that throws under `$ErrorActionPreference = 'Stop'` would turn a
+    # working registration into no registration at all.
+    body = read(SCHEDULER).split("function Get-Git {", 1)[1].split("\n}", 1)[0]
+    assert "try {" in body and "} catch {" in body
+    assert "2>$null" in body, "native stderr under Stop is its own way to die"
+    assert body.count("return ''") == 2, "both failure paths must degrade quietly"
+
+
+def test_staleness_is_not_reported_as_an_ahead_behind_count():
+    """CLAUDE.md: an ahead/behind count compares two refs, not two trees."""
+    src = read(SCHEDULER)
+    assert "rev-list" not in src and "--count" not in src, (
+        "an ahead/behind count reads 'up to date' whenever the checkout sits on "
+        "a branch that already contains the ref it is compared with -- which is "
+        "the exact confusion this version stamp exists to end"
+    )
+    assert "fetch" not in src, "registering scheduled tasks must not touch the network"
