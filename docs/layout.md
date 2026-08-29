@@ -313,6 +313,9 @@ top-level directories and points here for the detail.
   `skills.md` (the bar for turning a repeated job into a skill, the two homes a
   skill can live in, and the retirement rule — with `prompts/` as its staging
   area for long prompts not yet packaged),
+  `vault-operating-manual.md` (the Obsidian vault's standing rules, operating
+  rules and note schema — canonical here; the vault's personal half stays out of
+  this public fork and lives only locally and in a private artifact),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that
