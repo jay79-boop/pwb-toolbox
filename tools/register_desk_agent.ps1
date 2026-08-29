@@ -183,10 +183,25 @@ if (-not $sameTree) {
 # StartWhenAvailable is the flag whose absence silently eats overnight runs on a
 # machine that was asleep at the scheduled minute. AllowStartIfOnBatteries and
 # DontStopIfGoingOnBatteries keep a laptop run from being killed mid-job.
+#
+# WakeToRun is NOT the same flag and does not substitute for it. StartWhenAvailable
+# catches a missed run up once something else wakes the machine; WakeToRun sets the
+# wake timer that makes the machine come up AT the scheduled minute. For these jobs
+# only the second one is worth anything: a pre-market gameplan delivered at 10:15
+# because that is when the lid was opened is not a pre-market gameplan, and a
+# post-close journal entry written the next morning has already lost the day it was
+# supposed to capture. Both flags are set, because they fix different halves --
+# WakeToRun for a machine asleep, StartWhenAvailable for one that was switched off.
+#
+# Wake timers can be disabled system-wide in the power plan, in which case this flag
+# is accepted, stored, read back as True, and does nothing. That is checked by
+# tools/autologon.ps1, not here, because it is a property of the machine rather than
+# of the task.
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
   -StartWhenAvailable `
+  -WakeToRun `
   -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
 $weekdays = @('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday')
@@ -309,17 +324,33 @@ foreach ($j in $jobs) {
   Write-Host ("            next run: " + $next)
   Write-Host ("            last run: " + $last + "   result: " + $rc)
   Write-Host ("            StartWhenAvailable: " + $swa)
-  # LogonType decides whether this can fire while nobody is signed in. The
-  # default from Register-ScheduledTask is Interactive, which means it runs
-  # ONLY when the user is logged on -- a 07:00 task on a machine that sleeps
-  # overnight then quietly does nothing, which is exactly what happened.
+  # Interactive is CORRECT here and must stay. It is tempting to read "runs only
+  # while the user is logged on" as the bug and switch this to S4U or Password so
+  # the task fires with nobody signed in -- that was asked for on 2026-08-29, and
+  # it is a trap. A task set to run whether the user is logged on or not gets a
+  # logon session with NO DESKTOP. Both of these jobs drive TradingView Desktop,
+  # an Electron app: premarket reads session levels off the chart and journal
+  # captures chart images. They would fire on time and fail at the first chart
+  # call -- a job that does not run, converted into a job that runs and is wrong.
+  #
+  # The fix for "nobody is signed in" is to make the machine sign ITSELF in, so a
+  # real desktop exists for these tasks to use. tools/autologon.ps1 reports whether
+  # it does, and the note below points there rather than at this flag.
   $logon = $task.Principal.LogonType
   Write-Host ("            LogonType: " + $logon + "   RunAs: " + $task.Principal.UserId)
   if ("$logon" -eq 'Interactive') {
-    Write-Host '            NOTE: runs only while you are signed in.'
+    Write-Host '            NOTE: needs a signed-in desktop -- these jobs drive TradingView.'
+    Write-Host '                  Check unattended sign-in with: tools\autologon.ps1'
   }
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'
+  }
+  # Read WakeToRun back too. Set above, but the point of this whole block is that
+  # what the source asks for and what Windows stored are different questions.
+  $wake = $task.Settings.WakeToRun
+  Write-Host ("            WakeToRun: " + $wake)
+  if (-not $wake) {
+    Write-Host '            WARNING: nothing will wake the machine for this run.'
   }
   if ($schedCodes.ContainsKey("$rc")) {
     Write-Host ('            ' + $schedCodes["$rc"])

@@ -181,6 +181,83 @@ agent removed.
 every branch cut afterwards, and the guard above becomes a backstop rather than the
 thing standing between you and a working agent.
 
+## Running when nobody is signed in
+
+Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed in".
+The goal is right and the mechanism named is a trap, so this section is mostly
+about why the obvious change is the wrong one.
+
+**The LogonType must stay `Interactive`.** A scheduled task set to run whether
+the user is logged on or not -- `S4U`, or `Password` -- is given a logon session
+with **no desktop**. Both enabled jobs drive TradingView Desktop: `premarket`
+reads session levels off the chart, `journal` captures chart images. Set either
+of those logon types and the tasks fire punctually and then fail at the first
+chart call. That is strictly worse than not firing: a job that does not run says
+so plainly in `LastTaskResult`, while a job that runs against a session with no
+chart produces a gameplan built out of whatever the failure left behind.
+`tests/test_desk_agent_launcher.py` forbids the change outright rather than
+trusting a comment to stop it.
+
+**The machine has to sign itself in instead.** Then a real desktop exists and
+`Interactive` is satisfied. Three things all have to be true, and they fail
+independently:
+
+| | what it is | where it lives |
+| --- | --- | --- |
+| signs in with no human | `AutoAdminLogon` | Windows registry, set by Sysinternals Autologon |
+| awake at the scheduled minute | `WakeToRun` | the task, set by `register_desk_agent.ps1` |
+| wake timers not disabled | power plan | Windows power options |
+
+The middle one is new as of this change and is **not** the same flag as
+`StartWhenAvailable`, which was already set. `StartWhenAvailable` catches a
+missed run up once something else wakes the machine; `WakeToRun` is what makes
+the machine come up *at* the scheduled minute. Only the second is worth anything
+here -- a pre-market gameplan delivered at 10:15 because that is when the lid
+was opened is not a pre-market gameplan.
+
+The third is the one that fails silently and is the reason there is a checker:
+if wake timers are disabled in the power plan, `WakeToRun` is accepted, stored,
+and **reads back `True` while doing nothing**.
+
+```powershell
+cd C:\Users\Gexio\OneDrive\pwb-toolbox
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1
+```
+
+That reports all three and names the fix for each. It is read-only, so it is
+safe to run at any time.
+
+**It does not set the sign-in up itself, on purpose.** Storing the password
+correctly means writing an LSA secret. Sysinternals Autologon already does that,
+is published by Microsoft, and is tested; a hand-rolled equivalent here would be
+untested P/Invoke against the credential store written by someone with no
+Windows machine to run it on. What the checker *does* do is look for the mistake
+the shortcut guides teach -- putting the password in
+`Winlogon\DefaultPassword`, where it sits in plaintext and any local user can
+read it -- and say so loudly if it finds it.
+
+### Locking the screen after an unattended sign-in
+
+`autologon.ps1 -EnableLock` registers a task that locks the workstation half a
+minute after every logon, so a machine that reboots at 03:00 does not sit on an
+open desktop until morning. It is **off by default**, for two reasons that are
+both worth knowing before turning it on.
+
+It fires on *every* logon, yours included: you sign in, and thirty seconds later
+the screen locks.
+
+And whether TradingView still renders a chart for capture on a locked session is
+**not established**. Applications keep running, and CDP draws from the browser's
+compositor rather than from the screen, so it ought to hold -- but Chromium
+throttles occluded windows and nobody has proven it on this machine. The
+`alerts` job reached the chart successfully on runs that were almost certainly
+locked, which is suggestive and is not proof. If journal captures start coming
+back blank, undo this first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1 -DisableLock
+```
+
 ## Reading the log yourself
 
 ```bash

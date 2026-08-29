@@ -290,6 +290,133 @@ def test_a_missing_directory_is_dropped_rather_than_passed_on():
     )
 
 
+# ------------------------------------- waking up, and signing in without you --
+#
+# Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed
+# in". The LogonType is the one thing that must NOT change: a task set to run
+# whether the user is logged on or not gets a session with no desktop, and both
+# enabled jobs drive TradingView Desktop. The request was right about the goal
+# and wrong about the mechanism, and these pin the distinction so a later reader
+# does not undo it.
+
+AUTOLOGON = REPO / "tools" / "autologon.ps1"
+
+
+def code_lines(path):
+    """Source with comment-only lines dropped.
+
+    Every one of these files explains its own traps in prose, so the wording a
+    test wants to forbid is usually quoted a few lines above by the comment
+    saying why it is forbidden. Asserting against the raw text convicts the
+    explanation instead of the code -- which happened once already, on #154.
+    """
+    return "\n".join(
+        line for line in read(path).splitlines() if not line.strip().startswith("#")
+    )
+
+
+def test_the_tasks_wake_the_machine():
+    settings = read(SCHEDULER).split("$settings = New-ScheduledTaskSettingsSet", 1)[1]
+    settings = settings.split("$weekdays", 1)[0]
+    assert "-WakeToRun" in settings, (
+        "Without WakeToRun the machine is never woken for a trigger. "
+        "StartWhenAvailable only catches a run up after something else wakes it, "
+        "and a 07:00 gameplan delivered at 10:15 is not a pre-market gameplan."
+    )
+
+
+def test_wake_to_run_is_read_back_from_windows():
+    read_back = read(SCHEDULER).split("Reading the tasks back from Windows", 1)[1]
+    assert "$task.Settings.WakeToRun" in read_back, (
+        "Setting the flag and printing that you set it are different claims. "
+        "This whole script exists because Register-ScheduledTask can fail while "
+        "the surrounding code still prints success."
+    )
+
+
+def test_the_tasks_are_never_given_a_desktopless_logon_type():
+    code = code_lines(SCHEDULER)
+    for bad in ("S4U", "Password", "-LogonType"):
+        assert bad not in code, (
+            f"{bad!r} appears in the scheduler's code. Both enabled jobs drive "
+            "TradingView Desktop; a task that runs whether the user is logged on "
+            "or not has no desktop, so it would fire on time and fail at the "
+            "first chart call. Interactive is correct here -- the fix for an "
+            "unattended machine is automatic sign-in, not this flag."
+        )
+
+
+def test_the_interactive_note_points_at_the_real_fix():
+    interactive = read(SCHEDULER).split("if (\"$logon\" -eq 'Interactive')", 1)[1]
+    interactive = interactive.split("}", 1)[0]
+    assert "autologon.ps1" in interactive, (
+        "The note a reader sees when a task is Interactive has to send them to "
+        "the thing that actually fixes an unattended run. The previous wording, "
+        "'runs only while you are signed in', reads as an accusation against the "
+        "flag and invites exactly the change that breaks the chart jobs."
+    )
+
+
+# --------------------------------------------------------- tools/autologon.ps1 --
+
+
+def test_autologon_checks_for_a_plaintext_password_in_the_registry():
+    body = read(AUTOLOGON)
+    assert "DefaultPassword" in body, (
+        "Half the auto-logon guides on the internet tell you to put the Windows "
+        "password in Winlogon\\DefaultPassword, where any local user can read it. "
+        "If this script does not look for it, nothing does."
+    )
+
+
+def test_autologon_never_writes_a_password_itself():
+    code = code_lines(AUTOLOGON)
+    for bad in ("Set-ItemProperty", "New-ItemProperty", "LsaStorePrivateData"):
+        assert bad not in code, (
+            f"{bad!r} appears in autologon.ps1. Storing the password is delegated "
+            "to Sysinternals Autologon on purpose: it writes an LSA secret, it is "
+            "published by Microsoft, and it is tested. A hand-rolled version here "
+            "would be untested P/Invoke against the credential store, written by "
+            "someone with no Windows machine to run it on."
+        )
+
+
+def test_the_lock_task_is_opt_in_rather_than_installed_by_the_check():
+    body = read(AUTOLOGON)
+    assert "[switch] $EnableLock" in body
+    # The report path must not register anything. Everything that writes has to
+    # sit above the report and exit, so a plain run is provably read-only.
+    report = body.split("# -- the report ---", 1)[1]
+    for bad in ("Register-ScheduledTask", "Unregister-ScheduledTask"):
+        assert bad not in report, (
+            f"{bad!r} is reachable from the read-only report path. Running this "
+            "with no arguments must be safe to do at any time."
+        )
+
+
+def test_autologon_removal_does_not_claim_the_task_was_absent():
+    disable = read(AUTOLOGON).split("if ($DisableLock)", 1)[1].split("exit 0", 1)[0]
+    printed = "\n".join(l for l in disable.splitlines() if "Write-Host" in l)
+    assert "already absent, or the removal failed" in printed, (
+        "Same trap as #154: Unregister-ScheduledTask throws both when the task "
+        "is not there and when the removal fails."
+    )
+    assert (
+        "Get-ScheduledTask" in disable
+    ), "And the verdict comes from asking Windows, not from whether the call threw."
+
+
+def test_autologon_warns_that_a_locked_session_may_break_chart_capture():
+    body = read(AUTOLOGON).lower()
+    assert "blank" in body and "lock" in body, (
+        "Whether TradingView still renders for capture on a locked session was "
+        "never established -- CDP draws from the compositor rather than the "
+        "screen, so it should hold, but Chromium throttles occluded windows and "
+        "nobody has proven it on this machine. The script has to say so, and name "
+        "the symptom, or the first blank screenshot costs a day."
+    )
+
+
 # ------------------------------------------- saying which version just ran --
 #
 # A registration run used to print a summary and nothing else, so "did that use
