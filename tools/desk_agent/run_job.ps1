@@ -93,6 +93,24 @@ try {
 $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { 'python' }
 
+function Get-OutputTail([string] $text, [int] $max = 600) {
+  # What reaches the record has to be bounded, and it has to be one line.
+  #
+  # runs.jsonl is COMMITTED -- that is the whole reason raw stdout under logs/
+  # is not -- so this takes the TAIL rather than the buffer. A crash says why
+  # at the end, while a full transcript in a tracked file is both noise and a
+  # place for chart detail to end up in a public fork.
+  #
+  # Double quotes become single because PowerShell 5.1 mangles them passing a
+  # string to a native command, and a mangled argument loses the entire record
+  # rather than one character -- which would be this fix causing the exact
+  # silence it exists to remove.
+  if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+  $flat = ($text -replace '\s+', ' ').Replace('"', "'").Trim()
+  if ($flat.Length -le $max) { return $flat }
+  return '...' + $flat.Substring($flat.Length - $max)
+}
+
 function Record-Failure([string] $blocker, [string] $summary) {
   # Best effort. If even this cannot run there is nothing further to try, and
   # the missing record is itself the signal when the next review reads the log.
@@ -254,8 +272,29 @@ Write-Log $output
 
 if ($code -ne 0) {
   Write-Log ("claude exited with code " + $code)
-  Record-Failure ('claude exited non-zero: ' + $code) `
-                 ('agent run failed with exit code ' + $code)
+
+  # Put what the agent actually printed INTO the record. Without this the only
+  # account of a failed run is a log file under LOCALAPPDATA that no cloud
+  # session can read, while runs.jsonl -- the committed, reviewable half --
+  # said nothing but "exit code N", which is a symptom and not a diagnosis.
+  # Four consecutive run records asked for this and none could make it: the
+  # agent may not edit its own log, and this is the code that writes it.
+  #
+  # The log's file NAME and not its path: the name carries the timestamp that
+  # finds it, and the path carries a home directory into a public repository.
+  # "printed nothing at all" is deliberately its own sentence -- a crash with
+  # a message and a process that produced no output are different faults, and
+  # collapsing them is how this system has gone wrong three times.
+  $tail = Get-OutputTail $output
+  if ($tail) {
+    $detail = ' Output tail: ' + $tail
+  } else {
+    $detail = ' The agent printed nothing at all before exiting.'
+  }
+  $record = ('agent run failed with exit code ' + $code +
+             '; full log ' + (Split-Path $logFile -Leaf) + '.' + $detail)
+
+  Record-Failure ('claude exited non-zero: ' + $code) $record
   exit $code
 }
 

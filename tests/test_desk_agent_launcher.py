@@ -145,6 +145,58 @@ def test_the_extra_directories_reach_the_invocation():
     assert "& $claude -p " not in src
 
 
+# --------------------------------------------- evidence when a run fails --
+#
+# The launcher captures the agent's merged stdout/stderr and then, on a
+# non-zero exit, wrote a record saying only "agent run failed with exit code
+# N" -- discarding the buffer it had just captured. The one account of what
+# went wrong was a log file under LOCALAPPDATA that no cloud session can read,
+# while runs.jsonl, the committed and reviewable half, carried a symptom and
+# no diagnosis. Four consecutive run records asked for this and none could
+# make it: the agent may not edit its own log, and that is the code writing it.
+
+
+def failure_branch():
+    return read(LAUNCHER).split("if ($code -ne 0) {", 1)[1].split("exit $code", 1)[0]
+
+
+def test_the_failure_record_carries_what_the_agent_printed():
+    branch = failure_branch()
+    assert "Get-OutputTail $output" in branch, (
+        "the non-zero-exit record must include the captured output; without "
+        "it the run's only account is a log file no cloud session can read"
+    )
+
+
+def test_no_output_is_reported_as_its_own_fault():
+    # A crash with a message and a process that produced nothing are different
+    # faults. Collapsing them is how this system has gone wrong three times.
+    assert "printed nothing at all" in failure_branch()
+
+
+def test_the_record_names_the_log_file_without_the_home_directory():
+    branch = failure_branch()
+    assert "Split-Path $logFile -Leaf" in branch, (
+        "name the log file, not its path: the name carries the timestamp that "
+        "finds it, the path carries a home directory into a public repo"
+    )
+    assert "$logFile +" not in branch and "+ $logFile" not in branch
+
+
+def test_the_output_tail_is_bounded_and_flattened():
+    src = read(LAUNCHER)
+    body = src.split("function Get-OutputTail", 1)[1].split("\nfunction ", 1)[0]
+    # runs.jsonl is committed -- which is exactly why raw stdout under logs/ is
+    # not. A whole transcript in a tracked file is noise, and a place for chart
+    # detail to reach a public fork.
+    assert "$max = 600" in body and "Substring" in body
+    assert r"-replace '\s+', ' '" in body, "the record is one line of JSONL"
+    # PowerShell 5.1 mangles a double quote passed to a native command, and a
+    # mangled argument loses the whole record -- this fix causing the silence
+    # it exists to remove.
+    assert """.Replace('"', "'")""" in body
+
+
 def test_a_missing_directory_is_dropped_rather_than_passed_on():
     guard = read(LAUNCHER).split("$claudeArgs = @('-p')", 1)[1].split("# -- run", 1)[0]
     assert "Test-Path -LiteralPath $dir" in guard, (

@@ -226,6 +226,21 @@ gets by default, so a different machine layout needs no code edit.
 The agent could not have done this itself: widening its own access is what the
 guardrail forbids, which is why it filed the request five times instead.
 
+## A failed run says what it printed
+
+When the agent exits non-zero the launcher writes the record itself, and that
+record now carries a bounded tail of the agent's own output rather than just
+`agent run failed with exit code N`. The buffer was always captured; it was
+simply thrown away, leaving the only account of a failure in a log under
+`%LOCALAPPDATA%` that no cloud session can read.
+
+A **tail**, capped and flattened to one line, not the buffer: `runs.jsonl` is
+committed precisely because raw stdout under `logs/` is not, and a transcript in
+a tracked file in a public fork is the thing that split exists to prevent. The
+record names the log's file name, never its path. And "the agent printed nothing
+at all" is reported as its own fault, because a crash with a message and a
+process that produced no output are different problems.
+
 ## Three design decisions worth knowing before you change anything
 
 **Skipped and failed are different.** A holiday morning is `skipped`; a refused
