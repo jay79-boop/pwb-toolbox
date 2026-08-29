@@ -9,6 +9,18 @@ Standard library only — no new dependencies, nothing to install.
 Unrelated to the trading library; it exists purely to give the karaoke page
 somewhere to post scores.
 
+## This has to run on a machine that is actually on your Wi-Fi
+
+"Open that address on any device on the same network" only works if the
+device running `python -m tools.karaoke_server` is on that network. A Claude
+Code **cloud** session (claude.ai/code) is a container with no route to your
+router, so it cannot start this in a way your phones could ever reach — the
+process would come up, but only the sandbox itself could open the port.
+Start it from a **local** Claude Code session (running directly on your
+machine) or by hand, not from the cloud. See the `gexio-machine` skill's
+"Which machine are you on?" section if it is unclear which kind of session
+you are talking to.
+
 ## Run it
 
 ```bash
