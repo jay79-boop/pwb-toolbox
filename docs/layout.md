@@ -237,7 +237,13 @@ top-level directories and points here for the detail.
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
 - `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
-  plain markdown: `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
+  plain markdown. **`--vault` is optional**: Obsidian records every vault it has
+  ever opened, with its absolute path, in `obsidian.json` (`%APPDATA%\obsidian`
+  on Windows), so `sync` reads that rather than asking where the vault is —
+  falling back to scanning for a folder holding `.obsidian/`, and reporting
+  everywhere it looked when it finds nothing. It refuses to guess between two
+  vaults, because a run wipes `docs/journal`. `vaults` lists what it can see.
+  `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
   of non-note files are copied alongside and rewritten, frontmatter passes
   through untouched. `docs/journal` is treated as fully generated — every run
   wipes and rewrites it, guarded by a `.obsidian-sync-marker` so it never
