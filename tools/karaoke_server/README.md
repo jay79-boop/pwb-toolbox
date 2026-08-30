@@ -114,7 +114,8 @@ python -m tools.karaoke_server.queue_server
 ```
 
 Open `/screen` on the address it prints for the stage display (now
-singing, the draw reveal, a QR to join, YouTube playback for link songs,
+singing, the draw reveal, a QR to join -- drawn on the machine, with no
+CDN and no internet -- YouTube playback for link songs,
 house music state); phones scan the QR and get the three-tap flow: name,
 song, and a full-screen YOU'RE UP when the draw lands on them. Singer
 memory lives in `karaoke-profiles.json` next to where you ran it.

@@ -149,6 +149,28 @@ class TestPageWrapper:
         assert doc.index("</style>") < doc.index("<body>") < doc.index("<main>")
         assert page_html("phone", fragment).count('content="phone"') == 1
 
+    def test_the_screen_is_told_which_address_to_publish(self):
+        """Only the server knows an address phones can reach."""
+        doc = page_html(
+            "screen",
+            "<style>b{}</style><main>x</main>",
+            join_url="http://192.168.1.50:8772/",
+        )
+        assert '<meta name="karaoke-join" content="http://192.168.1.50:8772/">' in doc
+
+    def test_without_one_the_page_is_left_to_work_it_out(self):
+        doc = page_html("screen", "<style>b{}</style><main>x</main>")
+        assert "karaoke-join" not in doc
+
+    def test_a_join_url_cannot_break_out_of_its_attribute(self):
+        doc = page_html(
+            "screen",
+            "<style>b{}</style><main>x</main>",
+            join_url='http://x/"><script>alert(1)</script>',
+        )
+        assert "<script>alert(1)" not in doc
+        assert "&quot;" in doc
+
     def test_the_real_page_wraps_and_carries_both_roles(self):
         doc = page_html("phone")
         assert "<title>Karaoke Queue</title>" in doc

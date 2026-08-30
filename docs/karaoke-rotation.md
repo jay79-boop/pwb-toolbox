@@ -75,6 +75,32 @@ YOU'RE UP with the countdown and one button. The waiting list a poll
 returns is alphabetical on purpose: the order is the secret, and the only
 ordering that ever leaves the server is the call itself.
 
+## The QR is drawn on the machine
+
+The screen used to fetch qrcodejs from a CDN. That is a network dependency
+on the one element that gets anybody into the queue, and a venue's Wi-Fi has
+no reason to reach the internet. A captive portal is worse than no internet:
+the `<script>` loads, is a login page rather than the library, and the call
+throws. So the encoder is inlined in the page and ships inside
+`karaoke_os.py` -- byte mode, error correction M, versions 1-6, no
+dependency of any kind.
+
+Two things prove it rather than assert it. `static/karaoke-qr.test.js`
+compares the matrices module for module against fixtures produced by
+python-qrcode and decoded back to their own URLs by OpenCV, an unrelated
+implementation; reintroducing the format-bit bug that was found while
+writing it fails 19 of those cases. And the page was loaded in a real
+browser with every off-box request aborted, where it drew a QR that OpenCV
+read back as exactly the address the server had declared.
+
+**The address comes from the server, not from `location.origin`.** Only the
+process knows which address phones can reach, so it states it in a
+`karaoke-join` meta tag. A screen opened at localhost would otherwise
+publish a QR that every phone in the room resolves to itself -- the whole
+product silently broken, which is precisely the bug that shipped once
+already. The page falls back to its own origin when no tag is present, and
+says so on screen when that origin is a loopback address.
+
 ## What it refuses to claim
 
 - **"Nobody waits more than N draws" is impossible in a deep queue.** One

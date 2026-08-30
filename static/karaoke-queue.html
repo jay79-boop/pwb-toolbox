@@ -88,9 +88,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 #stageCard .song{font-size:clamp(20px,3vw,34px);color:var(--ink-2);font-family:"Newsreader",Georgia,serif}
 #sideCol{grid-column:2;display:flex;flex-direction:column;gap:16px}
 #qrBox{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
-#qr{width:200px;height:200px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
-#qr img,#qr canvas{max-width:100%}
-#joinUrl{font-size:13px;word-break:break-all;color:var(--ink-2)}
+#qr{width:100%;box-sizing:border-box;min-height:120px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
+#qr canvas{display:block;image-rendering:pixelated}
+#joinUrl{font-size:15px;font-weight:700;word-break:break-all;color:var(--ink)}
+#qrWarn{font-size:12px;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad);border-radius:6px;padding:6px 8px;margin:0}
 #playerWrap{grid-column:1 / -1;border-radius:12px;overflow:hidden;border:1px solid var(--rule);background:#000000;aspect-ratio:16/9;max-height:420px}
 #playerWrap iframe,#playerWrap #player{width:100%;height:100%;border:0}
 #ticker{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px}
@@ -184,6 +185,9 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       <span class="eyebrow">Join the draw</span>
       <div id="qr"></div>
       <p id="joinUrl" class="mono"></p>
+      <p id="qrWarn" hidden>⚠ This screen was opened at localhost, so the QR
+        only works on this computer. Restart and open the address the program
+        prints instead.</p>
       <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
     </div>
   </aside>
@@ -380,16 +384,244 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     });
   }
 
+  // ==== qr, drawn here ==================================================
+  // A pub's Wi-Fi has no reason to reach the internet, and a captive
+  // portal is worse than no internet: the CDN <script> "loads", is a login
+  // page rather than the library, and the QR call throws. The QR is how
+  // every singer gets in, so it cannot depend on a network at all.
+  //
+  // Byte mode, error correction M, versions 1-6 (up to 106 bytes; a LAN
+  // URL is about 26). Stopping at 6 is deliberate: versions 1-6 carry no
+  // version-information block and at most one alignment pattern.
+  var QR_M = {            // version: [total codewords, EC per block, blocks]
+    1: [26, 10, 1], 2: [44, 16, 1], 3: [70, 26, 1],
+    4: [100, 18, 2], 5: [134, 24, 2], 6: [172, 16, 4]
+  };
+  var QR_EXP = new Array(512), QR_LOG = new Array(256);
+  (function () {
+    for (var i = 0, x = 1; i < 255; i++) {
+      QR_EXP[i] = x; QR_LOG[x] = i;
+      x <<= 1; if (x & 0x100) x ^= 0x11d;
+    }
+    for (i = 255; i < 512; i++) QR_EXP[i] = QR_EXP[i - 255];
+  })();
+  function qrMul(a, b) { return a && b ? QR_EXP[QR_LOG[a] + QR_LOG[b]] : 0; }
+
+  function qrEcc(data, n) {
+    var gen = [1], i, j;
+    for (i = 0; i < n; i++) {
+      var next = new Array(gen.length + 1);
+      for (j = 0; j < next.length; j++) next[j] = 0;
+      for (j = 0; j < gen.length; j++) {
+        next[j] ^= gen[j];
+        next[j + 1] ^= qrMul(gen[j], QR_EXP[i]);
+      }
+      gen = next;
+    }
+    var rem = data.slice();
+    for (i = 0; i < n; i++) rem.push(0);
+    for (i = 0; i < data.length; i++) {
+      var lead = rem[i];
+      if (!lead) continue;
+      for (j = 0; j < gen.length; j++) rem[i + j] ^= qrMul(gen[j], lead);
+    }
+    return rem.slice(data.length);
+  }
+
+  function qrCodewords(bytes, version) {
+    var spec = QR_M[version], blocks = spec[2], ecLen = spec[1];
+    var words = spec[0] - ecLen * blocks, bits = [], i, j;
+    function put(val, len) { for (var k = len - 1; k >= 0; k--) bits.push((val >> k) & 1); }
+    put(4, 4);                       // byte mode
+    put(bytes.length, 8);            // count indicator: 8 bits for versions 1-9
+    for (i = 0; i < bytes.length; i++) put(bytes[i], 8);
+    put(0, Math.min(4, words * 8 - bits.length));
+    while (bits.length % 8) bits.push(0);
+    for (i = 0; bits.length < words * 8; i++) put(i % 2 ? 0x11 : 0xec, 8);
+    var flat = [];
+    for (i = 0; i < bits.length; i += 8) {
+      var b = 0;
+      for (j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      flat.push(b);
+    }
+    var per = words / blocks, data = [], ec = [];
+    for (i = 0; i < blocks; i++) {
+      data.push(flat.slice(i * per, (i + 1) * per));
+      ec.push(qrEcc(data[i], ecLen));
+    }
+    var out = [];
+    for (j = 0; j < per; j++) for (i = 0; i < blocks; i++) out.push(data[i][j]);
+    for (j = 0; j < ecLen; j++) for (i = 0; i < blocks; i++) out.push(ec[i][j]);
+    return out;
+  }
+
+  var QR_MASKS = [
+    function (r, c) { return (r + c) % 2 === 0; },
+    function (r) { return r % 2 === 0; },
+    function (r, c) { return c % 3 === 0; },
+    function (r, c) { return (r + c) % 3 === 0; },
+    function (r, c) { return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; },
+    function (r, c) { return (r * c) % 2 + (r * c) % 3 === 0; },
+    function (r, c) { return ((r * c) % 2 + (r * c) % 3) % 2 === 0; },
+    function (r, c) { return ((r + c) % 2 + (r * c) % 3) % 2 === 0; }
+  ];
+
+  function qrPenalty(m) {
+    var size = m.length, score = 0, r, c, i, run, dark = 0;
+    for (r = 0; r < size; r++) {
+      for (c = 0; c < size; c++) if (m[r][c]) dark++;
+      for (i = 0; i < 2; i++) {          // 0: rows, 1: columns
+        run = 1;
+        for (c = 1; c < size; c++) {
+          var a = i ? m[c][r] : m[r][c], b = i ? m[c - 1][r] : m[r][c - 1];
+          if (a === b) { run++; if (run === 5) score += 3; else if (run > 5) score++; }
+          else run = 1;
+        }
+      }
+    }
+    for (r = 0; r < size - 1; r++)
+      for (c = 0; c < size - 1; c++) {
+        var v = m[r][c];
+        if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) score += 3;
+      }
+    var pat1 = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], pat2 = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+    for (r = 0; r < size; r++)
+      for (c = 0; c + 10 < size; c++)
+        for (i = 0; i < 2; i++) {
+          var okA = true, okB = true;
+          for (var k = 0; k < 11; k++) {
+            var cell = i ? m[c + k][r] : m[r][c + k];
+            if (cell !== pat1[k]) okA = false;
+            if (cell !== pat2[k]) okB = false;
+          }
+          if (okA) score += 40;
+          if (okB) score += 40;
+        }
+    score += Math.floor(Math.abs(dark * 100 / (size * size) - 50) / 5) * 10;
+    return score;
+  }
+
+  function qrDraw(bytes, version, mask) {
+    var size = version * 4 + 17, m = [], fixed = [], r, c, i;
+    for (r = 0; r < size; r++) {
+      m.push(new Array(size)); fixed.push(new Array(size));
+      for (c = 0; c < size; c++) { m[r][c] = 0; fixed[r][c] = false; }
+    }
+    function set(row, col, val) {
+      if (row < 0 || col < 0 || row >= size || col >= size) return;
+      m[row][col] = val; fixed[row][col] = true;
+    }
+    function finder(row, col) {
+      for (var a = -1; a <= 7; a++) for (var b = -1; b <= 7; b++) {
+        var on = (a >= 0 && a <= 6 && (b === 0 || b === 6)) ||
+                 (b >= 0 && b <= 6 && (a === 0 || a === 6)) ||
+                 (a >= 2 && a <= 4 && b >= 2 && b <= 4);
+        set(row + a, col + b, on ? 1 : 0);
+      }
+    }
+    finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+    for (i = 8; i < size - 8; i++) { set(6, i, i % 2 ? 0 : 1); set(i, 6, i % 2 ? 0 : 1); }
+    if (version >= 2) {
+      var a = version * 4 + 10;
+      for (r = -2; r <= 2; r++) for (c = -2; c <= 2; c++)
+        set(a + r, a + c, Math.max(Math.abs(r), Math.abs(c)) === 1 ? 0 : 1);
+    }
+    set(size - 8, 8, 1);                                  // the dark module
+    for (i = 0; i < 9; i++) { set(8, i, m[8][i]); set(i, 8, m[i][8]); }
+    for (i = 0; i < 8; i++) { set(8, size - 1 - i, 0); set(size - 1 - i, 8, m[size - 1 - i][8]); }
+
+    var data = qrCodewords(bytes, version), idx = 0, dir = -1, row = size - 1;
+    for (var col = size - 1; col > 0; col -= 2) {
+      if (col === 6) col--;
+      for (;;) {
+        for (i = 0; i < 2; i++) {
+          var cc = col - i;
+          if (fixed[row][cc]) continue;
+          var bit = 0;
+          if (idx < data.length * 8) bit = (data[idx >> 3] >> (7 - (idx & 7))) & 1;
+          idx++;
+          m[row][cc] = bit ^ (QR_MASKS[mask](row, cc) ? 1 : 0);
+        }
+        row += dir;
+        if (row < 0 || row >= size) { row -= dir; dir = -dir; break; }
+      }
+    }
+    var fmt = (0 << 3) | mask, bch = fmt << 10;           // 0 = error correction M
+    for (i = 14; i >= 10; i--) if (bch & (1 << i)) bch ^= 0x537 << (i - 10);
+    var bits = ((fmt << 10) | bch) ^ 0x5412;
+    for (i = 0; i < 15; i++) {
+      var b = (bits >> i) & 1;
+      if (i < 6) m[i][8] = b;                     // down beside the top-left eye
+      else if (i < 8) m[i + 1][8] = b;
+      else m[size - 15 + i][8] = b;
+      if (i < 8) m[8][size - 1 - i] = b;          // and the second copy, along row 8
+      else if (i === 8) m[8][15 - i] = b;
+      else m[8][14 - i] = b;
+    }
+    return m;
+  }
+
+  function qrEncode(text, forceMask) {
+    var bytes = Array.prototype.slice.call(new TextEncoder().encode(text));
+    var version = 0;
+    for (var v = 1; v <= 6; v++) {
+      var spec = QR_M[v];
+      if (bytes.length <= spec[0] - spec[1] * spec[2] - 2) { version = v; break; }
+    }
+    if (!version) return null;                    // longer than any LAN URL
+    if (forceMask !== undefined && forceMask !== null)
+      return qrDraw(bytes, version, forceMask);
+    var best = null, bestScore = Infinity;
+    for (var mask = 0; mask < 8; mask++) {
+      var m = qrDraw(bytes, version, mask), s = qrPenalty(m);
+      if (s < bestScore) { bestScore = s; best = m; }
+    }
+    return best;
+  }
+  // ==== end qr ==========================================================
+
+  function joinAddress() {
+    // The server states the address phones can reach, because only it knows
+    // one. location.origin is the fallback and is wrong exactly when it
+    // matters -- a screen opened at localhost would publish a QR that every
+    // phone in the room resolves to itself.
+    var meta = document.querySelector('meta[name="karaoke-join"]');
+    if (meta && meta.content) return meta.content;
+    if (location.protocol === "http:" || location.protocol === "https:")
+      return location.origin + "/";
+    return null;                        // opened from a file:// path
+  }
+
   var qrDrawn = false;
   function drawQR() {
-    if (qrDrawn) return; qrDrawn = true;
-    var url = location.origin + "/";
+    if (qrDrawn) return;
+    var url = joinAddress();
+    if (!url) {
+      $("joinUrl").textContent = "Run the karaoke program, then open the address it prints.";
+      return;
+    }
+    qrDrawn = true;
     $("joinUrl").textContent = url;
-    var tag = document.createElement("script");
-    tag.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
-    tag.onload = function () { new QRCode($("qr"), {text: url, width: 184, height: 184}); };
-    tag.onerror = function () { $("qr").textContent = "→ " + url; };
-    document.head.appendChild(tag);
+    show("qrWarn", /^https?:\/\/(localhost|127\.|\[?::1\]?)/i.test(url));
+    var m = qrEncode(url);
+    if (!m) return;                     // longer than any address we serve
+    var box = $("qr"), size = m.length, quiet = 4;
+    var avail = box.clientWidth - 18;
+    if (!(avail > 60)) avail = 200;
+    var scale = Math.max(3, Math.floor(avail / (size + quiet * 2)));
+    var px = (size + quiet * 2) * scale;
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = px;
+    cv.setAttribute("role", "img");
+    cv.setAttribute("aria-label", "QR code to join at " + url);
+    var g = cv.getContext("2d");
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, px, px);
+    g.fillStyle = "#000000";
+    for (var r = 0; r < size; r++)
+      for (var c = 0; c < size; c++)
+        if (m[r][c]) g.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+    box.textContent = "";
+    box.appendChild(cv);
   }
 
   var NARRATE = {

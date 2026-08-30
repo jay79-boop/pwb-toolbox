@@ -60,6 +60,13 @@ def test_the_page_travels_inside_the_file(artifact):
     assert artifact.EMBEDDED_PAGE == build_standalone.PAGE.read_text(encoding="utf-8")
 
 
+def test_the_qr_encoder_travels_too(artifact):
+    """The single file has to draw its own QR on a router with no uplink."""
+    assert "// ==== qr, drawn here" in artifact.EMBEDDED_PAGE
+    assert "function qrEncode(" in artifact.EMBEDDED_PAGE
+    assert "cdnjs" not in artifact.EMBEDDED_PAGE
+
+
 def test_the_selfcheck_gate_passes(artifact):
     assert artifact._standalone_main(["--selfcheck"]) == 0
 
