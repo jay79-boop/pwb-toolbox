@@ -9,7 +9,13 @@ top-level directories and points here for the detail.
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
-- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
+- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only.
+  Also home of the karaoke queue OS: `rotation.py` (random-but-fair singer
+  draw: wait ceiling, cooldown, no-show strikes, adaptive call lead, house-music
+  signal, per-singer memory), `sim.py` (simulated pub nights that judge it),
+  and `room.py` + `queue_server.py` serving `static/karaoke-queue.html` — one
+  command runs the night: big screen with QR + playback, phones join by scan.
+  Protocol in `docs/karaoke-rotation.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
