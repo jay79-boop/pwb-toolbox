@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-08-30 | [Two sessions fixed the same defect three minutes apart](2026-08-30-two-sessions-fixed-the-same-defect-three-minutes-apart.md) |
 | 2026-08-30 | [The password prompt asked for a credential that does not exist](2026-08-30-the-password-prompt-asked-for-a-credential-that-does-not-exist.md) |
 | 2026-08-30 | [Needing no desktop is not the same as not needing a sign-in](2026-08-30-needing-no-desktop-is-not-the-same-as-not-needing-a-sign-in.md) |
 | 2026-08-29 | [The jobs stopped needing a desktop, so the tasks stopped needing one](2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md) |
