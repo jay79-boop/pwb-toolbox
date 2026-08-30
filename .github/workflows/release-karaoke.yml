@@ -27,11 +27,19 @@ jobs:
         run: python tools/karaoke_server/build_standalone.py --out dist/karaoke_os.py
       - name: Selfcheck the artifact
         run: python dist/karaoke_os.py --selfcheck
+      - name: Selfcheck from a shallow path
+        # a user drops it in C:\karaoke\ or a USB root; parents[2] used to
+        # raise IndexError at import there, and dist/ is too deep to notice
+        run: |
+          sudo mkdir -p /kq && sudo cp dist/karaoke_os.py /kq/karaoke_os.py
+          python /kq/karaoke_os.py --selfcheck
       - uses: actions/upload-artifact@v4
         with:
           name: karaoke_os-py
           path: dist/karaoke_os.py
           if-no-files-found: error
+          # a "Re-run all jobs" re-uploads the same name into the same run
+          overwrite: true
 
   windows-exe:
     runs-on: windows-latest
@@ -53,6 +61,7 @@ jobs:
           name: KaraokeQueue-exe
           path: dist/exe/KaraokeQueue.exe
           if-no-files-found: error
+          overwrite: true
 
   draft-release:
     if: startsWith(github.ref, 'refs/tags/karaoke-v')
@@ -71,6 +80,6 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
               --title "Karaoke OS $TAG" \
-              --notes "Standalone karaoke queue. KaraokeQueue.exe: double-click on Windows, no install. karaoke_os.py: python karaoke_os.py on any machine with Python 3.10+. Run it on a machine on the venue's Wi-Fi; the big screen opens itself; phones join by the QR on screen."
+              --notes "Standalone karaoke queue. KaraokeQueue.exe: double-click on Windows, no install. karaoke_os.py: python karaoke_os.py on any machine with Python 3.10+. Run it on a machine on the venue's Wi-Fi; the big screen opens itself; phones join by the QR on screen. If phones cannot connect, allow the app through Windows Firewall for BOTH private and public networks - venue Wi-Fi usually counts as public."
           gh release upload "$TAG" dist/karaoke_os.py dist/KaraokeQueue.exe \
             --repo "$GITHUB_REPOSITORY" --clobber

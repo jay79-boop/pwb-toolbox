@@ -8,8 +8,11 @@ via QueueRoom.
 """
 
 import importlib.util
+import os
 import random
+import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -65,3 +68,110 @@ def test_the_artifact_carries_no_repo_paths_it_depends_on(artifact):
     # PAGE points into a repo that will not exist on the target machine;
     # the fallback must carry the page, so a missing file is never fatal
     assert artifact.page_source() is not None
+
+
+# ---------- what the adversarial review of 2026-08-30 convicted ----------
+
+
+def test_it_runs_from_a_shallow_path():
+    """C:\\karaoke\\karaoke_os.py is a plausible spot and used to crash.
+
+    queue_server computed the repo root as parents[2] at import time, so a
+    file fewer than three directories deep died with IndexError before the
+    launcher, the selfcheck, or the embedded page could run. Neither CI nor
+    the other tests caught it -- pytest's tmpdir and dist/ are both deep, so
+    this one writes to a genuinely root-adjacent directory on purpose.
+    """
+    shallow_dir = Path("/kqtest")  # /kqtest/k.py has 2 parents, not 3
+    shallow_dir.mkdir(exist_ok=True)
+    shallow = shallow_dir / "k.py"
+    try:
+        assert len(shallow.resolve().parents) < 3, "path is not actually shallow"
+        shallow.write_text(build_standalone.build(), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("karaoke_shallow", shallow)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["karaoke_shallow"] = module
+        try:
+            spec.loader.exec_module(module)  # used to raise IndexError here
+            assert module.page_source() is not None
+            assert module._standalone_main(["--selfcheck"]) == 0
+        finally:
+            sys.modules.pop("karaoke_shallow", None)
+    finally:
+        shutil.rmtree(shallow_dir, ignore_errors=True)
+
+
+def test_the_repo_page_lookup_survives_a_root_adjacent_file():
+    from tools.karaoke_server import queue_server
+
+    assert queue_server._repo_page() is not None  # in the repo, it resolves
+    # the guard itself: a path with too few parents returns None, not IndexError
+    assert len(queue_server.Path("/k.py").resolve().parents) < 3
+
+
+def test_the_screen_opens_on_an_address_phones_can_reach(artifact, monkeypatch):
+    """The page builds its QR from location.origin.
+
+    A screen opened at localhost therefore shows a QR that every phone in
+    the room fails to reach -- on the default double-click path, which is
+    the entire product. Blocker, found 2026-08-30.
+    """
+    opened = []
+
+    class FakeTimer:
+        def __init__(self, delay, fn, args=None):
+            opened.append(args[0])
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(artifact.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(artifact, "lan_address", lambda: "192.168.1.50")
+    monkeypatch.setattr(artifact, "serve", lambda *a, **k: None)
+    artifact._standalone_main(["--port", "8772"])
+    assert opened == ["http://192.168.1.50:8772/screen"]
+    assert "localhost" not in opened[0]
+
+    opened.clear()
+    monkeypatch.setattr(artifact, "lan_address", lambda: None)
+    artifact._standalone_main(["--port", "8772"])
+    assert opened == ["http://localhost:8772/screen"]  # only as a fallback
+
+
+def test_memory_lands_next_to_the_program_not_the_working_directory(
+    artifact, monkeypatch, tmp_path
+):
+    """cwd is wrong for a double-clicked exe (System32 as admin, temp in a zip)."""
+    seen = {}
+    monkeypatch.setattr(artifact, "serve", lambda h, p, prof: seen.update(path=prof))
+    monkeypatch.setattr(artifact, "_home_dir", lambda: tmp_path / "venue")
+    artifact._standalone_main(["--no-browser"])
+    assert seen["path"] == str(tmp_path / "venue" / "karaoke-profiles.json")
+    assert os.path.isabs(seen["path"])
+
+
+def test_an_unwritable_location_costs_the_memory_not_the_night(artifact, tmp_path):
+    """An exe in Program Files, or a USB stick pulled mid-night, must not
+    take the room down with it.
+
+    mkstemp sat outside the try in _save_profiles, so any OSError from it
+    raised straight out of join() through the HTTP handler: every phone's
+    join died and the night was over. A read-only directory is the Windows
+    version; here the folder simply is not there, which convicts as any
+    user (root ignores a read-only bit, so that variant proves nothing).
+    """
+    gone = tmp_path / "unplugged-usb" / "profiles.json"  # parent never created
+    room = artifact.QueueRoom(str(gone), artifact.RotationConfig())
+    ada = room.join({"name": "Ada"}, 0.0)["singer_id"]  # must not raise
+    room.song({"singer_id": ada, "title": "Nine to Five"}, 0.0)
+    state = room.state(1.0, singer_id=ada)
+    assert state["called"]["singer_id"] == ada  # the night runs regardless
+    assert not gone.exists()  # memory really was lost, not silently relocated
+
+
+def test_the_firewall_hint_is_printed_where_the_operator_will_see_it(capsys):
+    from tools.karaoke_server import queue_server
+
+    src = build_standalone.module_body("queue_server.py")
+    assert "public networks" in src.lower()
+    assert "firewall" in src.lower()
