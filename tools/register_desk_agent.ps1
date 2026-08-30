@@ -477,9 +477,24 @@ foreach ($j in $jobs) {
   } elseif ($desktopless) {
     Write-Host '            GOOD: no desktop needed, and none required. Runs signed in or not.'
   } else {
+    # Two different things satisfy "signed in", and naming only one of them sent
+    # this machine's owner hunting for a password they do not have. They sign in
+    # with a Windows Hello PIN, which is a device-local credential sealed in the
+    # TPM -- not the account password, and no substitute for it. See
+    # docs/decisions/2026-08-29-a-pin-is-not-the-account-password.md.
+    #
+    # Supplying the password REMOVES the requirement. ARSO SATISFIES it, by
+    # making the machine sign itself in after a restart. Either is a real fix and
+    # ARSO needs no password, so it must be the one named first -- a note that
+    # points only at the harder route is how the same wrong turn gets taken twice.
     Write-Host '            NOTE: this job needs no desktop, but is registered Interactive,'
-    Write-Host '                  so it still only runs while you are signed in. Re-run this'
-    Write-Host '                  script and supply the password to lift that.'
+    Write-Host '                  so it needs someone signed in. Two things satisfy that:'
+    Write-Host '                  1. ARSO -- the machine signs itself in after a restart and'
+    Write-Host '                     locks. No password stored. Check it with:'
+    Write-Host '                       .\tools\autologon.ps1'
+    Write-Host '                  2. Re-run this script with the account password, which'
+    Write-Host '                     removes the requirement instead of satisfying it.'
+    Write-Host '                  A Windows Hello PIN is NOT that password.'
   }
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'

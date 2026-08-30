@@ -1015,3 +1015,47 @@ def test_no_lookup_names_a_table_the_script_never_defines(path):
         "throws on a method call against $null, and under "
         "$ErrorActionPreference = 'Stop' that ends the run where it stands."
     )
+
+
+# ------------------------- the note that fires on a desktop-free Interactive task --
+#
+# Added 2026-08-30 from a live run. The read-back told the owner their two jobs
+# "still only run while you are signed in. Re-run this script and supply the
+# password to lift that." They sign in with a Windows Hello PIN and have no
+# account password to supply -- and ARSO, which they had already switched on,
+# already satisfies the requirement. The note pointed at the one route that was
+# closed to them and stayed silent about the one that was open.
+#
+# Same defect as the one #164 fixed in autologon.ps1, in a second file. Pinning
+# it here rather than trusting a comment, because a third copy is exactly the
+# shape this keeps coming back in.
+
+
+def interactive_but_deskfree_note():
+    """The read-back branch for a job that needs no desktop yet is Interactive."""
+    body = read(SCHEDULER).split("} elseif ($desktopless) {", 1)[1]
+    return body.split("} else {", 1)[1].split("\n  }", 1)[0]
+
+
+def test_the_note_names_arso_before_the_password_route():
+    note = "\n".join(
+        l for l in interactive_but_deskfree_note().splitlines() if "Write-Host" in l
+    )
+    assert "autologon.ps1" in note, (
+        "ARSO satisfies 'signed in' without any password, and it is the only "
+        "route open to someone who signs in with a PIN. A note that omits it "
+        "sends them after an account password they may not have."
+    )
+    assert note.index("ARSO") < note.index("password"), (
+        "ARSO has to be named first. It needs no stored secret and it is what "
+        "this machine actually uses; the password route is the fallback."
+    )
+
+
+def test_the_note_says_a_pin_is_not_the_password():
+    note = interactive_but_deskfree_note()
+    assert "PIN is NOT that password" in note, (
+        "The whole failure was reading 'the password' as something a PIN user "
+        "has. Saying so in the output costs one line and closes the loop that "
+        "cost two rounds already."
+    )
