@@ -90,3 +90,36 @@ one for the open internet — don't expose it publicly without putting
 something in front of it.
 
 Scores live in one JSON file. Back it up by copying it.
+
+## The random rotation (who sings next)
+
+`rotation.py` runs the queue for a room: sign in with a song attached, and
+a weighted random draw picks each next singer — nobody knows who is up
+until the call goes out, ~a minute before the current song ends. Fairness
+rails: a wait ceiling, a just-sang cooldown, fewest-songs-tonight odds, a
+newcomer boost, and strike-out/come-back handling for no-shows. Walk-up
+times are learned per singer and stretch the call lead as the room fills.
+
+`sim.py` proves it on synthetic pub nights and judges itself:
+
+```bash
+python -m tools.karaoke_server.sim report
+```
+
+To actually run a night (same LAN rule as the board -- a machine on the
+venue's Wi-Fi, never a cloud session):
+
+```bash
+python -m tools.karaoke_server.queue_server
+```
+
+Open `/screen` on the address it prints for the stage display (now
+singing, the draw reveal, a QR to join, YouTube playback for link songs,
+house music state); phones scan the QR and get the three-tap flow: name,
+song, and a full-screen YOU'RE UP when the draw lands on them. Singer
+memory lives in `karaoke-profiles.json` next to where you ran it.
+
+`docs/karaoke-rotation.md` is the protocol — including what the rotation
+refuses to promise (a flat "never wait more than 4 draws" is impossible in
+a 15-deep queue; nobody can read your YouTube history, so it remembers
+what you sang *here* instead).

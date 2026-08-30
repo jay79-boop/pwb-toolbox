@@ -608,9 +608,14 @@ def test_autologon_does_not_count_a_missing_sign_in_when_nothing_needs_one():
     Convicted against the pre-change file: it incremented `$problems` for
     AutoAdminLogon being off unconditionally, and printed 'NOT Interactive' for
     every converted task.
+
+    Anchored on the section heading rather than on any one route's wording.
+    The first version of this test split on "1. Automatic sign-in", which the
+    PIN/ARSO rewrite renamed -- so it broke on a merge that had not touched the
+    behaviour it guards. The heading number is the stable part.
     """
     body = read(AUTOLOGON)
-    section = body.split("1. Automatic sign-in", 1)[1].split("# 2.", 1)[0]
+    section = body.split("1. Signing in after a restart", 1)[1].split("# 2.", 1)[0]
     assert "$desktopNeeded" in section, (
         "a machine whose every job is desktop-free must not be told off for "
         "failing to sign itself in"
@@ -764,3 +769,61 @@ def test_staleness_is_not_reported_as_an_ahead_behind_count():
         "the exact confusion this version stamp exists to end"
     )
     assert "fetch" not in src, "registering scheduled tasks must not touch the network"
+
+
+# ------------------------------------------- a PIN is not the account password --
+#
+# Corrected on 2026-08-29, one question after shipping. The first version of
+# autologon.ps1 knew only about AutoAdminLogon and told anyone without it to run
+# Sysinternals Autologon. The owner signs in with a Windows Hello PIN -- a
+# device-local credential sealed in the TPM, not the account password -- so that
+# advice could not have worked, and would have sent them hunting for a Microsoft
+# account password they had never typed.
+#
+# ARSO is the route that fits: it signs the last user back in after a restart or
+# cold boot AND locks the session, with no password stored anywhere. These pin
+# that the script offers it, and that it does not overstate what it checked.
+
+
+def test_autologon_offers_the_route_that_works_with_a_pin():
+    body = read(AUTOLOGON)
+    assert "DisableAutomaticRestartSignOn" in body, (
+        "ARSO is the only automatic sign-in a PIN user can actually enable, and "
+        "its policy is the one part of it that is readable from a script. A "
+        "checker that cannot see the policy will report a machine as unfixable "
+        "when one registry value is switching the whole feature off."
+    )
+    assert "Policies\\System" in body, (
+        "ARSO's policy lives under Policies\\System, not under Winlogon where "
+        "every other sign-in value in this script lives. Reading the wrong key "
+        "reports 'not set' for a policy that is switched on."
+    )
+
+
+def test_autologon_does_not_send_a_pin_user_to_fetch_a_password():
+    """The password route must be offered second, and marked as needing a password."""
+    body = read(AUTOLOGON)
+    route_a = body.split("Route A", 1)[1].split("Route B", 1)[0]
+    route_b = body.split("Route B", 1)[1]
+    assert (
+        "PIN" in route_a
+    ), "the PIN-compatible route has to say so where it is offered"
+    assert "PASSWORD, not a PIN" in route_b, (
+        "the autologon route has to state up front that it needs the account "
+        "password. Presenting it as the default is what made the first version "
+        "wrong for this machine."
+    )
+
+
+def test_the_summary_does_not_round_unchecked_up_to_fine():
+    summary = (
+        read(AUTOLOGON).split("if ($problems -eq 0) {", 1)[1].split("} else", 1)[0]
+    )
+    assert "All clear" not in summary, (
+        "The per-user ARSO toggle cannot be read from a script, so a run with "
+        "zero problems has still not established that the machine signs itself "
+        "in. Reporting that as 'all clear' is the same class of error as the "
+        "read-back that printed a line from the source file having queried "
+        "nothing -- an unchecked thing rounded up to a passing one."
+    )
+    assert "not verified" in summary, "it has to name what it could not check"

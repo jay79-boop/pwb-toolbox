@@ -92,6 +92,17 @@ $wakeTimerGuid = 'bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d'
 # have across three files.
 $desktopTasks = @('Alerts')
 
+function Get-PolicyValue([string] $name) {
+  # ARSO's policy lives under Policies\System, NOT under Winlogon where the
+  # rest of the sign-in values are. Two keys, and reading the wrong one reports
+  # "not set" for a policy that is switched on -- the shape of wrong answer this
+  # script exists to avoid.
+  $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+  $item = Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue
+  if ($null -eq $item) { return $null }
+  return $item.$name
+}
+
 function Get-WinlogonValue([string] $name) {
   # -ErrorAction SilentlyContinue on Get-ItemProperty returns $null for a
   # missing value AND for a missing key, which is the answer we want in both
@@ -178,31 +189,85 @@ foreach ($t in $agentTasks) {
   if ($desktopTasks -contains $t.TaskName.Substring($agentPrefix.Length)) { $desktopNeeded = $true }
 }
 if ($agentTasks.Count -gt 0 -and -not $desktopNeeded) {
-  Write-Host 'No registered task needs a desktop. Automatic sign-in is therefore optional'
-  Write-Host 'here: sections 1 and 2 are reported for information and are not counted as'
-  Write-Host 'problems. Section 3 is the one that matters.'
+  Write-Host 'No registered task needs a desktop. Signing in after a restart is therefore'
+  Write-Host 'optional here: sections 1 and 2 are reported for information and are not'
+  Write-Host 'counted as problems. Section 3 is the one that matters.'
   Write-Host ''
 }
 
-# 1. Does it sign itself in?
+# 1. Does it sign itself in? There are TWO routes and they are not equivalent.
+#
+# The first version of this script knew only about AutoAdminLogon and told
+# anyone without it to run Sysinternals Autologon. That advice is WRONG for this
+# machine and was corrected on 2026-08-29 when the owner said they sign in with a
+# PIN: a Windows Hello PIN is a device-local credential sealed in the TPM, not
+# the account password, and Autologon needs the password. Following that advice
+# would have sent them hunting for a Microsoft-account password they had never
+# typed, to enable something they do not need.
+#
+# ARSO is the route that fits a PIN, and it is the better one regardless: it
+# signs the last user back in after a restart or cold boot, rehydrates the
+# session, AND LOCKS IT immediately -- so the desktop the scheduled tasks need
+# exists, with no password stored anywhere and no open desktop left behind.
+#
+# Since 2026-08-29 that argument only binds the jobs that still drive the chart.
+# premarket and journal read their levels from bar data and run on a stored
+# credential, so on a machine where alerts is off NOTHING below is a fault --
+# it is reported so the state is visible, not because anything depends on it.
+$arsoPolicy = Get-PolicyValue 'DisableAutomaticRestartSignOn'
 $auto   = Get-WinlogonValue 'AutoAdminLogon'
 $user   = Get-WinlogonValue 'DefaultUserName'
 $domain = Get-WinlogonValue 'DefaultDomainName'
 $plain  = Get-WinlogonValue 'DefaultPassword'
 
-Write-Host '1. Automatic sign-in'
-if ("$auto" -eq '1') {
-  Write-Host ('   ON    AutoAdminLogon=1, user: ' + $domain + '\' + $user)
-} else {
-  Write-Host ('   OFF   AutoAdminLogon=' + $(if ($null -eq $auto) { '(not set)' } else { $auto }))
+Write-Host '1. Signing in after a restart'
+Write-Host ''
+Write-Host '   Route A -- ARSO, the one that works with a PIN. Recommended.'
+if ("$arsoPolicy" -eq '1') {
+  Write-Host '     BLOCKED  DisableAutomaticRestartSignOn=1: a policy turns ARSO off outright.'
+  Write-Host '              The Settings toggle cannot override this. Clear it in an ADMIN'
+  Write-Host '              PowerShell, then set the toggle:'
+  Write-Host "                Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name DisableAutomaticRestartSignOn"
   if ($desktopNeeded) {
-    Write-Host '         Nothing signs this machine in, so a task needing a desktop cannot run'
-    Write-Host '         after a reboot. Set it with Sysinternals Autologon (see the README).'
     $problems++
   } else {
-    Write-Host '         Fine as it is: no registered task needs a desktop, so nothing here'
-    Write-Host '         depends on the machine signing itself in.'
+    Write-Host '              Not counted as a problem here: no registered task needs a'
+    Write-Host '              desktop, so nothing depends on this machine signing itself in.'
   }
+} else {
+  $arsoShown = if ($null -eq $arsoPolicy) { 'not set' } else { $arsoPolicy }
+  Write-Host ('     not blocked by policy (DisableAutomaticRestartSignOn=' + $arsoShown + ')')
+  # Deliberately NOT reported as "on". The per-user consent behind the Settings
+  # toggle is not reliably readable from here, and this script's whole premise
+  # is that a printed line is not evidence. Saying where to look beats asserting
+  # a state that was never checked -- which is the exact bug fixed in #154.
+  Write-Host '     The toggle itself is per-user and this script cannot read it. Confirm it at:'
+  Write-Host '       Settings > Accounts > Sign-in options > Additional settings >'
+  Write-Host '       "Use my sign-in info to automatically finish setting up after an update"'
+  Write-Host '     Real proof is the next 07:00 run appearing in the log after an overnight'
+  Write-Host '     reboot. Nothing readable here can stand in for that.'
+}
+
+Write-Host ''
+Write-Host '   Route B -- full autologon. Needs the account PASSWORD, not a PIN.'
+if ("$auto" -eq '1') {
+  Write-Host ('     ON     AutoAdminLogon=1, user: ' + $domain + '\' + $user)
+} else {
+  Write-Host ('     off    AutoAdminLogon=' + $(if ($null -eq $auto) { '(not set)' } else { $auto }))
+  Write-Host '     Not a problem if Route A is on -- this one boots to an UNLOCKED desktop,'
+  Write-Host '     so anyone who powers the machine on is inside it. Only worth it if ARSO'
+  Write-Host '     cannot be made to work. It needs the real account password (a Microsoft'
+  Write-Host '     account password is resettable at account.live.com) and, on current'
+  Write-Host '     builds, DevicePasswordLessBuildVersion set to 0 under'
+  Write-Host '     HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
+  Write-Host '     before the password field appears at all.'
+}
+
+if (-not $desktopNeeded -and $agentTasks.Count -gt 0) {
+  Write-Host ''
+  Write-Host '   Neither route is needed as things stand: every registered task runs on a'
+  Write-Host '   stored credential and needs no desktop. Both are reported so you can see'
+  Write-Host '   the state, and they matter again the moment a chart job is switched on.'
 }
 
 # The one finding worth shouting about. Plenty of guides tell you to set
@@ -324,12 +389,30 @@ if ($lock) {
 
 Write-Host ''
 if ($problems -eq 0) {
+  # NOT "all clear" when a desktop job exists. Nothing above read the ARSO
+  # toggle, because it cannot be read from here, and a summary that rounds
+  # "I could not check this" up to "this is fine" is the whole failure mode
+  # this script was written against. Say what was verified, and name what
+  # was not.
+  #
+  # With no desktop job registered there is nothing unverified left to warn
+  # about: the ARSO toggle stops being load-bearing, so claiming it as an
+  # open question would be its own kind of false report.
   if ($desktopNeeded) {
-    Write-Host 'All clear: this machine can sign itself in, wake itself, and every task that'
-    Write-Host 'needs a desktop is set to get one.'
+    Write-Host 'Nothing here is broken: no blocking policy, the tasks that want a desktop will get'
+    Write-Host 'one, and they will wake the machine for their trigger.'
+    Write-Host ''
+    Write-Host 'ONE thing above was not verified and cannot be from here: the per-user ARSO toggle'
+    Write-Host 'in Settings. Confirm that by eye. The actual proof is the next 07:00 run appearing'
+    Write-Host 'in the log after an overnight reboot.'
   } else {
-    Write-Host 'All clear: no registered task needs a desktop, so nothing here depends on this'
-    Write-Host 'machine signing itself in. The tasks run whether you are logged on or not.'
+    Write-Host 'Nothing here is broken, and nothing needs signing in: no registered task needs a'
+    Write-Host 'desktop, so they run whether you are logged on or not. The machine will still'
+    Write-Host 'wake itself for their triggers.'
+    Write-Host ''
+    Write-Host 'The ARSO toggle is not load-bearing while that holds, so it is not flagged above.'
+    Write-Host 'Proof is the same either way: the next 07:00 run appearing in the log after an'
+    Write-Host 'overnight reboot.'
   }
 } else {
   Write-Host ('' + $problems + ' thing(s) above will stop an unattended run. Each one names its fix.')

@@ -185,6 +185,12 @@ another device, and a tick costs no tokens because it never involves a session.
 `<script id="app-state">`, and republish with `url` set to that same address. Items
 already ticked stay ticked. An item raised weeks ago staying visibly open is the
 point. Mark anything you completed yourself as `"who": "claude"`, `"done": true`.
+
+**Tick every row you can confirm is done, including mine.** `who` records who was
+responsible and keeps saying so after the box is checked, so ticking never destroys
+that signal. Do not hand a finished row back to me to click. The bar is *verified*,
+not *believed*: tick when something outside your own reasoning confirms it -- a test
+run, an API read, a file checked. Otherwise leave it open and say what is unproven.
 """ % LEDGER_URL
 
 MARKER = "## Action items: one ledger, every project"

@@ -36,6 +36,33 @@ is local — stop, and do not clone anything.
 Shallow is enough for reading. For history — when a change landed, what a commit
 touched — use a bounded `git fetch --depth=20 origin main`, never `--unshallow`.
 
+## The `Backups/` mirror is a snapshot, not the machine
+
+`Backups/claude-config/` is written by the 22:00 nightly, so it answers *what the
+machine held at the last run*, never *what it holds now*. Two things make that
+easy to misread:
+
+- **An unchanged file is not committed**, so a blob frozen weeks ago is
+  indistinguishable from one written last night.
+- The gap is widest exactly when the question is interesting: a skill promoted
+  today cannot appear in the mirror until tonight.
+
+On 2026-08-29 the mirrored `gexio-machine/SKILL.md` read 19,659 bytes against
+22,135 on the account — a clean-looking drift, from a blob last written
+2026-08-18. The machine copy had been replaced that morning.
+
+**Date the blob before quoting it:**
+
+```bash
+git -C /home/user/ray-vault log -1 --format='%h %ad' --date=iso \
+  -- Backups/claude-config/skills/<name>/SKILL.md
+```
+
+Older than the change you are asking about means the mirror cannot answer, and
+nothing else here can either — a cloud session has no route to that disk. Report
+the snapshot **with its date**, or say the question is open. Never present it as
+the current state.
+
 ## Read only. Never push
 
 `Backups/claude-config/vault-automation/nightly-github-sync.ps1` runs at 22:00 on

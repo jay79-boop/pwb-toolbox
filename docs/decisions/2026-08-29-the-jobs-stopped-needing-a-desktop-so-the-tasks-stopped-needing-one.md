@@ -82,12 +82,26 @@ without a desktop here.
 
 ## What this does and does not buy
 
-**It does not remove a stored credential from the machine.** It moves one.
-Automatic sign-in stores the password as an LSA secret; so does a task
-registered with `-User` and `-Password`. What actually goes away is the
-**live signed-in desktop** — no auto-logon, no session sitting unlocked after a
-03:00 reboot, no lock-screen question about whether a chart still renders. That
-is the larger exposure of the two, and it is the one that is gone.
+**It adds a stored credential, and the first draft of this entry got that
+wrong.** That draft said the change merely *moves* one: full autologon stores
+the password as an LSA secret, and so does a task registered with `-User` and
+`-Password`, so the count looked unchanged. That holds only against full
+autologon. It does not hold against ARSO, which
+[the same day's other decision](2026-08-29-a-pin-is-not-the-account-password.md)
+established as the right route for this machine, because the owner signs in
+with a PIN: **ARSO stores no password at all.** It rehydrates the session from
+secrets the LSA already persisted. So on an ARSO machine this change puts a
+credential on disk that was not there before.
+
+The error is worth recording rather than quietly fixing, because it is the same
+shape as the bug that sibling entry corrects — a claim about this machine
+inherited from the general case, after the specific case had already moved.
+
+What is bought for it: the machine no longer has to sign itself in at all. No
+ARSO, no per-user toggle that no script can verify, no session rehydrated at
+03:00, and a job that survives a reboot with nobody near the machine. Whether
+one LSA secret is worth that is a judgement rather than a fact, which is why
+the prompt is declinable.
 
 **The conversion is declined in one command.** `-NoStoredCredential` registers
 everything Interactive, and so does simply pressing enter at the password
