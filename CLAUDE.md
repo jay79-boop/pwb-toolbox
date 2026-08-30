@@ -102,7 +102,8 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-Three rules that are *not* in the skill:
+Rules that are *not* in the skill (the count in this line went stale three
+times, so it no longer carries one — just add a bullet):
 
 - **Never indent prose underneath a checkbox.** Four-space indentation renders
   as a *code block*, and a code block reads as "paste this". On 2026-08-29 they
@@ -112,6 +113,15 @@ Three rules that are *not* in the skill:
   explanation on the checkbox's own line, or in prose above the block. **An
   indented block inside a NEEDS YOU item means "this is pasteable" and nothing
   else.**
+- **Point at the exact place, never at where to look for it.** Asked for
+  2026-08-29, after a step read "delete the branch on GitHub" and they replied
+  "how I find the branch again? not familiar to working in github. always point
+  to exacted location". So: give the URL that lands on the thing itself, filtered
+  to it where the site allows — `.../branches/all?query=<name>` rather than
+  `.../branches` — then name the control to click and what happens after. Naming
+  a site, a page, or a menu path is a description of a search, and they have to
+  run it. This holds for anything with an address: a settings page, a specific
+  file in a repository, a run in Actions, a row in the ledger.
 - **If a step is also explained in prose above, it still gets repeated in the
   block.** The block is the checklist of record.
 - **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
