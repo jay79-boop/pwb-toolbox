@@ -567,3 +567,48 @@ def test_the_summary_does_not_round_unchecked_up_to_fine():
         "nothing -- an unchecked thing rounded up to a passing one."
     )
     assert "not verified" in summary, "it has to name what it could not check"
+
+
+# --------------------------------------- what a conflict resolution can break --
+#
+# On 2026-08-30 a branch renamed `$schedCodes` to `$resultCodes`, because the
+# table had grown to cover two families of code, while main added a WakeToRun
+# read-back directly above the lookup. Resolving that conflict the obvious way
+# -- keep both sides -- leaves main's `$schedCodes.ContainsKey(...)` naming a
+# table that no longer exists. A method call on `$null` under
+# `$ErrorActionPreference = 'Stop'` takes the script down part-way through the
+# read-back, which is the one output this whole system exists to produce.
+#
+# Every test in this file passed on that tree, and passed again with conflict
+# markers still in the file. Both of those are the same defect as a scan that
+# resolves nothing and reports everything clean.
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_merge_conflict_markers_survived(path):
+    markers = [
+        n
+        for n, line in enumerate(read(path).splitlines(), 1)
+        if line.startswith(("<<<<<<<", ">>>>>>>")) or line.rstrip() == "======="
+    ]
+    assert not markers, f"{path.name} still carries conflict markers at {markers}"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_lookup_names_a_table_the_script_never_defines(path):
+    src = read(path)
+    assigned = set(re.findall(r"^\s*\$(\w+)\s*=", src, re.MULTILINE))
+    # `[string] $RepoRoot` and friends inside param() blocks.
+    assigned |= set(re.findall(r"^\s*\[[\w\[\]]+\]\s*\$(\w+)", src, re.MULTILINE))
+    looked_up = set(re.findall(r"\$(\w+)\.ContainsKey\(", src))
+    looked_up |= set(re.findall(r"\$(\w+)\[", src))
+    dangling = sorted(looked_up - assigned)
+    assert not dangling, (
+        f"{path.name} indexes {dangling}, which it never assigns. PowerShell "
+        "throws on a method call against $null, and under "
+        "$ErrorActionPreference = 'Stop' that ends the run where it stands."
+    )
