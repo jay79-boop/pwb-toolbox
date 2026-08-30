@@ -234,11 +234,26 @@ top-level directories and points here for the detail.
   nobody signed in: automatic sign-in, wake timers, and whether the Windows
   password is sitting in the registry in plaintext. Read-only by default;
   `-EnableLock` adds an opt-in lock-after-logon task. It deliberately does **not**
-  configure the sign-in — the LogonType on the tasks must stay `Interactive`,
-  because both jobs drive TradingView Desktop and a task that runs whether the
-  user is logged on or not has no desktop to render on. PowerShell, for the
-  user's machine; reasoning in
-  `docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md`
+  configure the sign-in. It reports **per job**: only `alerts` and `pine_loop`
+  still drive TradingView Desktop and need a desktop, and where no registered
+  task needs one it says so and stops counting a missing auto sign-in as a
+  problem. A chart job on a desktopless logon is still called `WRONG`.
+  PowerShell, for the user's machine; reasoning in
+  `docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md` and its follow-up
+  `docs/decisions/2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md`
+- `tools/desk_levels.py` — market structure from **bar data**, so the desk
+  agent's `premarket` and `journal` jobs need no chart and their scheduled tasks
+  need no desktop: session levels (Asia/London/NY), the prior **trading** day's
+  range, unmitigated fair value gaps and the order block behind each, and every
+  level's distance from price in basis points. Also renders a candlestick PNG
+  headless, which is the journal's chart image. Built around the two traps in
+  `docs/backtesting.md`: input is naive UTC only and session windows are built
+  through `zoneinfo` per day, so DST cannot silently move them (a test plants
+  the same spike in January and July and requires both found); and the trading
+  day boundary is 18:00 ET, explicit and never inferred. It refuses rather than
+  repairs — an empty session is `None`, a stale bar is marked `STALE`, a
+  future-stamped bar is named as a clock fault. It will **not** audit its feed:
+  one vendor, unaudited, and it says so. Protocol in `docs/desk-levels.md`
 - `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
   the patterns that exhaust a usage window: Routines that re-arm themselves into
   a persistent session, wakes bound to a session too fat to load cheaply, and

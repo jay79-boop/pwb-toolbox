@@ -292,12 +292,38 @@ def test_a_missing_directory_is_dropped_rather_than_passed_on():
 
 # ------------------------------------- waking up, and signing in without you --
 #
+# ------------------------------------------ which jobs still need a desktop --
+#
 # Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed
-# in". The LogonType is the one thing that must NOT change: a task set to run
-# whether the user is logged on or not gets a session with no desktop, and both
-# enabled jobs drive TradingView Desktop. The request was right about the goal
-# and wrong about the mechanism, and these pin the distinction so a later reader
-# does not undo it.
+# in", and answered twice.
+#
+# The first answer was that the LogonType must NOT change: a task set to run
+# whether the user is logged on or not gets a session with no desktop, and
+# every enabled job drove TradingView Desktop, so the change would have turned
+# a job that does not run into a job that runs and is wrong. That reasoning is
+# in docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md and the guard
+# it produced forbade `-LogonType`, `S4U` and `Password` anywhere in the
+# scheduler's code.
+#
+# The second answer removed the premise. `premarket` and `journal` now read
+# their levels from bar data through tools/desk_levels.py and render their own
+# images headless, so they have no desktop to lose and their tasks can take a
+# logon type that has none.
+#
+# So the blanket ban is NARROWED here rather than deleted, to the jobs that
+# still drive the chart. Deleting it would leave the original trap unguarded
+# the moment somebody re-enables `alerts`; keeping it would forbid the fix.
+#
+# Which of these convict, honestly:
+#
+#   * `test_s4u_is_never_used_for_any_job` is UNCHANGED in force. S4U is still
+#     banned outright, for every job, and it convicts today.
+#   * The per-job tests below are new and convict the obvious careless version
+#     of this change -- flipping the whole table to a stored credential -- which
+#     was written and run against them to check they fail.
+#   * `test_every_job_declares_whether_it_needs_a_desktop` is a forward guard.
+#     It passes trivially now and exists so a job added later cannot inherit
+#     "no desktop needed" by saying nothing.
 
 AUTOLOGON = REPO / "tools" / "autologon.ps1"
 
@@ -315,13 +341,28 @@ def code_lines(path):
     )
 
 
+def scheduler_desktop_jobs():
+    """The `$jobs` table as {job name: NeedsDesktop}, read out of the source."""
+    body = read(SCHEDULER).split("$jobs = @(", 1)[1].split("\n)", 1)[0]
+    jobs = {}
+    for entry in re.finditer(
+        r"Job\s*=\s*'(?P<job>\w+)'.*?NeedsDesktop\s*=\s*\$(?P<needs>true|false)",
+        body,
+        re.DOTALL,
+    ):
+        jobs[entry.group("job")] = entry.group("needs") == "true"
+    return jobs
+
+
 def test_the_tasks_wake_the_machine():
     settings = read(SCHEDULER).split("$settings = New-ScheduledTaskSettingsSet", 1)[1]
     settings = settings.split("$weekdays", 1)[0]
     assert "-WakeToRun" in settings, (
         "Without WakeToRun the machine is never woken for a trigger. "
         "StartWhenAvailable only catches a run up after something else wakes it, "
-        "and a 07:00 gameplan delivered at 10:15 is not a pre-market gameplan."
+        "and a 07:00 gameplan delivered at 10:15 is not a pre-market gameplan. "
+        "This holds for a desktop-free task too: a stored credential does not "
+        "wake a sleeping machine."
     )
 
 
@@ -334,27 +375,276 @@ def test_wake_to_run_is_read_back_from_windows():
     )
 
 
-def test_the_tasks_are_never_given_a_desktopless_logon_type():
-    code = code_lines(SCHEDULER)
-    for bad in ("S4U", "Password", "-LogonType"):
-        assert bad not in code, (
-            f"{bad!r} appears in the scheduler's code. Both enabled jobs drive "
-            "TradingView Desktop; a task that runs whether the user is logged on "
-            "or not has no desktop, so it would fire on time and fail at the "
-            "first chart call. Interactive is correct here -- the fix for an "
-            "unattended machine is automatic sign-in, not this flag."
+def test_s4u_is_never_used_for_any_job():
+    """The half of the original ban that did NOT narrow.
+
+    S4U is refused for every job, desktop or not, and for a reason that has
+    nothing to do with rendering: it stores no password and therefore carries
+    no credentials, so DPAPI-protected secrets do not decrypt and network paths
+    are not reachable as the user. Both remaining jobs run Claude Code, whose
+    own stored authentication is exactly that kind of secret, and the journal
+    job reads a document under OneDrive. S4U would fail both at run time,
+    unattended, looking like a broken agent rather than a wrong logon type.
+    """
+    # Scoped to the code that REGISTERS a task. The read-backs in both
+    # register_desk_agent.ps1 and autologon.ps1 name S4U on purpose, to
+    # recognise a task that already has it and say so -- forbidding the string
+    # outright would convict the detector along with the thing it detects,
+    # which is the #154 mistake in a new place.
+    registration = (
+        read(SCHEDULER)
+        .split("$weekdays", 1)[1]
+        .split("Reading the tasks back from Windows", 1)[0]
+    )
+    for label, body in (
+        ("register_desk_agent.ps1's registration loop", registration),
+        ("run_job.ps1", code_lines(LAUNCHER)),
+    ):
+        assert "S4U" not in body, (
+            f"{label} names S4U. It carries no credentials at all -- the jobs "
+            "would fail on DPAPI and on OneDrive, at run time, unattended. A "
+            "stored credential (-User with -Password) is the supported way to "
+            "run without a desktop here."
         )
 
 
-def test_the_interactive_note_points_at_the_real_fix():
-    interactive = read(SCHEDULER).split("if (\"$logon\" -eq 'Interactive')", 1)[1]
-    interactive = interactive.split("}", 1)[0]
-    assert "autologon.ps1" in interactive, (
-        "The note a reader sees when a task is Interactive has to send them to "
-        "the thing that actually fixes an unattended run. The previous wording, "
-        "'runs only while you are signed in', reads as an accusation against the "
-        "flag and invites exactly the change that breaks the chart jobs."
+def test_the_read_back_still_recognises_s4u_if_it_finds_one():
+    """Banned from being set is not the same as banned from being noticed.
+
+    A task given S4U by hand in Task Scheduler has to be reported, and both
+    read-backs have to be able to name it to do that.
+    """
+    for path in (SCHEDULER, AUTOLOGON):
+        read_back = read(path).split("$logon", 1)[1]
+        assert "S4U" in read_back, f"{path.name} cannot recognise an S4U task"
+
+
+def test_every_job_declares_whether_it_needs_a_desktop():
+    """A forward guard: passes today, and exists so silence cannot mean 'no'.
+
+    A job added without this field would be registered against a stored
+    credential by default and fail at its first chart call -- the exact failure
+    the original blanket ban was written to prevent, arriving through an
+    omission rather than an edit.
+    """
+    declared = set(scheduler_desktop_jobs())
+    assert declared == set(scheduler_jobs()), (
+        "every job in the table must say whether it needs a desktop; "
+        f"missing: {sorted(set(scheduler_jobs()) - declared)}"
     )
+
+
+def test_premarket_and_journal_no_longer_need_a_desktop():
+    # The conversion itself. Both read bar data through tools/desk_levels.py.
+    assert scheduler_desktop_jobs()["premarket"] is False
+    assert scheduler_desktop_jobs()["journal"] is False
+
+
+def test_alerts_still_needs_a_desktop():
+    """It is off, not retired, and it still drives the chart.
+
+    This is why the ban narrowed rather than being deleted: re-enabling
+    `alerts` must not quietly hand it a session with nothing to render into.
+    """
+    assert scheduler_desktop_jobs()["alerts"] is True
+
+
+def test_a_job_that_needs_a_desktop_is_never_given_a_stored_credential():
+    """The narrowed guard, and the one that replaces the blanket ban.
+
+    Convicted against the careless version of this change: setting every entry
+    in the table to `NeedsDesktop = $false` fails
+    `test_alerts_still_needs_a_desktop`, and deleting the `$j.NeedsDesktop`
+    condition from the registration branch fails this one.
+    """
+    body = read(SCHEDULER).split("$weekdays", 1)[1]
+    branch = body.split("$common = @{", 1)[1].split("try {", 1)[0]
+    assert "$j.NeedsDesktop" in branch, (
+        "the registration branch must gate the stored credential on the job's "
+        "own NeedsDesktop, or a chart job gets a session with no desktop"
+    )
+    # And the credential must be set only on the side of the branch that is
+    # NOT the desktop one -- a gate that adds it in both arms is not a gate.
+    assert re.search(
+        r"if \(\$j\.NeedsDesktop[^)]*\)\s*\{[^}]*\}\s*else\s*\{[^}]*User[^}]*Password",
+        branch,
+        re.DOTALL,
+    ), "the User/Password pair must sit in the else arm, not in both"
+
+
+def test_the_password_is_prompted_for_rather_than_taken_on_the_command_line():
+    src = read(SCHEDULER)
+    assert "Read-Host" in src and "-AsSecureString" in src, (
+        "a password passed as a parameter lands in the PowerShell history file "
+        "in clear text, and a hand-edited command is how one ends up pasted "
+        "into a chat window"
+    )
+    assert "[string] $Password" not in src
+
+
+def test_declining_the_password_falls_back_to_interactive_rather_than_failing():
+    """A blank answer must leave a working desk, not a half-registered one."""
+    src = read(SCHEDULER)
+    assert "$NoStoredCredential" in src
+    assert "-or -not $taskPassword" in src, (
+        "with no password supplied every task must register Interactive, which "
+        "is exactly what it did before this change"
+    )
+
+
+def test_the_three_files_agree_on_which_jobs_need_a_desktop():
+    """The same trap as the job names: one fact, written in three places.
+
+    The launcher carries `pine_loop` as well, which is real -- it runs on
+    demand and is not a scheduled task at all -- so the launcher's list is
+    compared only across the jobs the scheduler knows about.
+    """
+    scheduled = scheduler_desktop_jobs()
+    wanted = {job for job, needs in scheduled.items() if needs}
+
+    launcher = set(
+        re.search(r"\$desktopJobs = @\(([^)]*)\)", read(LAUNCHER))
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
+    assert launcher & set(scheduled) == wanted, (
+        "run_job.ps1's $desktopJobs disagrees with the scheduler's "
+        f"NeedsDesktop: launcher says {sorted(launcher & set(scheduled))}, "
+        f"table says {sorted(wanted)}"
+    )
+
+    # autologon.ps1 lists TASK-name suffixes, so map through the table's Name.
+    body = read(SCHEDULER).split("$jobs = @(", 1)[1].split("\n)", 1)[0]
+    names = dict(re.findall(r"Name\s*=\s*'(\w+)';\s*Job\s*=\s*'(\w+)'", body))
+    auto = set(
+        re.search(r"\$desktopTasks = @\(([^)]*)\)", read(AUTOLOGON))
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
+    assert {names[n] for n in auto if n in names} == wanted, (
+        f"autologon.ps1's $desktopTasks {sorted(auto)} does not map to the "
+        f"scheduler's NeedsDesktop jobs {sorted(wanted)}"
+    )
+
+
+def test_the_read_back_judges_the_logon_type_against_the_job():
+    """The read-back must not call a successful conversion a fault.
+
+    The previous version printed one note for anything that was not
+    Interactive. After this change that would flag every converted task, which
+    is how a report stops being read.
+    """
+    read_back = read(SCHEDULER).split("Reading the tasks back from Windows", 1)[1]
+    judgement = read_back.split("$logon = $task.Principal.LogonType", 1)[1]
+    assert (
+        "$j.NeedsDesktop" in judgement
+    ), "the read-back judges the logon type without asking what the job needs"
+    assert (
+        "WRONG" in judgement
+    ), "a chart job on a desktopless logon must be called wrong"
+    assert (
+        "GOOD" in judgement
+    ), "a converted job on a desktopless logon must read as correct"
+
+
+# ------------------------------------- the launcher stops driving TradingView --
+
+
+def test_the_tradingview_dance_is_conditional_rather_than_deleted():
+    """`alerts` is off and `pine_loop` runs on demand; both still want it.
+
+    Deleting the launch/close block would leave the debug port open behind a
+    pine_loop run, which is the risk docs/tradingview-agent-security.md exists
+    for -- so it is gated, not removed.
+    """
+    src = read(LAUNCHER)
+    assert (
+        "$desktopJobs" in src and "$needsDesktop = $desktopJobs -contains $Job" in src
+    )
+    assert "Stop-Process" in src, "the close-behind-us path must still exist"
+    assert "tv_launch" in src, "the launch permission must still exist for chart jobs"
+
+
+def test_a_desktop_free_job_is_told_not_to_launch_tradingview():
+    """The instruction is given in the negative, and it has to be.
+
+    Such a task may be running with no desktop at all. An agent that reaches
+    for tv_launch there burns the run discovering Electron has nowhere to draw,
+    and then reports a chart problem rather than the instruction problem it hit.
+    """
+    src = read(LAUNCHER)
+    branch = src.split("if ($needsDesktop) {", 1)[1].split("$prompt = $promptLines", 1)[
+        0
+    ]
+    negative = branch.split("} else {", 1)[1]
+    assert "Do NOT call tv_launch" in negative
+    assert "desk_levels.py" in negative, (
+        "telling the agent what not to do without naming the replacement is "
+        "how a job logs a blocker instead of doing its work"
+    )
+
+
+def test_a_desktop_free_job_that_starts_tradingview_is_reported():
+    """It cannot have worked, so whatever the run said about a chart is suspect."""
+    src = read(LAUNCHER)
+    assert "a desktop-free job started TradingView" in src
+    assert "Distrust anything this run said about a chart" in src
+
+
+# ------------------------------- autologon reports the conversion accurately --
+
+
+def test_autologon_knows_which_tasks_need_a_desktop():
+    assert "$desktopTasks" in read(AUTOLOGON)
+
+
+def test_autologon_does_not_count_a_missing_sign_in_when_nothing_needs_one():
+    """Otherwise it reports the successful conversion as a fault.
+
+    Convicted against the pre-change file: it incremented `$problems` for
+    AutoAdminLogon being off unconditionally, and printed 'NOT Interactive' for
+    every converted task.
+
+    Anchored on the section heading rather than on any one route's wording.
+    The first version of this test split on "1. Automatic sign-in", which the
+    PIN/ARSO rewrite renamed -- so it broke on a merge that had not touched the
+    behaviour it guards. The heading number is the stable part.
+    """
+    body = read(AUTOLOGON)
+    section = body.split("1. Signing in after a restart", 1)[1].split("# 2.", 1)[0]
+    assert "$desktopNeeded" in section, (
+        "a machine whose every job is desktop-free must not be told off for "
+        "failing to sign itself in"
+    )
+
+
+def test_autologon_still_calls_a_chart_job_on_a_desktopless_logon_wrong():
+    """The narrowing must not cost the original catch."""
+    body = read(AUTOLOGON)
+    section = body.split("3. The desk agent tasks", 1)[1]
+    assert "$wantsDesktop" in section
+    assert "WRONG" in section
+    assert "fail at the first chart call" in section, (
+        "the reason has to be on the page. 'WRONG' alone sends the reader back "
+        "to the decision record to find out what breaks"
+    )
+
+
+def test_autologon_does_not_count_an_interactive_desktop_free_task_as_a_problem():
+    """It works exactly as it always did; it is simply not yet converted.
+
+    Counting it would make a working desk report as broken -- which is the
+    failure this rewrite exists to remove, arriving from the other direction.
+    """
+    section = read(AUTOLOGON).split("3. The desk agent tasks", 1)[1]
+    arm = section.split("} elseif (-not $desktopless) {", 1)[1].split("\n    }", 1)[0]
+    assert (
+        "$problems++" not in arm
+    ), "an unconverted but working task is a note, not a fault"
 
 
 # --------------------------------------------------------- tools/autologon.ps1 --

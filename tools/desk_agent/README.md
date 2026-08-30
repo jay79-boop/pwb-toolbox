@@ -28,13 +28,27 @@ and undoing a bad lesson is one revert.
 
 The split follows what each job can physically reach.
 
-| job | runs | where | why there |
-| --- | --- | --- | --- |
-| `premarket` | weekdays 07:00 | local | needs TradingView Desktop |
-| `alerts` | **off** (was weekdays hourly, 09:00-16:00) | local | retired 2026-08-29: 25 runs, 0 actions, no alerts on the login |
-| `journal` | weekdays 16:30 | local | the journal is on your disk and not in this repo |
-| `pine_loop` | on demand | local | starts from a description only you can give |
-| `review` | weekly | **cloud** | reads only the committed log; needs neither |
+| job | runs | where | needs a desktop? | why there |
+| --- | --- | --- | --- | --- |
+| `premarket` | weekdays 07:00 | local | **no** | reads bar data; runs signed in or not |
+| `alerts` | **off** (was weekdays hourly, 09:00-16:00) | local | **yes** | drives the chart. Retired 2026-08-29: 25 runs, 0 actions, no alerts on the login |
+| `journal` | weekdays 16:30 | local | **no** | the journal is on your disk and not in this repo |
+| `pine_loop` | on demand | local | **yes** | drives the chart; starts from a description only you can give |
+| `review` | weekly | **cloud** | no | reads only the committed log; needs neither |
+
+**The "needs a desktop?" column decides how the task is registered**, and it is
+the single field the whole arrangement turns on. A Windows task set to run
+whether the user is logged on or not gets a logon session with **no desktop**,
+which is fatal to a job that drives TradingView Desktop and irrelevant to one
+that does not. `premarket` and `journal` read their levels from bar data
+through `tools/desk_levels.py` and render their own images headless, so their
+tasks carry a stored credential and run whether or not anyone is signed in.
+`alerts` and `pine_loop` still drive the chart and still need you signed in.
+
+The field lives in `register_desk_agent.ps1`'s `$jobs` table as
+`NeedsDesktop`, is mirrored by `run_job.ps1`'s `$desktopJobs` and
+`autologon.ps1`'s `$desktopTasks`, and `tests/test_desk_agent_launcher.py`
+asserts all three agree — the same arrangement the job names already have.
 
 A cloud session shares nothing with you but GitHub — no disk, no charts, no
 TradingView. That is exactly why the review is the one job that belongs there:
@@ -183,24 +197,62 @@ thing standing between you and a working agent.
 
 ## Running when nobody is signed in
 
-Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed in".
-The goal is right and the mechanism named is a trap, so this section is mostly
-about why the obvious change is the wrong one.
+Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed in",
+and answered in two steps. The order matters, because the first answer was
+"don't" and the second was "now you can".
 
-**The LogonType must stay `Interactive`.** A scheduled task set to run whether
-the user is logged on or not -- `S4U`, or `Password` -- is given a logon session
-with **no desktop**. Both enabled jobs drive TradingView Desktop: `premarket`
-reads session levels off the chart, `journal` captures chart images. Set either
-of those logon types and the tasks fire punctually and then fail at the first
+**Step one: the LogonType was not the bug.** A scheduled task set to run
+whether the user is logged on or not -- `S4U`, or `Password` -- is given a logon
+session with **no desktop**. Every job then drove TradingView Desktop, so
+setting either logon type made the tasks fire punctually and fail at the first
 chart call. That is strictly worse than not firing: a job that does not run says
 so plainly in `LastTaskResult`, while a job that runs against a session with no
-chart produces a gameplan built out of whatever the failure left behind.
-`tests/test_desk_agent_launcher.py` forbids the change outright rather than
-trusting a comment to stop it.
+chart produces a gameplan built out of whatever the failure left behind. The
+answer at that point was to make the machine sign *itself* in, so a real desktop
+existed.
 
-**The machine has to sign itself in instead.** Then a real desktop exists and
-`Interactive` is satisfied. Three things all have to be true, and they fail
-independently:
+**Step two: the jobs stopped needing a chart.** `premarket` and `journal` now
+read session levels, the prior day's range and their fair value gaps from bar
+data through `tools/desk_levels.py`, and render their own chart images headless.
+Nothing they do requires anything to be drawn on a screen, so their tasks are
+registered against a **stored credential** and run whether anyone is signed in
+or not -- no auto sign-in, no live desktop, and they survive a machine that
+reboots at 03:00.
+
+So which of the two applies is now a per-job question, and the table above is
+where it is answered.
+
+**`Password`, not `S4U`.** S4U stores no password, which reads as the safer
+choice, but it carries **no credentials**: DPAPI-protected secrets do not
+decrypt and network paths are not reachable as the user. Both of these jobs run
+Claude Code, whose own stored authentication is exactly that kind of secret, and
+`journal` reads a document under OneDrive. S4U would fail both at run time,
+unattended, looking like a broken agent rather than a wrong logon type. The
+tests ban it outright for every job, and that ban did **not** narrow.
+
+**Be clear about what this costs, because it depends on which route you are on.**
+An earlier draft of this section said the change merely *moves* a stored
+credential from the auto-logon LSA secret to the task's own. That is true only
+against full autologon. Against **ARSO -- the recommended route, and the one
+that fits a PIN -- it is not: ARSO stores no password at all**, it rehydrates
+from secrets the LSA already holds. So on an ARSO machine a desktop-free task
+**adds** a stored credential that was not there before.
+
+What you get for it is that the machine no longer has to sign itself in: no
+ARSO, no unverifiable Settings toggle, no session rehydrated at 03:00, and a
+job that survives a reboot with nobody near the machine. Whether that trade is
+worth one LSA secret is a judgement, not a fact, which is why the prompt can be
+declined -- press enter, or pass `-NoStoredCredential`, and the tasks stay
+`Interactive` and keep depending on ARSO exactly as before.
+
+Registering a desktop-free task prompts once for the Windows password
+(`Read-Host -AsSecureString`, never a command-line parameter -- that lands in
+the PowerShell history in clear text). Press enter, or pass
+`-NoStoredCredential`, and everything registers `Interactive` exactly as before.
+
+**What is still needed for the jobs that do drive the chart** -- `alerts`,
+currently off, and `pine_loop` on demand. Three things all have to be true, and
+they fail independently:
 
 | | what it is | where it lives |
 | --- | --- | --- |
@@ -224,8 +276,15 @@ cd C:\Users\Gexio\OneDrive\pwb-toolbox
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1
 ```
 
-That reports all three and names the fix for each. It is read-only, so it is
-safe to run at any time.
+That reports all three and names the fix for each, **per job**. If no
+registered task needs a desktop it says so and stops counting a missing
+auto sign-in as a problem, because then it is not one -- an earlier version
+flagged any task that was not `Interactive` and would have reported the
+whole conversion as a fault. It still calls a chart job on a desktopless
+logon `WRONG`. Wake timers stay a real finding either way: a stored
+credential does not wake a sleeping machine.
+
+It is read-only, so it is safe to run at any time.
 
 ### A PIN is not the account password
 
@@ -347,6 +406,33 @@ running into — quietly, with a plausible-looking result.
   re-applied before a result is read. Skip it and the number gets taken off the
   wrong instrument, or off an empty chart, and nothing about the screenshot says
   so.
+
+## Where the levels come from now
+
+`tools/desk_levels.py` reads session levels, the prior **trading** day's range,
+unmitigated fair value gaps and the order block behind each one, straight off
+bar data — and renders a candlestick PNG headless. `docs/desk-levels.md` is the
+protocol; two things are worth knowing here.
+
+**The chart image is not your chart.** It carries none of your drawings or
+indicator settings. That was chosen deliberately, and the trade stated: what it
+buys is that the same bars produce the same picture every time. A screenshot
+records one screen on one afternoon and cannot be regenerated once the layout
+moves; a render can be redrawn years later from the data that framed the
+thesis. The journal job is told not to describe one as the other.
+
+**The staleness is mechanical, not remembered.** Every run prints the age of
+the last bar and marks the output `STALE` past six hours, and a bar stamped in
+the *future* is reported as a clock or feed fault rather than shown as a
+negative number. This matters because the chart feed was never live either: the
+2026-08-29 premarket run recorded that `CME_MINI_DL` is the **10-minute
+delayed** feed, so every NQ/ES level it read was stale by construction and
+nothing said so. Everything a 07:00 gameplan actually needs — the prior day's
+range, the overnight session highs and lows — is settled history and is exact.
+
+It is one vendor, and it is not audited. `docs/backtesting.md` records two
+feeds of the same index disagreeing by 284bp over eight years while correlating
+0.93. A level a trade is actually placed against wants a second source first.
 
 ## The journal job reads one directory outside the repository
 
@@ -504,6 +590,21 @@ panel through `showWidget('backtesting')`, so neither needs `ui_open_panel`. Tha
 part of the claim stands.
 
 ### Launching and closing TradingView
+
+**Only for the jobs that still need it.** `run_job.ps1` carries a
+`$desktopJobs` list — `alerts` and `pine_loop` — and only those runs are told
+they may call `tv_launch`. A desktop-free run is told the opposite, explicitly
+and by name, along with what to use instead: such a task may have no desktop at
+all, and an agent that reaches for `tv_launch` there burns its run discovering
+that Electron has nowhere to draw, then reports a chart problem rather than the
+instruction problem it actually hit.
+
+The block is **gated rather than deleted**. `alerts` is off but not retired and
+`pine_loop` runs on demand; both still want the chart, and both still want it
+closed behind them. The process check also still runs for a desktop-free job, so
+a run that somehow started TradingView anyway is closed and said out loud — on a
+task with no desktop that launch cannot have worked, so anything the run reported
+about a chart is not to be believed.
 
 `run_job.ps1` records whether TradingView was already running, and closes it
 after the agent exits if it was not — on success, on failure, and on crash.
