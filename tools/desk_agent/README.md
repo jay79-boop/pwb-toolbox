@@ -181,6 +181,120 @@ agent removed.
 every branch cut afterwards, and the guard above becomes a backstop rather than the
 thing standing between you and a working agent.
 
+## Running when nobody is signed in
+
+Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed in".
+The goal is right and the mechanism named is a trap, so this section is mostly
+about why the obvious change is the wrong one.
+
+**The LogonType must stay `Interactive`.** A scheduled task set to run whether
+the user is logged on or not -- `S4U`, or `Password` -- is given a logon session
+with **no desktop**. Both enabled jobs drive TradingView Desktop: `premarket`
+reads session levels off the chart, `journal` captures chart images. Set either
+of those logon types and the tasks fire punctually and then fail at the first
+chart call. That is strictly worse than not firing: a job that does not run says
+so plainly in `LastTaskResult`, while a job that runs against a session with no
+chart produces a gameplan built out of whatever the failure left behind.
+`tests/test_desk_agent_launcher.py` forbids the change outright rather than
+trusting a comment to stop it.
+
+**The machine has to sign itself in instead.** Then a real desktop exists and
+`Interactive` is satisfied. Three things all have to be true, and they fail
+independently:
+
+| | what it is | where it lives |
+| --- | --- | --- |
+| signs in with no human | **ARSO** | Settings toggle, plus a policy under `Policies\System` |
+| awake at the scheduled minute | `WakeToRun` | the task, set by `register_desk_agent.ps1` |
+| wake timers not disabled | power plan | Windows power options |
+
+The middle one is new as of this change and is **not** the same flag as
+`StartWhenAvailable`, which was already set. `StartWhenAvailable` catches a
+missed run up once something else wakes the machine; `WakeToRun` is what makes
+the machine come up *at* the scheduled minute. Only the second is worth anything
+here -- a pre-market gameplan delivered at 10:15 because that is when the lid
+was opened is not a pre-market gameplan.
+
+The third is the one that fails silently and is the reason there is a checker:
+if wake timers are disabled in the power plan, `WakeToRun` is accepted, stored,
+and **reads back `True` while doing nothing**.
+
+```powershell
+cd C:\Users\Gexio\OneDrive\pwb-toolbox
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1
+```
+
+That reports all three and names the fix for each. It is read-only, so it is
+safe to run at any time.
+
+### A PIN is not the account password
+
+This section originally said the first row was `AutoAdminLogon`, set with
+Sysinternals Autologon. **That was wrong for this machine**, and it was wrong for
+one question rather than one day: the owner signs in with a Windows Hello PIN.
+
+A PIN is a *device-local* credential sealed in the TPM. It unlocks a secret
+already on the machine; it is not the account password and cannot stand in for
+one. Autologon needs the real password, so the advice would have sent the owner
+hunting for a Microsoft-account password they had never typed, to enable
+something they do not need. On current builds it would not even have got that
+far -- the password field is hidden until
+`DevicePasswordLessBuildVersion` under
+`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device` is
+set to `0`.
+
+**ARSO is the route that fits, and it is the better one regardless.** Automatic
+Restart Sign-On signs the last user back in after a restart or cold boot,
+rehydrates the session from secrets the LSA persisted, **and locks the device
+immediately**. So the desktop the scheduled tasks need exists, with no password
+stored anywhere and no open desktop left behind for whoever walks past. It is
+the Settings toggle at:
+
+> Settings > Accounts > Sign-in options > Additional settings >
+> "Use my sign-in info to automatically finish setting up after an update"
+
+Full autologon is still available and the checker still reports it, as Route B.
+It boots to an **unlocked** desktop, so anyone who powers the machine on is
+inside it -- worth it only if ARSO cannot be made to work.
+
+**The checker does not configure either route.** Storing a password correctly
+means writing an LSA secret, and Sysinternals Autologon already does that, is
+published by Microsoft, and is tested; a hand-rolled equivalent here would be
+untested P/Invoke against the credential store written by someone with no
+Windows machine to run it on. What the checker *does* own is the mistake the
+shortcut guides teach -- putting the password in `Winlogon\DefaultPassword`,
+where it sits in plaintext and any local user can read it -- and it says so
+loudly if it finds it.
+
+**And it will not tell you the toggle is on.** The per-user ARSO consent is not
+readable from a script. The checker reports the *policy* that can block ARSO
+outright, points at the Settings toggle, and then says plainly that it did not
+verify it -- rather than printing "all clear" over a thing it never checked,
+which is the exact bug this file records twice already. The real proof is the
+next 07:00 run appearing in the log after an overnight reboot.
+
+### Locking the screen after an unattended sign-in
+
+`autologon.ps1 -EnableLock` registers a task that locks the workstation half a
+minute after every logon, so a machine that reboots at 03:00 does not sit on an
+open desktop until morning. It is **off by default**, for two reasons that are
+both worth knowing before turning it on.
+
+It fires on *every* logon, yours included: you sign in, and thirty seconds later
+the screen locks.
+
+And whether TradingView still renders a chart for capture on a locked session is
+**not established**. Applications keep running, and CDP draws from the browser's
+compositor rather than from the screen, so it ought to hold -- but Chromium
+throttles occluded windows and nobody has proven it on this machine. The
+`alerts` job reached the chart successfully on runs that were almost certainly
+locked, which is suggestive and is not proof. If journal captures start coming
+back blank, undo this first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1 -DisableLock
+```
+
 ## Reading the log yourself
 
 ```bash

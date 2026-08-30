@@ -1,0 +1,448 @@
+<title>Karaoke Queue</title>
+<!--
+  The no-brainer karaoke queue: one page, two roles.
+
+  Served by tools/karaoke_server/queue_server.py, which injects
+  <meta name="karaoke-queue" content="/api"> and a role meta. The default
+  role is the phone (join, pick a song, get called); /screen is the stage
+  display (now singing, the reveal, the QR to join, playback). Opened
+  straight from disk the page explains how to start the server instead of
+  firing doomed requests at nothing. ?role=screen and ?demo=1 exist for
+  layout checks without a server.
+
+  Authored as a fragment (title + style + markup, no <html>) exactly like
+  karaoke-box.html; the server wraps it into a document.
+
+  Style is docs/page-style.md: committed light, every surface stated, the
+  validated blue / warm-red / grey triple as the stage-state distinction
+  (singing / called / waiting), status colours reserved and always paired
+  with a word. Fonts fall back cleanly when there is no internet.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,700&family=Public+Sans:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+:root{
+  --page:#fbfbfa; --card:#ffffff; --sunken:#f5f5f3;
+  --ink:#141413; --ink-2:#57564f; --ink-3:#8a8880;
+  --rule:#e6e5e0; --rule-2:#f0efec;
+  /* the stage-state distinction: who is live, who is called, who waits */
+  --live:#2a78d6;   --live-bg:#e9f1fc;   --live-edge:#c2dbf6;
+  --call:#c4491d;   --call-bg:#fdece5;   --call-edge:#f7cdb9;
+  --wait:#57564f;   --wait-bg:#f0efec;   --wait-edge:#dedcd5;
+  /* status -- reserved, never a category */
+  --good:#00701f; --good-bg:#e3f4e6;
+  --warn:#9a6200; --warn-bg:#fbf1dc;
+  --bad:#b5292a;  --bad-bg:#fdeaea;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--page); color:var(--ink);
+  font-family:"Public Sans",-apple-system,"Segoe UI",system-ui,sans-serif;
+  font-size:16px; line-height:1.5; min-height:100vh;
+}
+h1,h2,h3{font-family:"Newsreader",Georgia,serif;margin:0;text-wrap:balance}
+.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+main{max-width:640px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:16px}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
+.eyebrow{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+label{font-weight:600;font-size:14px;color:var(--ink-2)}
+input[type=text],input[type=url]{
+  width:100%;padding:12px 14px;font:inherit;color:var(--ink);
+  background:var(--card);border:1px solid var(--rule);border-radius:8px;
+}
+input:focus{outline:2px solid var(--live);outline-offset:1px}
+button{
+  font:inherit;font-weight:700;padding:13px 18px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--rule);background:var(--sunken);color:var(--ink);
+}
+button.primary{background:var(--live);border-color:var(--live);color:#ffffff}
+button.urgent{background:var(--call);border-color:var(--call);color:#ffffff;font-size:20px;padding:18px}
+button.quiet{background:var(--card);color:var(--ink-2)}
+button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px;padding:7px 12px;border-radius:999px;border:1px solid var(--live-edge);background:var(--live-bg);color:var(--ink);cursor:pointer}
+.note{font-size:14px;color:var(--ink-2);margin:0}
+.err{font-size:14px;color:var(--bad);background:var(--bad-bg);border-radius:8px;padding:10px 12px}
+.state-live{border-color:var(--live-edge);background:var(--live-bg)}
+.state-call{border-color:var(--call-edge);background:var(--call-bg)}
+.state-wait{border-color:var(--wait-edge);background:var(--wait-bg)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;border-radius:999px;padding:4px 12px;width:max-content}
+.badge.live{background:var(--live);color:#ffffff}
+.badge.call{background:var(--call);color:#ffffff}
+.badge.wait{background:var(--wait-bg);border:1px solid var(--wait-edge);color:var(--ink-2)}
+.badge.good{background:var(--good-bg);color:var(--good)}
+.badge.warn{background:var(--warn-bg);color:var(--warn)}
+.badge.bad{background:var(--bad-bg);color:var(--bad)}
+.bignum{font-family:"JetBrains Mono",ui-monospace,monospace;font-weight:700;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+/* ---- the phone call-up takeover ---- */
+#youreUp{position:fixed;inset:0;background:var(--call);color:#ffffff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px;z-index:10}
+#youreUp h1{font-size:clamp(44px,14vw,96px);color:#ffffff}
+#youreUp .bignum{font-size:64px;color:#ffffff}
+#youreUp button{background:#ffffff;border-color:#ffffff;color:var(--call);font-size:22px;padding:18px 28px}
+#youreUp p{color:#fdece5;font-size:18px;margin:0}
+/* ---- the big screen ---- */
+body[data-role=screen]{background:var(--page)}
+body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;padding-top:28px}
+#stageCard{grid-column:1;min-height:380px;justify-content:center;text-align:center;gap:18px}
+#stageCard h1{font-size:clamp(40px,6vw,84px)}
+#stageCard .song{font-size:clamp(20px,3vw,34px);color:var(--ink-2);font-family:"Newsreader",Georgia,serif}
+#sideCol{grid-column:2;display:flex;flex-direction:column;gap:16px}
+#qrBox{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+#qr{width:200px;height:200px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
+#qr img,#qr canvas{max-width:100%}
+#joinUrl{font-size:13px;word-break:break-all;color:var(--ink-2)}
+#playerWrap{grid-column:1 / -1;border-radius:12px;overflow:hidden;border:1px solid var(--rule);background:#000000;aspect-ratio:16/9;max-height:420px}
+#playerWrap iframe,#playerWrap #player{width:100%;height:100%;border:0}
+#ticker{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px}
+#ticker div{font-size:14px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:4px 2px}
+@media (max-width:760px){
+  body[data-role=screen] main{grid-template-columns:1fr}
+  #sideCol,#stageCard,#playerWrap,#ticker{grid-column:1}
+}
+[hidden]{display:none !important}
+</style>
+
+<main id="app">
+  <!-- opened from disk with no server: explain, don't fail silently -->
+  <section class="card" id="noServer" hidden>
+    <span class="eyebrow">Karaoke queue</span>
+    <h2>This page needs its server</h2>
+    <p class="note">On the machine at the venue, run
+      <span class="mono">python -m tools.karaoke_server.queue_server</span>
+      and open the address it prints. Phones join by scanning the QR on the
+      big screen. Opened straight from disk there is no queue to talk to.</p>
+  </section>
+
+  <!-- ============ PHONE ============ -->
+  <section class="card" id="joinCard" hidden>
+    <span class="eyebrow">Karaoke queue</span>
+    <h2>Get in the draw</h2>
+    <p class="note">Sign in once, pick your song, and keep an eye on your
+      phone. The next singer is drawn at random — nobody knows who's up
+      until the call.</p>
+    <label for="nameIn">Your name</label>
+    <input type="text" id="nameIn" maxlength="24" autocomplete="off" placeholder="Ada">
+    <button class="primary" id="joinBtn">I'm in</button>
+    <p class="err" id="joinErr" hidden></p>
+  </section>
+
+  <section class="card" id="songCard" hidden>
+    <span class="eyebrow" id="songEyebrow">Your song</span>
+    <h2 id="songHead">What are you singing?</h2>
+    <div id="usual" hidden>
+      <p class="note">Your usual?</p>
+      <div class="chips" id="usualChips"></div>
+    </div>
+    <label for="songIn">Paste a YouTube link, or just type the song</label>
+    <input type="url" id="songIn" autocomplete="off" placeholder="https://youtube.com/watch?v=… or Sweet Caroline">
+    <button class="primary" id="songBtn">Queue it</button>
+    <button class="quiet" id="doneBtn" hidden>I'm done for tonight</button>
+    <p class="err" id="songErr" hidden></p>
+  </section>
+
+  <section class="card state-wait" id="waitCard" hidden>
+    <span class="badge wait">⏳ in the draw</span>
+    <h2 id="waitHead">You're in</h2>
+    <p class="note" id="waitSong"></p>
+    <p class="note"><span class="mono" id="waitCount">0</span> singers in the
+      draw. Any song could be yours — stay close.</p>
+    <p class="note" id="waitNow"></p>
+  </section>
+
+  <section class="card state-call" id="awayCard" hidden>
+    <span class="badge bad">✖ struck out</span>
+    <h2>We called you twice</h2>
+    <p class="note">Your spot is on hold so the room keeps moving. Back in
+      the building? One tap puts you in the draw again.</p>
+    <button class="primary" id="backBtn">I'm back</button>
+  </section>
+
+  <section class="card state-live" id="stagePhoneCard" hidden>
+    <span class="badge live">🎤 you're singing</span>
+    <h2>Go on then.</h2>
+    <p class="note">The screen has your track. This phone can rest.</p>
+  </section>
+
+  <div id="youreUp" hidden>
+    <p>the draw says</p>
+    <h1 id="upName">YOU'RE UP</h1>
+    <p id="upSong"></p>
+    <div class="bignum" id="upCount">60</div>
+    <button id="hereBtn">I'M AT THE STAGE</button>
+    <p>miss the count and the draw moves on</p>
+  </div>
+
+  <!-- ============ SCREEN ============ -->
+  <section class="card" id="stageCard" hidden>
+    <span class="badge wait" id="stageBadge">♪ house music — the draw continues</span>
+    <h1 id="stageName">Warming up…</h1>
+    <p class="song" id="stageSong">Scan the QR to get in the draw</p>
+    <div class="bignum" id="stageClock" hidden>0:00</div>
+  </section>
+  <aside id="sideCol" hidden>
+    <div class="card" id="qrBox">
+      <span class="eyebrow">Join the draw</span>
+      <div id="qr"></div>
+      <p id="joinUrl" class="mono"></p>
+      <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
+    </div>
+  </aside>
+  <div id="playerWrap" hidden><div id="player"></div></div>
+  <div id="ticker" hidden></div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  /* ---- wiring ---- */
+  var meta = function (name) {
+    var el = document.querySelector('meta[name="' + name + '"]');
+    return el ? el.getAttribute("content") : null;
+  };
+  var qs = new URLSearchParams(location.search);
+  var API = meta("karaoke-queue");
+  var ROLE = qs.get("role") || meta("karaoke-role") || "phone";
+  var DEMO = qs.get("demo") === "1";
+  document.body.dataset.role = ROLE;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var show = function (id, on) { $(id).hidden = !on; };
+
+  if (!API && !DEMO) { show("noServer", true); return; }
+
+  /* ---- shared state ---- */
+  var singerId = null, lastSeq = 0, state = null, polling = null;
+  try { singerId = localStorage.getItem("kq-singer") || null; } catch (e) {}
+
+  function post(path, payload, done, fail) {
+    if (DEMO) { done && done({ok: true, singer_id: "demo", past_songs: []}); return; }
+    fetch(API + path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().then(function (b) { return {ok: r.ok, body: b}; }); })
+      .then(function (r) { r.ok ? done && done(r.body) : fail && fail(r.body.error || "something went wrong"); })
+      .catch(function () { fail && fail("can't reach the queue — same Wi-Fi?"); });
+  }
+
+  var DEMO_STATE = {
+    singing: {singer_id: "s1", name: "Ada", title: "Twinkle, Twinkle, Little Star", source: "title", ref: null, ends_in_s: 93},
+    called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41},
+    house_on: false, waiting: ["Elmore", "Grace", "Jay", "Lin"], waiting_count: 4, seq: 7,
+    events: [{seq: 7, kind: "call", name: "Grace", detail: {}}],
+    you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, on_stage: false, needs_song: false}
+  };
+
+  function poll() {
+    if (DEMO) { state = DEMO_STATE; render(); return; }
+    var url = API + "/state?since=" + lastSeq +
+      (ROLE === "phone" && singerId ? "&singer_id=" + encodeURIComponent(singerId) : "");
+    fetch(url).then(function (r) { return r.json(); }).then(function (body) {
+      state = body; lastSeq = body.seq || lastSeq; render();
+    }).catch(function () {});
+  }
+
+  function fmtClock(seconds) {
+    var s = Math.max(0, Math.round(seconds));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+  function youtubeId(text) {
+    var m = /(?:youtube\.com\/(?:watch\?[^ ]*v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/.exec(text || "");
+    return m ? m[1] : null;
+  }
+
+  /* ============ PHONE ============ */
+  var phoneCards = ["joinCard", "songCard", "waitCard", "awayCard", "stagePhoneCard"];
+  function phoneShow(card) {
+    phoneCards.forEach(function (id) { show(id, id === card); });
+  }
+
+  function submitSong() {
+    var raw = $("songIn").value.trim();
+    if (!raw) return;
+    var vid = youtubeId(raw);
+    var payload = {singer_id: singerId, source: vid ? "link" : "title"};
+    if (vid) { payload.ref = vid; payload.title = raw; }
+    else { payload.title = raw; }
+    post("/song", payload, function () {
+      show("songErr", false); $("songIn").value = ""; poll();
+    }, function (err) { $("songErr").textContent = err; show("songErr", true); });
+  }
+
+  if (ROLE === "phone") {
+    phoneShow(singerId ? null : "joinCard");
+    $("joinBtn").onclick = function () {
+      post("/join", {name: $("nameIn").value.trim()}, function (body) {
+        singerId = body.singer_id;
+        try { localStorage.setItem("kq-singer", singerId); } catch (e) {}
+        show("joinErr", false);
+        if (body.past_songs && body.past_songs.length) {
+          $("usualChips").innerHTML = "";
+          body.past_songs.slice(0, 5).forEach(function (title) {
+            var chip = document.createElement("button");
+            chip.className = "chip"; chip.type = "button"; chip.textContent = title;
+            chip.onclick = function () { $("songIn").value = title; submitSong(); };
+            $("usualChips").appendChild(chip);
+          });
+          show("usual", true);
+        }
+        phoneShow("songCard");
+      }, function (err) { $("joinErr").textContent = err; show("joinErr", true); });
+    };
+    $("songBtn").onclick = submitSong;
+    $("hereBtn").onclick = function () { post("/here", {singer_id: singerId}, poll); };
+    $("backBtn").onclick = function () { post("/back", {singer_id: singerId}, poll); };
+    $("doneBtn").onclick = function () {
+      post("/leave", {singer_id: singerId}, function () {
+        try { localStorage.removeItem("kq-singer"); } catch (e) {}
+        singerId = null; phoneShow("joinCard");
+      });
+    };
+  }
+
+  function renderPhone() {
+    var you = state.you;
+    if (!you) { if (singerId) { /* unknown id: start over */
+      try { localStorage.removeItem("kq-singer"); } catch (e) {}
+      singerId = null; phoneShow("joinCard");
+    } return; }
+    show("youreUp", false);
+    if (you.called && !you.on_stage) {
+      show("youreUp", true);
+      $("upName").textContent = "YOU'RE UP, " + you.name.toUpperCase();
+      $("upSong").textContent = state.called ? state.called.title : "";
+      $("upCount").textContent = fmtClock(state.called ? state.called.deadline_in_s : 0);
+      if (state.called && state.called.appeared) {
+        $("upCount").textContent = "✔"; }
+      return;
+    }
+    if (you.on_stage) { phoneShow("stagePhoneCard"); return; }
+    if (you.state === "away") { phoneShow("awayCard"); return; }
+    if (you.needs_song) {
+      $("songEyebrow").textContent = you.songs_sung ? "That was great" : "Your song";
+      $("songHead").textContent = you.songs_sung ? "Stay for another?" : "What are you singing?";
+      show("doneBtn", you.songs_sung > 0);
+      phoneShow("songCard"); return;
+    }
+    if (you.state === "waiting" && you.song) {
+      $("waitSong").textContent = "Queued: " + you.song;
+      $("waitCount").textContent = state.waiting_count;
+      $("waitNow").textContent = state.singing
+        ? "Now singing: " + state.singing.name
+        : "House music while the draw spins…";
+      phoneShow("waitCard"); return;
+    }
+    phoneShow("songCard");
+  }
+
+  /* ============ SCREEN ============ */
+  var player = null, playerFor = null, ytReady = false;
+
+  function ensureYT(cb) {
+    if (window.YT && window.YT.Player) { cb(); return; }
+    if (!document.getElementById("ytapi")) {
+      var tag = document.createElement("script");
+      tag.id = "ytapi";
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+    window.onYouTubeIframeAPIReady = function () { ytReady = true; cb(); };
+  }
+
+  function playCurrent() {
+    var singing = state.singing;
+    if (!singing || singing.source !== "link" || !singing.ref) {
+      if (player && playerFor) { try { player.stopVideo(); } catch (e) {} playerFor = null; }
+      show("playerWrap", false); return;
+    }
+    if (playerFor === singing.singer_id) return;
+    playerFor = singing.singer_id;
+    show("playerWrap", true);
+    ensureYT(function () {
+      var sync = function () {
+        try {
+          var left = player.getDuration() - player.getCurrentTime();
+          if (left > 0) post("/retime", {singer_id: playerFor, remaining_s: Math.round(left)});
+        } catch (e) {}
+      };
+      if (player) { player.loadVideoById(singing.ref); return; }
+      player = new YT.Player("player", {
+        videoId: singing.ref,
+        playerVars: {autoplay: 1, rel: 0},
+        events: {
+          onStateChange: function (ev) {
+            if (ev.data === YT.PlayerState.PLAYING) sync();
+            if (ev.data === YT.PlayerState.ENDED && playerFor)
+              post("/retime", {singer_id: playerFor, remaining_s: 0});
+          }
+        }
+      });
+    });
+  }
+
+  var qrDrawn = false;
+  function drawQR() {
+    if (qrDrawn) return; qrDrawn = true;
+    var url = location.origin + "/";
+    $("joinUrl").textContent = url;
+    var tag = document.createElement("script");
+    tag.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+    tag.onload = function () { new QRCode($("qr"), {text: url, width: 184, height: 184}); };
+    tag.onerror = function () { $("qr").textContent = "→ " + url; };
+    document.head.appendChild(tag);
+  }
+
+  var NARRATE = {
+    call: function (e) { return "🎲 the draw says: " + (e.name || "?"); },
+    song_started: function (e) { return "🎤 " + (e.name || "?") + " takes the stage"; },
+    song_ended: function (e) { return "👏 " + (e.name || "?") + " — " + ((e.detail || {}).title || ""); },
+    no_show: function (e) { return "💨 " + (e.name || "?") + " missed the call — drawing again"; },
+    timed_out: function (e) { return "✖ " + (e.name || "?") + " struck out (tap I'M BACK to rejoin)"; },
+    house_on: function () { return "♪ house music up"; },
+    house_off: function () { return "♪ house music down"; }
+  };
+
+  function renderScreen() {
+    show("stageCard", true); show("sideCol", true); show("ticker", true);
+    drawQR();
+    $("screenCount").textContent = state.waiting_count;
+    var badge = $("stageBadge");
+    if (state.singing) {
+      badge.className = "badge live"; badge.textContent = "🎤 now singing";
+      $("stageName").textContent = state.singing.name;
+      $("stageSong").textContent = state.singing.title;
+      $("stageClock").textContent = fmtClock(state.singing.ends_in_s);
+      show("stageClock", true);
+    } else if (state.called) {
+      badge.className = "badge call"; badge.textContent = "🎲 the draw has spoken";
+      $("stageName").textContent = state.called.name + " — you're up!";
+      $("stageSong").textContent = state.called.appeared
+        ? "at the stage ✔" : "get to the stage — " + fmtClock(state.called.deadline_in_s);
+      show("stageClock", false);
+    } else {
+      badge.className = "badge wait"; badge.textContent = "♪ house music — the draw continues";
+      $("stageName").textContent = state.waiting_count
+        ? "Who's next? Nobody knows." : "Warming up…";
+      $("stageSong").textContent = "Scan the QR to get in the draw";
+      show("stageClock", false);
+    }
+    (state.events || []).forEach(function (e) {
+      var narrate = NARRATE[e.kind];
+      if (!narrate) return;
+      var row = document.createElement("div");
+      row.textContent = narrate(e);
+      $("ticker").prepend(row);
+      while ($("ticker").children.length > 8) $("ticker").lastChild.remove();
+    });
+    playCurrent();
+  }
+
+  function render() {
+    if (!state) return;
+    if (ROLE === "screen") renderScreen(); else renderPhone();
+  }
+
+  poll();
+  polling = setInterval(poll, DEMO ? 60000 : 1000);
+})();
+</script>

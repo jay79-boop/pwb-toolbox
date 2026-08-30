@@ -9,7 +9,13 @@ top-level directories and points here for the detail.
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
-- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only
+- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only.
+  Also home of the karaoke queue OS: `rotation.py` (random-but-fair singer
+  draw: wait ceiling, cooldown, no-show strikes, adaptive call lead, house-music
+  signal, per-singer memory), `sim.py` (simulated pub nights that judge it),
+  and `room.py` + `queue_server.py` serving `static/karaoke-queue.html` — one
+  command runs the night: big screen with QR + playback, phones join by scan.
+  Protocol in `docs/karaoke-rotation.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
@@ -224,6 +230,15 @@ top-level directories and points here for the detail.
   log and opens a draft PR. Guardrails live in a section of the playbook the review
   is forbidden to edit. `tools/register_desk_agent.ps1` registers the Windows
   scheduled tasks; see `tools/desk_agent/README.md`
+- `tools/autologon.ps1` — reports whether the machine can run those tasks with
+  nobody signed in: automatic sign-in, wake timers, and whether the Windows
+  password is sitting in the registry in plaintext. Read-only by default;
+  `-EnableLock` adds an opt-in lock-after-logon task. It deliberately does **not**
+  configure the sign-in — the LogonType on the tasks must stay `Interactive`,
+  because both jobs drive TradingView Desktop and a task that runs whether the
+  user is logged on or not has no desktop to render on. PowerShell, for the
+  user's machine; reasoning in
+  `docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md`
 - `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
   the patterns that exhaust a usage window: Routines that re-arm themselves into
   a persistent session, wakes bound to a session too fat to load cheaply, and
@@ -362,6 +377,11 @@ top-level directories and points here for the detail.
   `vault-operating-manual.md` (the Obsidian vault's standing rules, operating
   rules and note schema — canonical here; the vault's personal half stays out of
   this public fork and lives only locally and in a private artifact),
+  `vault-route.md` (how a cloud session attaches and reads that vault, which is
+  the private repo `jay79-boop/ray-vault`, and why the route is read-only: the
+  owner's nightly backup pushes without pulling, so a commit from a session
+  breaks it. The procedure is the `vault-route` skill; `tests/test_vault_boundary.py`
+  fails CI if vault content lands in this fork),
   and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
   five-hour window, measured rather than guessed) and `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that

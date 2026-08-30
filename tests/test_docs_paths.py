@@ -113,6 +113,11 @@ NOT_IN_THIS_TREE = {
         "Machine-local and gitignored. docs/local-checkout.md says outright that "
         "this is Claude Code behaviour, not a fact about this repository."
     ),
+    ".claude/skills/build-puzzle-process/": (
+        "Retired 2026-08-29. The decision record and docs/skills.md describe the "
+        "removal, and a record of a deletion has to be able to name what it "
+        "deleted. Recoverable at 0b168fd."
+    ),
     "tools/blueprint-xlsx-to-json.py": (
         "Never existed. The 2026-08-29 decision record names it as the broken "
         "reference this check was written to catch, so the record has to be able "

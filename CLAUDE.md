@@ -55,7 +55,10 @@ thing you would do if it were yours.
 This is a standing preference and it is not limited to this repository. The
 cross-project copy belongs in the `gexio-machine` skill, which is synced from
 their account — a cloud session cannot durably edit it, so that copy has to be
-written from a local session or pasted by them.
+written from a local session or pasted by them. What a cloud session *can* now do is
+check whether the copy it was served matches the one the machine runs — the vault
+mirrors the machine copy nightly. Doing that found the two disagreeing, which is
+the worked example in `docs/vault-route.md`.
 
 ## Do the work. Hand back only what genuinely needs them
 
@@ -99,9 +102,17 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-Rules that are *not* in the skill (the count was wrong here twice; do not
-write one — just add a bullet):
+Rules that are *not* in the skill (the count in this line went stale three
+times, so it no longer carries one — just add a bullet):
 
+- **Never indent prose underneath a checkbox.** Four-space indentation renders
+  as a *code block*, and a code block reads as "paste this". On 2026-08-29 they
+  pasted a sentence of explanation — "Docs, one skill, one test..." — into
+  PowerShell and got `Missing argument in parameter list`, twice. Nothing ran and
+  nothing broke, but the step stalled and the reply had to be sent again. Put the
+  explanation on the checkbox's own line, or in prose above the block. **An
+  indented block inside a NEEDS YOU item means "this is pasteable" and nothing
+  else.**
 - **Point at the exact place, never at where to look for it.** Asked for
   2026-08-29, after a step read "delete the branch on GitHub" and they replied
   "how I find the branch again? not familiar to working in github. always point
@@ -137,19 +148,30 @@ write one — just add a bullet):
   stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
   so they can tell at a glance which items are still theirs.
 
-  **Tick your own rows yourself, before the reply that reports them.** Asked for
-  2026-08-29, after a session finished a `who: claude` item and then told them to
-  tick it "since it costs you nothing". It cost something worse than tokens: **a
-  tick from them means *they* did it.** That is the signal the `who` field exists
-  to carry, and handing over a finished row to save a re-read destroys it. The
-  invariant to leave behind is that **every open row is `who: you`** — if one
-  isn't, the ledger is lying about who is blocked.
+  **Tick every row you can confirm is done — including theirs.** Corrected
+  2026-08-29. The rule used to be that a session ticked only its own `who: claude`
+  rows, on the reasoning that *a tick from them means they did it* and the `who`
+  field carries that signal. It does, but the field already records it: `who` says
+  who was responsible, and it keeps saying so after the box is checked. Ticking
+  never overwrote that signal, so the rule was protecting nothing and charging
+  them a trip to the ledger for work already proven finished.
 
-  The bar for ticking is *verified*, not *believed*: tick when the work is
-  confirmed by something outside your own reasoning — a test run, an API read, a
-  file checked — and otherwise leave it open and say what is still unproven.
-  Never tick an item to tidy the list. Re-reading a large ledger to tick one row
-  is the cost of keeping the record true, and it is the right trade.
+  They asked for the change in plainer terms: *stop asking me to waste time
+  looking and ticking it off.* It is the same rule as "do the work, hand back only
+  what genuinely needs them", applied to the ledger itself — a confirmed row is
+  not a decision, a credential, or a GUI action, so it was never theirs.
+
+  So: when you establish a row is done, tick it in the same turn, whoever did the
+  work, and say in the row what confirmed it. Leave it open only when you cannot
+  confirm it.
+
+  The bar is unchanged and is the whole safeguard: *verified*, not *believed* —
+  tick when the work is confirmed by something outside your own reasoning: a test
+  run, an API read, a file checked, an artefact off their disk. Otherwise leave it
+  open and say what is still unproven. Never tick an item to tidy the list, and
+  never tick one because the user said they did it without something checkable
+  behind it. Re-reading a large ledger to tick one row is the cost of keeping the
+  record true, and it is the right trade.
 
 ## Layout
 
@@ -255,6 +277,8 @@ python tools/desk_watch.py check          # which sessions did the desk not repo
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
 python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
+python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
+python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
 ```
 
 `docs/layout.md` lists the rest with what each is for.
@@ -368,6 +392,17 @@ it for a local mirror if you want one.
 
 Reasoning in
 `docs/decisions/2026-08-29-a-tool-that-needs-a-local-path-should-find-it.md`.
+
+**But it is reachable, and that is a different thing.** The vault is the private
+repo `jay79-boop/ray-vault`; a cloud session attaches and clones it in about a
+minute. So "a session here cannot reach the vault" — the premise under the
+paragraph above — is **has not**, not cannot. Read it whenever you need the vault
+rather than its rules, and **never push to it**: the owner's nightly backup does
+`add`/`commit`/`push` with no `pull`, so a commit from a session breaks that
+night's push and lands the failure on them. `docs/vault-route.md` has the route
+and the reasoning, `.claude/skills/vault-route/` the procedure, and
+`tests/test_vault_boundary.py` fails CI if vault content lands in this public fork
+— cite the vault by repo name, never by note path.
 
 ## The user's local checkout
 
