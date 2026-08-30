@@ -705,19 +705,82 @@ def test_autologon_separates_needing_a_desktop_from_depending_on_a_sign_in():
     )
 
 
-def test_autologon_says_so_when_the_conversion_was_declined():
-    """Declining the password is supported, and has to be reported as the
-    state it leaves rather than passed over in silence.
+def test_the_password_prompt_names_the_pin_case_and_a_way_out():
+    """It asked for a password the owner does not have, and offered no route.
 
-    The acquittal to the test above: it is not enough to stop making the false
-    claim, because a report that simply goes quiet leaves the reader believing
-    the conversion landed.
+    On 2026-08-30 the prompt was answered with enter, because the account has
+    no password: they sign in with a Windows Hello PIN and Windows never made
+    one. The prompt said only "leave it blank to register them Interactive
+    instead", which reads as giving up on the feature rather than as the other
+    supported way to reach it.
+
+    A prompt for a credential that may not exist has to say so, and say what to
+    do instead. Otherwise the honest answer to it looks like a failure.
     """
-    body = read(AUTOLOGON)
-    assert "has NOT been applied" in body, (
-        "when nothing needs a chart but the tasks are Interactive, the summary "
-        "has to say the conversion did not happen -- silence there reads as "
-        "success"
+    prompt = (
+        read(SCHEDULER).split("$deskFree.Count -gt 0", 1)[1].split("Read-Host", 1)[0]
+    )
+    assert "PIN" in prompt, (
+        "the prompt must name the case where there is no account password at "
+        "all -- that is the case this machine is actually in"
+    )
+    assert "ARSO" in prompt and "autologon.ps1" in prompt, (
+        "and it must point at the route that needs no password, by name and "
+        "with the command to run"
+    )
+
+
+def test_no_advice_anywhere_makes_the_password_the_only_way_out():
+    """The dead end had three copies, and fixing one would have left two.
+
+    The prompt, the scheduler's read-back and autologon's section 3 all told a
+    reader to supply a password. Any one of them left as the sole instruction
+    sends a PIN user after a credential that does not exist.
+    """
+    for path in (SCHEDULER, AUTOLOGON):
+        src = read(path)
+        for n, line in enumerate(src.splitlines(), 1):
+            if "supply the password" in line or "give it the password" in line:
+                window = "\n".join(src.splitlines()[max(0, n - 6) : n + 6])
+                assert "ARSO" in window, (
+                    f"{path.name}:{n} tells the reader to supply a password "
+                    "without naming ARSO nearby. On a machine signed into with "
+                    "a PIN there may be no password to supply, and that advice "
+                    "is then a dead end."
+                )
+
+
+def test_autologon_offers_both_routes_when_the_tasks_are_interactive():
+    """Declining the password is supported, and so is having no password at all.
+
+    Two revisions of this. It first required the summary to say the conversion
+    "has NOT been applied" -- the acquittal to the test above, since a report
+    that goes quiet leaves the reader believing it landed. Then the owner said
+    on 2026-08-30 that no account password exists: they sign in with a PIN, and
+    Windows never made one. "Not applied" plus "supply the password" is then
+    advice to produce a credential that does not exist, and it frames a
+    perfectly complete setup as half-finished.
+
+    So the requirement is now the honest form of the same thing: name BOTH ways
+    out, and let the passwordless one stand as an equal. Silence still fails.
+    """
+    branch = zero_problems_summary()
+    branches = re.split(r"\}\s*(?:elseif[^{]*\{|else\s*\{)", branch)
+    interactive = branches[1]
+    assert "ARSO" in interactive, (
+        "the branch reached when the tasks are Interactive must name ARSO -- "
+        "it is the only route that needs no password, and on a PIN machine it "
+        "is the only reachable one"
+    )
+    assert "NO PASSWORD NEEDED" in interactive, (
+        "it has to say outright that ARSO needs no password. A reader with no "
+        "account password has to be able to tell that this route is open to "
+        "them without knowing what ARSO is"
+    )
+    assert "password" in interactive.lower(), "the credential route stays offered too"
+    assert "nothing here is broken" in interactive.lower(), (
+        "Interactive + ARSO is a complete configuration, so this must not read "
+        "as a fault report"
     )
 
 
