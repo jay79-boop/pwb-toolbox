@@ -165,13 +165,43 @@ def test_every_scheduler_status_code_is_decoded_in_the_read_back():
         )
 
 
+def test_the_two_failure_results_are_decoded_too():
+    # Not every LastTaskResult is a SCHED_S_* code, and the ones that are not
+    # look nothing like them -- ten digits rather than six. Both of these were
+    # met on the owner's machine rather than read out of a reference: 2147946720
+    # is what \\ClaudeRemoteControl reports on every firing of its keep-alive
+    # trigger, and 3221225786 is the Ctrl+C death that left Remote Control down
+    # for seventeen hours while RestartCount made it look self-healing.
+    body = read(SCHEDULER)
+    for code, hexes in (("2147946720", "0x800710E0"), ("3221225786", "0xC000013A")):
+        assert "'%s' = '%s = %s" % (code, code, hexes) in body, (
+            "the read-back must decode LastTaskResult %s (%s); it is a failure "
+            "code, not a state, and nothing else in the output says so" % (code, hexes)
+        )
+
+
+def test_a_refused_firing_names_the_hung_predecessor():
+    # 2147946720 is 267009 seen from the next occurrence: Windows refused to
+    # start this firing because the previous run had not ended. For the batch
+    # jobs this script registers that is the hung-schedule fault, so the line
+    # has to say so -- and has to say that the same code is healthy on a
+    # long-lived task, or the next keep-alive task gets diagnosed as broken.
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
+    refused = tail.split("'2147946720'", 1)[1].split("$ok++", 1)[0]
+    assert "PREVIOUS run" in refused and "never started" in refused
+    assert "keep-alive" in refused, (
+        "the same code is normal on a long-lived task; saying only 'hung' here "
+        "would convict a healthy keep-alive trigger"
+    )
+
+
 def test_a_running_task_is_named_as_blocking_its_own_schedule():
     # 267009 is the expensive one, and the only one whose meaning is not enough
     # on its own. MultipleInstances defaults to IgnoreNew, so while one run
     # hangs Windows skips every later occurrence rather than starting a second
     # copy: the schedule stops with no error, no missed-run count and a task
     # that still reads healthy. The line has to say that, not just "running".
-    tail = read(SCHEDULER).split("$schedCodes.ContainsKey", 1)[1]
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
     running = tail.split("'267009'", 1)[1].split("$ok++", 1)[0]
     assert "skip" in running.lower() and "hung" in running.lower(), (
         "a task sitting at 267009 must be reported as hung and as suppressing "
@@ -940,3 +970,48 @@ def test_every_summary_branch_that_needs_a_sign_in_names_the_unverified_toggle()
             "a branch where the sign-in still starts the jobs has to name the "
             "toggle it could not read"
         )
+
+
+# --------------------------------------- what a conflict resolution can break --
+#
+# On 2026-08-30 a branch renamed `$schedCodes` to `$resultCodes`, because the
+# table had grown to cover two families of code, while main added a WakeToRun
+# read-back directly above the lookup. Resolving that conflict the obvious way
+# -- keep both sides -- leaves main's `$schedCodes.ContainsKey(...)` naming a
+# table that no longer exists. A method call on `$null` under
+# `$ErrorActionPreference = 'Stop'` takes the script down part-way through the
+# read-back, which is the one output this whole system exists to produce.
+#
+# Every test in this file passed on that tree, and passed again with conflict
+# markers still in the file. Both of those are the same defect as a scan that
+# resolves nothing and reports everything clean.
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_merge_conflict_markers_survived(path):
+    markers = [
+        n
+        for n, line in enumerate(read(path).splitlines(), 1)
+        if line.startswith(("<<<<<<<", ">>>>>>>")) or line.rstrip() == "======="
+    ]
+    assert not markers, f"{path.name} still carries conflict markers at {markers}"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_lookup_names_a_table_the_script_never_defines(path):
+    src = read(path)
+    assigned = set(re.findall(r"^\s*\$(\w+)\s*=", src, re.MULTILINE))
+    # `[string] $RepoRoot` and friends inside param() blocks.
+    assigned |= set(re.findall(r"^\s*\[[\w\[\]]+\]\s*\$(\w+)", src, re.MULTILINE))
+    looked_up = set(re.findall(r"\$(\w+)\.ContainsKey\(", src))
+    looked_up |= set(re.findall(r"\$(\w+)\[", src))
+    dangling = sorted(looked_up - assigned)
+    assert not dangling, (
+        f"{path.name} indexes {dangling}, which it never assigns. PowerShell "
+        "throws on a method call against $null, and under "
+        "$ErrorActionPreference = 'Stop' that ends the run where it stands."
+    )

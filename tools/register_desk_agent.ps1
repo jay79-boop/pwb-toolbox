@@ -382,14 +382,21 @@ Write-Host ''
 $ok = 0
 $strays = 0
 # LastTaskResult is only the script's exit code once a run has ENDED. In between,
-# Windows parks one of the SCHED_S_* status codes there: six-digit decimals, all
-# of them SUCCESS HRESULTs (0x000413xx), none of them explained by the console.
-# So a long number here is a state, not a failure -- and the two that matter most
-# both look like nothing is wrong. 267011 means the task has never once fired.
-# 267009 means a run is still in flight, and while it is, Windows SKIPS the next
-# occurrence rather than starting a second copy: one hung run turns a schedule
-# off with no error anywhere. Decode all of them so neither has to be looked up.
-$schedCodes = @{
+# Windows parks a status code there instead, from either of two families, and
+# neither is explained by the console:
+#
+#   0x000413xx  the SCHED_S_* states. All SUCCESS HRESULTs, so a six-digit
+#               number here is a state, not a failure.
+#   0x8007xxxx  a Win32 error, and 0xC00000xx an NT status. These ten-digit
+#               numbers ARE failures.
+#
+# The three that matter most all look like nothing is wrong. 267011: never once
+# fired. 267009: a run is still in flight -- and while it is, Windows SKIPS every
+# later occurrence rather than starting a second copy. 2147946720: the mirror
+# image, a firing that was refused because the previous run had not ended. One
+# hung run therefore turns a schedule off with no error anywhere, and shows up as
+# 267009 here and 2147946720 on the next look. Decode them all.
+$resultCodes = @{
   '267008' = '267008 = SCHED_S_TASK_READY: finished, waiting for its next run.'
   '267009' = '267009 = SCHED_S_TASK_RUNNING: a run is in flight RIGHT NOW.'
   '267010' = '267010 = SCHED_S_TASK_DISABLED: registered, but it will not fire.'
@@ -399,6 +406,8 @@ $schedCodes = @{
   '267014' = '267014 = SCHED_S_TASK_TERMINATED: the last run was killed.'
   '267015' = '267015 = SCHED_S_TASK_NO_VALID_TRIGGERS: triggers missing or off.'
   '267045' = '267045 = SCHED_S_TASK_QUEUED: waiting for an earlier run to end.'
+  '2147946720' = '2147946720 = 0x800710E0: Windows REFUSED to start this firing.'
+  '3221225786' = '3221225786 = 0xC000013A: the console was closed with Ctrl+C.'
 }
 foreach ($j in $jobs) {
   $name = $prefix + $j.Name
@@ -482,13 +491,20 @@ foreach ($j in $jobs) {
   if (-not $wake) {
     Write-Host '            WARNING: nothing will wake the machine for this run.'
   }
-  if ($schedCodes.ContainsKey("$rc")) {
-    Write-Host ('            ' + $schedCodes["$rc"])
+  if ($resultCodes.ContainsKey("$rc")) {
+    Write-Host ('            ' + $resultCodes["$rc"])
   }
   if ("$rc" -eq '267009') {
     Write-Host '            A run that stays RUNNING is hung. Windows will skip every'
     Write-Host '            later occurrence until it ends, so the job goes quiet with'
     Write-Host '            no error. End it in Task Scheduler, then read its log.'
+  }
+  if ("$rc" -eq '2147946720') {
+    Write-Host '            For a batch job like these that means the PREVIOUS run had'
+    Write-Host '            not ended, so this firing never started. Same hung schedule'
+    Write-Host '            as 267009, seen from the next occurrence.'
+    Write-Host '            (On a long-lived keep-alive task it is normal and healthy:'
+    Write-Host '            the repeating trigger bouncing off the instance already up.)'
   }
   $ok++
 }
