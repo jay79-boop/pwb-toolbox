@@ -276,13 +276,24 @@ cd C:\Users\Gexio\OneDrive\pwb-toolbox
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1
 ```
 
-That reports all three and names the fix for each, **per job**. If no
-registered task needs a desktop it says so and stops counting a missing
-auto sign-in as a problem, because then it is not one -- an earlier version
-flagged any task that was not `Interactive` and would have reported the
-whole conversion as a fault. It still calls a chart job on a desktopless
-logon `WRONG`. Wake timers stay a real finding either way: a stored
-credential does not wake a sleeping machine.
+That reports all three and names the fix for each, **per job**. It still calls
+a chart job on a desktopless logon `WRONG`, and wake timers stay a real finding
+either way: a stored credential does not wake a sleeping machine.
+
+**It stops counting a missing sign-in as a problem only once every task
+actually carries a stored credential** -- not merely once no job needs a chart.
+Those are two different facts and the first version of this treated them as
+one. On its first real run, 2026-08-30, the password prompt had been declined
+(a supported answer), and the report announced *"every registered task runs on
+a stored credential"* and *"nothing needs signing in"* about two tasks
+registered `Interactive`, four lines above a section 3 that correctly said they
+still only run while you are signed in. It was describing the conversion it had
+offered rather than the machine in front of it.
+
+So when nothing needs a chart but the tasks are still `Interactive`, it now
+says the conversion **has not been applied**, and keeps the sign-in sections
+live. Going quiet there would have been the same bug wearing a politer face --
+silence reads as success.
 
 It is read-only, so it is safe to run at any time.
 

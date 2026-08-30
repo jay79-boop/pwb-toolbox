@@ -652,6 +652,75 @@ def test_autologon_does_not_count_a_missing_sign_in_when_nothing_needs_one():
     )
 
 
+def test_autologon_separates_needing_a_desktop_from_depending_on_a_sign_in():
+    """The bug the first real run on the machine found, 2026-08-30.
+
+    The script computed only `$desktopNeeded` and let section 1 and the summary
+    speak for a different question. With the password prompt declined -- a
+    supported answer -- it printed "every registered task runs on a stored
+    credential" and "nothing needs signing in" about two tasks registered
+    Interactive, four lines above a section 3 that correctly said they still
+    only run while you are signed in.
+
+    Convicted: replacing `$signInMatters` with `$desktopNeeded` in either the
+    section 1 note or the summary restores the contradiction and fails here.
+    """
+    body = read(AUTOLOGON)
+    assert "$signInMatters" in body, (
+        "needing no desktop and carrying a stored credential are two facts. "
+        "Collapsing them is how this report claimed a conversion that had "
+        "been declined"
+    )
+
+    # It has to be derived from the LOGON TYPE, and USED. An earlier version of
+    # this assertion looked for "$desktopless" anywhere in the setup block and
+    # passed against a build where the variable was still assigned and no
+    # longer read -- presence is not use. Pin the assignment line itself.
+    setup = body.split("$signInMatters = $false", 1)[1].split("if ($agentTasks", 1)[0]
+    assert "LogonType" in setup, "the logon type has to be read at all"
+    sets_true = [ln for ln in setup.splitlines() if "$signInMatters = $true" in ln]
+    assert sets_true, "$signInMatters is never set"
+    assert all("$desktopless" in ln for ln in sets_true), (
+        "$signInMatters must be decided by the task's actual logon type. "
+        "Deciding it from the job table alone is the original bug wearing a "
+        "new variable name: a job that needs no chart is still tied to the "
+        "sign-in until it carries a stored credential.\n" + "\n".join(sets_true)
+    )
+
+    # Only the stored-credential fact may retire the sign-in. Check the branch
+    # CONDITION, not proximity -- a nearby mention of $signInMatters in some
+    # other branch made the first version of this pass against the bug.
+    first_branch = re.search(r"if \(([^)]*)\)\s*\{", zero_problems_summary())
+    assert first_branch, "the summary no longer branches"
+    assert "$signInMatters" in first_branch.group(1), (
+        "the branch that says the sign-in has stopped mattering must be "
+        "guarded by $signInMatters, not $desktopNeeded. Got: " + first_branch.group(1)
+    )
+
+    note = body.split("Neither route is needed", 1)[0]
+    cond = re.findall(r"if \(([^)]*)\)\s*\{\s*$", note, re.MULTILINE)
+    assert cond and "$signInMatters" in cond[-1], (
+        "the section 1 note claiming neither route is needed must be guarded "
+        "by $signInMatters. Got: " + (cond[-1] if cond else "no condition")
+    )
+
+
+def test_autologon_says_so_when_the_conversion_was_declined():
+    """Declining the password is supported, and has to be reported as the
+    state it leaves rather than passed over in silence.
+
+    The acquittal to the test above: it is not enough to stop making the false
+    claim, because a report that simply goes quiet leaves the reader believing
+    the conversion landed.
+    """
+    body = read(AUTOLOGON)
+    assert "has NOT been applied" in body, (
+        "when nothing needs a chart but the tasks are Interactive, the summary "
+        "has to say the conversion did not happen -- silence there reads as "
+        "success"
+    )
+
+
 def test_autologon_still_calls_a_chart_job_on_a_desktopless_logon_wrong():
     """The narrowing must not cost the original catch."""
     body = read(AUTOLOGON)
@@ -845,10 +914,30 @@ def test_autologon_does_not_send_a_pin_user_to_fetch_a_password():
     )
 
 
+def zero_problems_summary():
+    """The whole `if ($problems -eq 0)` block, brace-matched.
+
+    It used to be sliced to the first `} else`, which was right while the block
+    was flat. The block now branches three ways on whether the sign-in is still
+    load-bearing, and `"} elseif"` contains `"} else"` -- so the old slice cut
+    at the first inner branch and read none of the others. That made the guard
+    below pass or fail on which branch happened to come first, which is not
+    what it is for.
+    """
+    body = read(AUTOLOGON)
+    start = body.index("if ($problems -eq 0) {") + len("if ($problems -eq 0) {")
+    depth, i = 1, start
+    while depth:
+        if body[i] == "{":
+            depth += 1
+        elif body[i] == "}":
+            depth -= 1
+        i += 1
+    return body[start : i - 1]
+
+
 def test_the_summary_does_not_round_unchecked_up_to_fine():
-    summary = (
-        read(AUTOLOGON).split("if ($problems -eq 0) {", 1)[1].split("} else", 1)[0]
-    )
+    summary = zero_problems_summary()
     assert "All clear" not in summary, (
         "The per-user ARSO toggle cannot be read from a script, so a run with "
         "zero problems has still not established that the machine signs itself "
@@ -856,7 +945,31 @@ def test_the_summary_does_not_round_unchecked_up_to_fine():
         "read-back that printed a line from the source file having queried "
         "nothing -- an unchecked thing rounded up to a passing one."
     )
-    assert "not verified" in summary, "it has to name what it could not check"
+    assert "not verified" in summary.lower(), "it has to name what it could not check"
+
+
+def test_every_summary_branch_that_needs_a_sign_in_names_the_unverified_toggle():
+    """The guard above, applied per branch rather than to the block as a whole.
+
+    Only one of the three branches is entitled to stay silent about the ARSO
+    toggle: the one reached when every task carries a stored credential, where
+    the toggle genuinely is not load-bearing. In the other two the sign-in is
+    still what starts the jobs, so an unread toggle is an open question and has
+    to be said out loud.
+    """
+    summary = zero_problems_summary()
+    branches = re.split(r"\}\s*(?:elseif[^{]*\{|else\s*\{)", summary)
+    assert len(branches) == 3, f"expected three summary branches, got {len(branches)}"
+    silent, *needs_sign_in = branches
+    assert "not verified" not in silent.lower(), (
+        "the fully-converted branch must NOT claim the toggle is unverified -- "
+        "nothing depends on it there, so flagging it is its own false report"
+    )
+    for branch in needs_sign_in:
+        assert "not verified" in branch.lower(), (
+            "a branch where the sign-in still starts the jobs has to name the "
+            "toggle it could not read"
+        )
 
 
 # --------------------------------------- what a conflict resolution can break --
