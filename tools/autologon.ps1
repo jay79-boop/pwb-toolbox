@@ -3,21 +3,42 @@
   Report whether this machine can run the desk agent with nobody signed in.
 
 .DESCRIPTION
-  The desk agent's scheduled tasks are registered with a LogonType of
-  Interactive, and that is deliberate. Both enabled jobs drive TradingView
-  Desktop -- premarket reads session levels off the chart, journal captures
-  chart images -- and an Electron app needs a real desktop to render on.
+  WHICH JOBS STILL NEED THIS IS NOW A PER-JOB QUESTION, and answering it for
+  the whole agent at once is how this report would call a successful conversion
+  a fault.
 
-  It is tempting to answer "it did not run because I was not signed in" by
-  setting the tasks to run whether the user is logged on or not. That does not
-  work here. S4U and Password logon types get a session with NO DESKTOP, so the
-  tasks would fire on time and then fail at the first chart call. A job that
-  does not run is at least honest about it; a job that runs against no desktop
-  produces a gameplan built on whatever the failure left behind.
+  A scheduled task that runs whether the user is logged on or not gets a logon
+  session with NO DESKTOP. That is fatal to a job that drives TradingView
+  Desktop, an Electron app with nowhere to render: it would fire on time and
+  fail at the first chart call, producing a gameplan built on whatever the
+  failure left behind. A job that does not run is at least honest about it.
+  That was the whole argument in
+  docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md, and for a chart
+  job it still stands.
 
-  The fix is to make the machine sign ITSELF in, so a desktop session exists
-  for the tasks to use. That is three separate things, and all three have to be
-  true before a 07:00 job on an unattended machine actually produces anything:
+  Since 2026-08-29, premarket and journal do not read a chart. They take their
+  session levels, prior-day range and fair value gaps from bar data through
+  tools/desk_levels.py and render their own images headless, so their tasks CAN
+  be registered against a stored credential and then need no desktop and no
+  sign-in. Only `alerts`, which is currently OFF, still drives the chart.
+
+  CAN, not ARE, and that word is the bug this script shipped with. Needing no
+  desktop and carrying a stored credential are two facts, not one: the password
+  prompt is declinable, and declining leaves a job that needs no chart still
+  registered Interactive and still waiting for a sign-in. The first real run,
+  on 2026-08-30, declined it -- and this report announced "nothing needs
+  signing in" about two Interactive tasks while section 3 said the opposite a
+  few lines below. So the two facts are now computed separately and only the
+  second one is allowed to retire the sign-in.
+
+  So this script reports two different things:
+
+    * For a task that needs a desktop -- automatic sign-in has to work, and the
+      three conditions below all have to be true.
+    * For a task that does not -- it should NOT be Interactive, because that is
+      then the only thing still tying it to a signed-in machine.
+
+  The three conditions, when a desktop job exists:
 
     1. the machine signs in without a human      -- AutoAdminLogon
     2. the machine is awake at the scheduled minute -- WakeToRun, and wake
@@ -30,6 +51,12 @@
   published by Microsoft. Rolling our own here would be untested P/Invoke
   against the credential store, which is the last place to put code nobody can
   run before shipping it.
+
+  It stops treating a missing sign-in as a problem only when every registered
+  task actually carries a stored credential -- not merely when no job needs a
+  chart. Until then the sign-in is still what starts them, and saying otherwise
+  would be this script telling a comfortable story about a machine it had just
+  finished reading correctly.
 
 .PARAMETER EnableLock
   Register a task that locks the workstation shortly after every logon, so an
@@ -64,6 +91,18 @@ $winlogon     = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 $lockTaskName = 'PWB-LockOnLogon'
 $agentPrefix  = 'PWB-DeskAgent-'
 $wakeTimerGuid = 'bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d'
+
+# Task-name suffixes whose job still drives TradingView Desktop, and therefore
+# still needs a real desktop to render into. This is the ONLY reason anything
+# in this file exists, so getting it wrong is how the report starts lying.
+#
+# It has to be repeated here rather than read from register_desk_agent.ps1's
+# $jobs table: this script is run on its own, often from a different directory,
+# and a report that fails when it cannot find another file is worse than one
+# carrying a short list. tests/test_desk_agent_launcher.py asserts this list
+# agrees with that table, which is the same arrangement the job names already
+# have across three files.
+$desktopTasks = @('Alerts')
 
 function Get-PolicyValue([string] $name) {
   # ARSO's policy lives under Policies\System, NOT under Winlogon where the
@@ -151,6 +190,48 @@ Write-Host ''
 
 $problems = 0
 
+# TWO facts, and the first run of this script on the real machine proved they
+# are not the same one.
+#
+#   $desktopNeeded    -- does any registered task still DRIVE THE CHART?
+#   $signInMatters    -- does any registered task still DEPEND ON A SIGN-IN?
+#
+# The first version computed only the first and let sections 1 and the summary
+# speak for the second. On 2026-08-30 that printed "every registered task runs
+# on a stored credential" and "nothing needs signing in" about two tasks that
+# were registered Interactive, while section 3 correctly said the opposite four
+# lines further down. The password prompt had been declined, which is a
+# supported answer -- so the report was describing the conversion it offered
+# rather than the machine in front of it.
+#
+# They come apart exactly when a job needs no desktop but is still registered
+# Interactive, which is the DEFAULT state and the state after declining the
+# prompt. A job that needs no desktop is not thereby free of the sign-in; it is
+# only free of it once it actually carries a stored credential.
+$agentTasks = @(Get-ScheduledTask -TaskName ($agentPrefix + '*') -ErrorAction SilentlyContinue)
+$desktopNeeded = $false
+$signInMatters = $false
+foreach ($t in $agentTasks) {
+  $suffix = $t.TaskName.Substring($agentPrefix.Length)
+  $wantsDesktop = $desktopTasks -contains $suffix
+  # Same test section 3 uses, deliberately: one definition of "runs without a
+  # desktop", so the two halves of this report cannot drift apart again.
+  $desktopless = @('S4U', 'Password') -contains "$($t.Principal.LogonType)"
+  if ($wantsDesktop) { $desktopNeeded = $true }
+  if ($wantsDesktop -or -not $desktopless) { $signInMatters = $true }
+}
+if ($agentTasks.Count -gt 0 -and -not $signInMatters) {
+  Write-Host 'No registered task needs a desktop, and every one of them carries a stored'
+  Write-Host 'credential. Signing in after a restart is therefore optional here: sections 1'
+  Write-Host 'and 2 are reported for information and are not counted as problems.'
+  Write-Host ''
+} elseif ($agentTasks.Count -gt 0 -and -not $desktopNeeded) {
+  Write-Host 'No registered task needs a desktop -- but they are registered Interactive, so'
+  Write-Host 'they still only run while you are signed in. Sections 1 and 2 therefore still'
+  Write-Host 'apply. Section 3 names which tasks, and how to lift it.'
+  Write-Host ''
+}
+
 # 1. Does it sign itself in? There are TWO routes and they are not equivalent.
 #
 # The first version of this script knew only about AutoAdminLogon and told
@@ -165,6 +246,11 @@ $problems = 0
 # signs the last user back in after a restart or cold boot, rehydrates the
 # session, AND LOCKS IT immediately -- so the desktop the scheduled tasks need
 # exists, with no password stored anywhere and no open desktop left behind.
+#
+# Since 2026-08-29 that argument only binds the jobs that still drive the chart.
+# premarket and journal read their levels from bar data and run on a stored
+# credential, so on a machine where alerts is off NOTHING below is a fault --
+# it is reported so the state is visible, not because anything depends on it.
 $arsoPolicy = Get-PolicyValue 'DisableAutomaticRestartSignOn'
 $auto   = Get-WinlogonValue 'AutoAdminLogon'
 $user   = Get-WinlogonValue 'DefaultUserName'
@@ -179,7 +265,12 @@ if ("$arsoPolicy" -eq '1') {
   Write-Host '              The Settings toggle cannot override this. Clear it in an ADMIN'
   Write-Host '              PowerShell, then set the toggle:'
   Write-Host "                Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name DisableAutomaticRestartSignOn"
-  $problems++
+  if ($desktopNeeded) {
+    $problems++
+  } else {
+    Write-Host '              Not counted as a problem here: no registered task needs a'
+    Write-Host '              desktop, so nothing depends on this machine signing itself in.'
+  }
 } else {
   $arsoShown = if ($null -eq $arsoPolicy) { 'not set' } else { $arsoPolicy }
   Write-Host ('     not blocked by policy (DisableAutomaticRestartSignOn=' + $arsoShown + ')')
@@ -207,6 +298,19 @@ if ("$auto" -eq '1') {
   Write-Host '     builds, DevicePasswordLessBuildVersion set to 0 under'
   Write-Host '     HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
   Write-Host '     before the password field appears at all.'
+}
+
+if ($agentTasks.Count -gt 0 -and -not $signInMatters) {
+  Write-Host ''
+  Write-Host '   Neither route is needed as things stand: every registered task carries a'
+  Write-Host '   stored credential and needs no desktop. Both are reported so you can see'
+  Write-Host '   the state, and they matter again the moment a chart job is switched on.'
+} elseif ($agentTasks.Count -gt 0 -and -not $desktopNeeded) {
+  Write-Host ''
+  Write-Host '   One of these routes is still load-bearing, even though no job needs a'
+  Write-Host '   chart: the tasks are registered Interactive, so a sign-in is what starts'
+  Write-Host '   them. Give register_desk_agent.ps1 the password and neither route'
+  Write-Host '   matters any more.'
 }
 
 # The one finding worth shouting about. Plenty of guides tell you to set
@@ -282,15 +386,34 @@ if ($tasks.Count -eq 0) {
   foreach ($t in $tasks) {
     $wake  = $t.Settings.WakeToRun
     $logon = $t.Principal.LogonType
-    Write-Host ('   ' + $t.TaskName.PadRight(24) + ' LogonType: ' + "$logon".PadRight(12) + ' WakeToRun: ' + $wake)
+    $suffix = $t.TaskName.Substring($agentPrefix.Length)
+    $wantsDesktop = $desktopTasks -contains $suffix
+    $desktopless  = @('S4U', 'Password') -contains "$logon"
+    $need = if ($wantsDesktop) { 'needs a desktop' } else { 'no desktop needed' }
+    Write-Host ('   ' + $t.TaskName.PadRight(24) + ' LogonType: ' + "$logon".PadRight(12) +
+                ' WakeToRun: ' + "$wake".PadRight(6) + ' ' + $need)
     if (-not $wake) {
       Write-Host '         WakeToRun is off -- re-run tools\register_desk_agent.ps1.'
       $problems++
     }
-    if ("$logon" -ne 'Interactive') {
-      Write-Host '         NOT Interactive. These jobs drive TradingView Desktop and need a'
-      Write-Host '         desktop; S4U and Password do not get one. Re-run register_desk_agent.ps1.'
-      $problems++
+    if ($wantsDesktop) {
+      if ($desktopless) {
+        # The trap this whole file exists for, caught after the fact.
+        Write-Host '         WRONG: this job drives TradingView Desktop, and this logon'
+        Write-Host '         type gets none. It will fire on time and then'
+        Write-Host '         fail at the first chart call. Re-run register_desk_agent.ps1.'
+        $problems++
+      }
+    } elseif (-not $desktopless) {
+      # NOT counted as a problem. The job works exactly as it always did; it is
+      # simply still tied to a signed-in machine for no reason left in the
+      # code. Counting it would make a working desk report as broken, which is
+      # the failure mode this rewrite exists to remove.
+      Write-Host '         This job needs no desktop but is registered Interactive, so a'
+      Write-Host '         signed-in session has to exist when it fires. Either give'
+      Write-Host '         register_desk_agent.ps1 the account password, or turn on ARSO'
+      Write-Host '         (Route A above) so a restart recreates the session. ARSO needs'
+      Write-Host '         no password, which matters if you sign in with a PIN.'
     }
   }
 }
@@ -311,16 +434,55 @@ if ($lock) {
 
 Write-Host ''
 if ($problems -eq 0) {
-  # NOT "all clear". Nothing above read the ARSO toggle, because it cannot be
-  # read from here, and a summary that rounds "I could not check this" up to
-  # "this is fine" is the whole failure mode this script was written against.
-  # Say what was verified, and name the one thing that was not.
-  Write-Host 'Nothing here is broken: no blocking policy, the tasks want a desktop, and they will'
-  Write-Host 'wake the machine for their trigger.'
-  Write-Host ''
-  Write-Host 'ONE thing above was not verified and cannot be from here: the per-user ARSO toggle'
-  Write-Host 'in Settings. Confirm that by eye. The actual proof is the next 07:00 run appearing'
-  Write-Host 'in the log after an overnight reboot.'
+  # NOT "all clear" when a desktop job exists. Nothing above read the ARSO
+  # toggle, because it cannot be read from here, and a summary that rounds
+  # "I could not check this" up to "this is fine" is the whole failure mode
+  # this script was written against. Say what was verified, and name what
+  # was not.
+  #
+  # With no desktop job registered there is nothing unverified left to warn
+  # about: the ARSO toggle stops being load-bearing, so claiming it as an
+  # open question would be its own kind of false report.
+  if (-not $signInMatters -and $agentTasks.Count -gt 0) {
+    # The only branch entitled to say the sign-in has stopped mattering: every
+    # task actually carries a stored credential. Reached by supplying the
+    # password, not by the jobs no longer needing a chart.
+    Write-Host 'Nothing here is broken, and nothing needs signing in: every registered task'
+    Write-Host 'carries a stored credential, so they run whether you are logged on or not. The'
+    Write-Host 'machine will still wake itself for their triggers.'
+    Write-Host ''
+    Write-Host 'The ARSO toggle is not load-bearing while that holds, so it is not flagged above.'
+    Write-Host 'Proof is the next 07:00 run appearing in the log after an overnight reboot.'
+  } elseif (-not $desktopNeeded -and $agentTasks.Count -gt 0) {
+    # No chart job, but the tasks are Interactive -- so the sign-in is still
+    # what starts them, and saying otherwise was the first bug here.
+    #
+    # Do NOT call this a half-finished conversion either, which was the second. Interactive + ARSO is a
+    # complete configuration, and on a machine signed into with a PIN it is
+    # usually the only reachable one: there may be no account password in
+    # existence to supply. Calling it unfinished, and naming the password as
+    # the fix, sends the reader after a credential that does not exist.
+    Write-Host 'Nothing here is broken. No registered task needs a desktop, and they are'
+    Write-Host 'registered Interactive -- so a signed-in session has to exist when they fire.'
+    Write-Host 'Section 3 names them. There are TWO complete ways to settle that:'
+    Write-Host ''
+    Write-Host '  A. Turn on ARSO (Route A above). A restart signs you back in and locks the'
+    Write-Host '     device, recreating the session. NO PASSWORD NEEDED -- this is the route'
+    Write-Host '     if you sign in with a PIN and no account password exists.'
+    Write-Host '  B. Give register_desk_agent.ps1 the account password, and the tasks stop'
+    Write-Host '     needing a session at all.'
+    Write-Host ''
+    Write-Host 'Neither is confirmed from here. The ARSO toggle is per-user, so it was'
+    Write-Host 'NOT verified above -- confirm it by eye. Proof either way is the next 07:00'
+    Write-Host 'run appearing in the log after an overnight reboot.'
+  } else {
+    Write-Host 'Nothing here is broken: no blocking policy, the tasks that want a desktop will get'
+    Write-Host 'one, and they will wake the machine for their trigger.'
+    Write-Host ''
+    Write-Host 'ONE thing above was not verified and cannot be from here: the per-user ARSO toggle'
+    Write-Host 'in Settings. Confirm that by eye. The actual proof is the next 07:00 run appearing'
+    Write-Host 'in the log after an overnight reboot.'
+  }
 } else {
   Write-Host ('' + $problems + ' thing(s) above will stop an unattended run. Each one names its fix.')
 }

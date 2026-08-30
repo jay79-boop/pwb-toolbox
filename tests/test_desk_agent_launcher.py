@@ -165,13 +165,43 @@ def test_every_scheduler_status_code_is_decoded_in_the_read_back():
         )
 
 
+def test_the_two_failure_results_are_decoded_too():
+    # Not every LastTaskResult is a SCHED_S_* code, and the ones that are not
+    # look nothing like them -- ten digits rather than six. Both of these were
+    # met on the owner's machine rather than read out of a reference: 2147946720
+    # is what \\ClaudeRemoteControl reports on every firing of its keep-alive
+    # trigger, and 3221225786 is the Ctrl+C death that left Remote Control down
+    # for seventeen hours while RestartCount made it look self-healing.
+    body = read(SCHEDULER)
+    for code, hexes in (("2147946720", "0x800710E0"), ("3221225786", "0xC000013A")):
+        assert "'%s' = '%s = %s" % (code, code, hexes) in body, (
+            "the read-back must decode LastTaskResult %s (%s); it is a failure "
+            "code, not a state, and nothing else in the output says so" % (code, hexes)
+        )
+
+
+def test_a_refused_firing_names_the_hung_predecessor():
+    # 2147946720 is 267009 seen from the next occurrence: Windows refused to
+    # start this firing because the previous run had not ended. For the batch
+    # jobs this script registers that is the hung-schedule fault, so the line
+    # has to say so -- and has to say that the same code is healthy on a
+    # long-lived task, or the next keep-alive task gets diagnosed as broken.
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
+    refused = tail.split("'2147946720'", 1)[1].split("$ok++", 1)[0]
+    assert "PREVIOUS run" in refused and "never started" in refused
+    assert "keep-alive" in refused, (
+        "the same code is normal on a long-lived task; saying only 'hung' here "
+        "would convict a healthy keep-alive trigger"
+    )
+
+
 def test_a_running_task_is_named_as_blocking_its_own_schedule():
     # 267009 is the expensive one, and the only one whose meaning is not enough
     # on its own. MultipleInstances defaults to IgnoreNew, so while one run
     # hangs Windows skips every later occurrence rather than starting a second
     # copy: the schedule stops with no error, no missed-run count and a task
     # that still reads healthy. The line has to say that, not just "running".
-    tail = read(SCHEDULER).split("$schedCodes.ContainsKey", 1)[1]
+    tail = read(SCHEDULER).split("$resultCodes.ContainsKey", 1)[1]
     running = tail.split("'267009'", 1)[1].split("$ok++", 1)[0]
     assert "skip" in running.lower() and "hung" in running.lower(), (
         "a task sitting at 267009 must be reported as hung and as suppressing "
@@ -292,12 +322,38 @@ def test_a_missing_directory_is_dropped_rather_than_passed_on():
 
 # ------------------------------------- waking up, and signing in without you --
 #
+# ------------------------------------------ which jobs still need a desktop --
+#
 # Asked for on 2026-08-29 as "fix the LogonType so it runs without me signed
-# in". The LogonType is the one thing that must NOT change: a task set to run
-# whether the user is logged on or not gets a session with no desktop, and both
-# enabled jobs drive TradingView Desktop. The request was right about the goal
-# and wrong about the mechanism, and these pin the distinction so a later reader
-# does not undo it.
+# in", and answered twice.
+#
+# The first answer was that the LogonType must NOT change: a task set to run
+# whether the user is logged on or not gets a session with no desktop, and
+# every enabled job drove TradingView Desktop, so the change would have turned
+# a job that does not run into a job that runs and is wrong. That reasoning is
+# in docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md and the guard
+# it produced forbade `-LogonType`, `S4U` and `Password` anywhere in the
+# scheduler's code.
+#
+# The second answer removed the premise. `premarket` and `journal` now read
+# their levels from bar data through tools/desk_levels.py and render their own
+# images headless, so they have no desktop to lose and their tasks can take a
+# logon type that has none.
+#
+# So the blanket ban is NARROWED here rather than deleted, to the jobs that
+# still drive the chart. Deleting it would leave the original trap unguarded
+# the moment somebody re-enables `alerts`; keeping it would forbid the fix.
+#
+# Which of these convict, honestly:
+#
+#   * `test_s4u_is_never_used_for_any_job` is UNCHANGED in force. S4U is still
+#     banned outright, for every job, and it convicts today.
+#   * The per-job tests below are new and convict the obvious careless version
+#     of this change -- flipping the whole table to a stored credential -- which
+#     was written and run against them to check they fail.
+#   * `test_every_job_declares_whether_it_needs_a_desktop` is a forward guard.
+#     It passes trivially now and exists so a job added later cannot inherit
+#     "no desktop needed" by saying nothing.
 
 AUTOLOGON = REPO / "tools" / "autologon.ps1"
 
@@ -315,13 +371,28 @@ def code_lines(path):
     )
 
 
+def scheduler_desktop_jobs():
+    """The `$jobs` table as {job name: NeedsDesktop}, read out of the source."""
+    body = read(SCHEDULER).split("$jobs = @(", 1)[1].split("\n)", 1)[0]
+    jobs = {}
+    for entry in re.finditer(
+        r"Job\s*=\s*'(?P<job>\w+)'.*?NeedsDesktop\s*=\s*\$(?P<needs>true|false)",
+        body,
+        re.DOTALL,
+    ):
+        jobs[entry.group("job")] = entry.group("needs") == "true"
+    return jobs
+
+
 def test_the_tasks_wake_the_machine():
     settings = read(SCHEDULER).split("$settings = New-ScheduledTaskSettingsSet", 1)[1]
     settings = settings.split("$weekdays", 1)[0]
     assert "-WakeToRun" in settings, (
         "Without WakeToRun the machine is never woken for a trigger. "
         "StartWhenAvailable only catches a run up after something else wakes it, "
-        "and a 07:00 gameplan delivered at 10:15 is not a pre-market gameplan."
+        "and a 07:00 gameplan delivered at 10:15 is not a pre-market gameplan. "
+        "This holds for a desktop-free task too: a stored credential does not "
+        "wake a sleeping machine."
     )
 
 
@@ -334,27 +405,408 @@ def test_wake_to_run_is_read_back_from_windows():
     )
 
 
-def test_the_tasks_are_never_given_a_desktopless_logon_type():
-    code = code_lines(SCHEDULER)
-    for bad in ("S4U", "Password", "-LogonType"):
-        assert bad not in code, (
-            f"{bad!r} appears in the scheduler's code. Both enabled jobs drive "
-            "TradingView Desktop; a task that runs whether the user is logged on "
-            "or not has no desktop, so it would fire on time and fail at the "
-            "first chart call. Interactive is correct here -- the fix for an "
-            "unattended machine is automatic sign-in, not this flag."
+def test_s4u_is_never_used_for_any_job():
+    """The half of the original ban that did NOT narrow.
+
+    S4U is refused for every job, desktop or not, and for a reason that has
+    nothing to do with rendering: it stores no password and therefore carries
+    no credentials, so DPAPI-protected secrets do not decrypt and network paths
+    are not reachable as the user. Both remaining jobs run Claude Code, whose
+    own stored authentication is exactly that kind of secret, and the journal
+    job reads a document under OneDrive. S4U would fail both at run time,
+    unattended, looking like a broken agent rather than a wrong logon type.
+    """
+    # Scoped to the code that REGISTERS a task. The read-backs in both
+    # register_desk_agent.ps1 and autologon.ps1 name S4U on purpose, to
+    # recognise a task that already has it and say so -- forbidding the string
+    # outright would convict the detector along with the thing it detects,
+    # which is the #154 mistake in a new place.
+    registration = (
+        read(SCHEDULER)
+        .split("$weekdays", 1)[1]
+        .split("Reading the tasks back from Windows", 1)[0]
+    )
+    for label, body in (
+        ("register_desk_agent.ps1's registration loop", registration),
+        ("run_job.ps1", code_lines(LAUNCHER)),
+    ):
+        assert "S4U" not in body, (
+            f"{label} names S4U. It carries no credentials at all -- the jobs "
+            "would fail on DPAPI and on OneDrive, at run time, unattended. A "
+            "stored credential (-User with -Password) is the supported way to "
+            "run without a desktop here."
         )
 
 
-def test_the_interactive_note_points_at_the_real_fix():
-    interactive = read(SCHEDULER).split("if (\"$logon\" -eq 'Interactive')", 1)[1]
-    interactive = interactive.split("}", 1)[0]
-    assert "autologon.ps1" in interactive, (
-        "The note a reader sees when a task is Interactive has to send them to "
-        "the thing that actually fixes an unattended run. The previous wording, "
-        "'runs only while you are signed in', reads as an accusation against the "
-        "flag and invites exactly the change that breaks the chart jobs."
+def test_the_read_back_still_recognises_s4u_if_it_finds_one():
+    """Banned from being set is not the same as banned from being noticed.
+
+    A task given S4U by hand in Task Scheduler has to be reported, and both
+    read-backs have to be able to name it to do that.
+    """
+    for path in (SCHEDULER, AUTOLOGON):
+        read_back = read(path).split("$logon", 1)[1]
+        assert "S4U" in read_back, f"{path.name} cannot recognise an S4U task"
+
+
+def test_every_job_declares_whether_it_needs_a_desktop():
+    """A forward guard: passes today, and exists so silence cannot mean 'no'.
+
+    A job added without this field would be registered against a stored
+    credential by default and fail at its first chart call -- the exact failure
+    the original blanket ban was written to prevent, arriving through an
+    omission rather than an edit.
+    """
+    declared = set(scheduler_desktop_jobs())
+    assert declared == set(scheduler_jobs()), (
+        "every job in the table must say whether it needs a desktop; "
+        f"missing: {sorted(set(scheduler_jobs()) - declared)}"
     )
+
+
+def test_premarket_and_journal_no_longer_need_a_desktop():
+    # The conversion itself. Both read bar data through tools/desk_levels.py.
+    assert scheduler_desktop_jobs()["premarket"] is False
+    assert scheduler_desktop_jobs()["journal"] is False
+
+
+def test_alerts_still_needs_a_desktop():
+    """It is off, not retired, and it still drives the chart.
+
+    This is why the ban narrowed rather than being deleted: re-enabling
+    `alerts` must not quietly hand it a session with nothing to render into.
+    """
+    assert scheduler_desktop_jobs()["alerts"] is True
+
+
+def test_a_job_that_needs_a_desktop_is_never_given_a_stored_credential():
+    """The narrowed guard, and the one that replaces the blanket ban.
+
+    Convicted against the careless version of this change: setting every entry
+    in the table to `NeedsDesktop = $false` fails
+    `test_alerts_still_needs_a_desktop`, and deleting the `$j.NeedsDesktop`
+    condition from the registration branch fails this one.
+    """
+    body = read(SCHEDULER).split("$weekdays", 1)[1]
+    branch = body.split("$common = @{", 1)[1].split("try {", 1)[0]
+    assert "$j.NeedsDesktop" in branch, (
+        "the registration branch must gate the stored credential on the job's "
+        "own NeedsDesktop, or a chart job gets a session with no desktop"
+    )
+    # And the credential must be set only on the side of the branch that is
+    # NOT the desktop one -- a gate that adds it in both arms is not a gate.
+    assert re.search(
+        r"if \(\$j\.NeedsDesktop[^)]*\)\s*\{[^}]*\}\s*else\s*\{[^}]*User[^}]*Password",
+        branch,
+        re.DOTALL,
+    ), "the User/Password pair must sit in the else arm, not in both"
+
+
+def test_the_password_is_prompted_for_rather_than_taken_on_the_command_line():
+    src = read(SCHEDULER)
+    assert "Read-Host" in src and "-AsSecureString" in src, (
+        "a password passed as a parameter lands in the PowerShell history file "
+        "in clear text, and a hand-edited command is how one ends up pasted "
+        "into a chat window"
+    )
+    assert "[string] $Password" not in src
+
+
+def test_declining_the_password_falls_back_to_interactive_rather_than_failing():
+    """A blank answer must leave a working desk, not a half-registered one."""
+    src = read(SCHEDULER)
+    assert "$NoStoredCredential" in src
+    assert "-or -not $taskPassword" in src, (
+        "with no password supplied every task must register Interactive, which "
+        "is exactly what it did before this change"
+    )
+
+
+def test_the_three_files_agree_on_which_jobs_need_a_desktop():
+    """The same trap as the job names: one fact, written in three places.
+
+    The launcher carries `pine_loop` as well, which is real -- it runs on
+    demand and is not a scheduled task at all -- so the launcher's list is
+    compared only across the jobs the scheduler knows about.
+    """
+    scheduled = scheduler_desktop_jobs()
+    wanted = {job for job, needs in scheduled.items() if needs}
+
+    launcher = set(
+        re.search(r"\$desktopJobs = @\(([^)]*)\)", read(LAUNCHER))
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
+    assert launcher & set(scheduled) == wanted, (
+        "run_job.ps1's $desktopJobs disagrees with the scheduler's "
+        f"NeedsDesktop: launcher says {sorted(launcher & set(scheduled))}, "
+        f"table says {sorted(wanted)}"
+    )
+
+    # autologon.ps1 lists TASK-name suffixes, so map through the table's Name.
+    body = read(SCHEDULER).split("$jobs = @(", 1)[1].split("\n)", 1)[0]
+    names = dict(re.findall(r"Name\s*=\s*'(\w+)';\s*Job\s*=\s*'(\w+)'", body))
+    auto = set(
+        re.search(r"\$desktopTasks = @\(([^)]*)\)", read(AUTOLOGON))
+        .group(1)
+        .replace("'", "")
+        .replace(" ", "")
+        .split(",")
+    )
+    assert {names[n] for n in auto if n in names} == wanted, (
+        f"autologon.ps1's $desktopTasks {sorted(auto)} does not map to the "
+        f"scheduler's NeedsDesktop jobs {sorted(wanted)}"
+    )
+
+
+def test_the_read_back_judges_the_logon_type_against_the_job():
+    """The read-back must not call a successful conversion a fault.
+
+    The previous version printed one note for anything that was not
+    Interactive. After this change that would flag every converted task, which
+    is how a report stops being read.
+    """
+    read_back = read(SCHEDULER).split("Reading the tasks back from Windows", 1)[1]
+    judgement = read_back.split("$logon = $task.Principal.LogonType", 1)[1]
+    assert (
+        "$j.NeedsDesktop" in judgement
+    ), "the read-back judges the logon type without asking what the job needs"
+    assert (
+        "WRONG" in judgement
+    ), "a chart job on a desktopless logon must be called wrong"
+    assert (
+        "GOOD" in judgement
+    ), "a converted job on a desktopless logon must read as correct"
+
+
+# ------------------------------------- the launcher stops driving TradingView --
+
+
+def test_the_tradingview_dance_is_conditional_rather_than_deleted():
+    """`alerts` is off and `pine_loop` runs on demand; both still want it.
+
+    Deleting the launch/close block would leave the debug port open behind a
+    pine_loop run, which is the risk docs/tradingview-agent-security.md exists
+    for -- so it is gated, not removed.
+    """
+    src = read(LAUNCHER)
+    assert (
+        "$desktopJobs" in src and "$needsDesktop = $desktopJobs -contains $Job" in src
+    )
+    assert "Stop-Process" in src, "the close-behind-us path must still exist"
+    assert "tv_launch" in src, "the launch permission must still exist for chart jobs"
+
+
+def test_a_desktop_free_job_is_told_not_to_launch_tradingview():
+    """The instruction is given in the negative, and it has to be.
+
+    Such a task may be running with no desktop at all. An agent that reaches
+    for tv_launch there burns the run discovering Electron has nowhere to draw,
+    and then reports a chart problem rather than the instruction problem it hit.
+    """
+    src = read(LAUNCHER)
+    branch = src.split("if ($needsDesktop) {", 1)[1].split("$prompt = $promptLines", 1)[
+        0
+    ]
+    negative = branch.split("} else {", 1)[1]
+    assert "Do NOT call tv_launch" in negative
+    assert "desk_levels.py" in negative, (
+        "telling the agent what not to do without naming the replacement is "
+        "how a job logs a blocker instead of doing its work"
+    )
+
+
+def test_a_desktop_free_job_that_starts_tradingview_is_reported():
+    """It cannot have worked, so whatever the run said about a chart is suspect."""
+    src = read(LAUNCHER)
+    assert "a desktop-free job started TradingView" in src
+    assert "Distrust anything this run said about a chart" in src
+
+
+# ------------------------------- autologon reports the conversion accurately --
+
+
+def test_autologon_knows_which_tasks_need_a_desktop():
+    assert "$desktopTasks" in read(AUTOLOGON)
+
+
+def test_autologon_does_not_count_a_missing_sign_in_when_nothing_needs_one():
+    """Otherwise it reports the successful conversion as a fault.
+
+    Convicted against the pre-change file: it incremented `$problems` for
+    AutoAdminLogon being off unconditionally, and printed 'NOT Interactive' for
+    every converted task.
+
+    Anchored on the section heading rather than on any one route's wording.
+    The first version of this test split on "1. Automatic sign-in", which the
+    PIN/ARSO rewrite renamed -- so it broke on a merge that had not touched the
+    behaviour it guards. The heading number is the stable part.
+    """
+    body = read(AUTOLOGON)
+    section = body.split("1. Signing in after a restart", 1)[1].split("# 2.", 1)[0]
+    assert "$desktopNeeded" in section, (
+        "a machine whose every job is desktop-free must not be told off for "
+        "failing to sign itself in"
+    )
+
+
+def test_autologon_separates_needing_a_desktop_from_depending_on_a_sign_in():
+    """The bug the first real run on the machine found, 2026-08-30.
+
+    The script computed only `$desktopNeeded` and let section 1 and the summary
+    speak for a different question. With the password prompt declined -- a
+    supported answer -- it printed "every registered task runs on a stored
+    credential" and "nothing needs signing in" about two tasks registered
+    Interactive, four lines above a section 3 that correctly said they still
+    only run while you are signed in.
+
+    Convicted: replacing `$signInMatters` with `$desktopNeeded` in either the
+    section 1 note or the summary restores the contradiction and fails here.
+    """
+    body = read(AUTOLOGON)
+    assert "$signInMatters" in body, (
+        "needing no desktop and carrying a stored credential are two facts. "
+        "Collapsing them is how this report claimed a conversion that had "
+        "been declined"
+    )
+
+    # It has to be derived from the LOGON TYPE, and USED. An earlier version of
+    # this assertion looked for "$desktopless" anywhere in the setup block and
+    # passed against a build where the variable was still assigned and no
+    # longer read -- presence is not use. Pin the assignment line itself.
+    setup = body.split("$signInMatters = $false", 1)[1].split("if ($agentTasks", 1)[0]
+    assert "LogonType" in setup, "the logon type has to be read at all"
+    sets_true = [ln for ln in setup.splitlines() if "$signInMatters = $true" in ln]
+    assert sets_true, "$signInMatters is never set"
+    assert all("$desktopless" in ln for ln in sets_true), (
+        "$signInMatters must be decided by the task's actual logon type. "
+        "Deciding it from the job table alone is the original bug wearing a "
+        "new variable name: a job that needs no chart is still tied to the "
+        "sign-in until it carries a stored credential.\n" + "\n".join(sets_true)
+    )
+
+    # Only the stored-credential fact may retire the sign-in. Check the branch
+    # CONDITION, not proximity -- a nearby mention of $signInMatters in some
+    # other branch made the first version of this pass against the bug.
+    first_branch = re.search(r"if \(([^)]*)\)\s*\{", zero_problems_summary())
+    assert first_branch, "the summary no longer branches"
+    assert "$signInMatters" in first_branch.group(1), (
+        "the branch that says the sign-in has stopped mattering must be "
+        "guarded by $signInMatters, not $desktopNeeded. Got: " + first_branch.group(1)
+    )
+
+    note = body.split("Neither route is needed", 1)[0]
+    cond = re.findall(r"if \(([^)]*)\)\s*\{\s*$", note, re.MULTILINE)
+    assert cond and "$signInMatters" in cond[-1], (
+        "the section 1 note claiming neither route is needed must be guarded "
+        "by $signInMatters. Got: " + (cond[-1] if cond else "no condition")
+    )
+
+
+def test_the_password_prompt_names_the_pin_case_and_a_way_out():
+    """It asked for a password the owner does not have, and offered no route.
+
+    On 2026-08-30 the prompt was answered with enter, because the account has
+    no password: they sign in with a Windows Hello PIN and Windows never made
+    one. The prompt said only "leave it blank to register them Interactive
+    instead", which reads as giving up on the feature rather than as the other
+    supported way to reach it.
+
+    A prompt for a credential that may not exist has to say so, and say what to
+    do instead. Otherwise the honest answer to it looks like a failure.
+    """
+    prompt = (
+        read(SCHEDULER).split("$deskFree.Count -gt 0", 1)[1].split("Read-Host", 1)[0]
+    )
+    assert "PIN" in prompt, (
+        "the prompt must name the case where there is no account password at "
+        "all -- that is the case this machine is actually in"
+    )
+    assert "ARSO" in prompt and "autologon.ps1" in prompt, (
+        "and it must point at the route that needs no password, by name and "
+        "with the command to run"
+    )
+
+
+def test_no_advice_anywhere_makes_the_password_the_only_way_out():
+    """The dead end had three copies, and fixing one would have left two.
+
+    The prompt, the scheduler's read-back and autologon's section 3 all told a
+    reader to supply a password. Any one of them left as the sole instruction
+    sends a PIN user after a credential that does not exist.
+    """
+    for path in (SCHEDULER, AUTOLOGON):
+        src = read(path)
+        for n, line in enumerate(src.splitlines(), 1):
+            if "supply the password" in line or "give it the password" in line:
+                window = "\n".join(src.splitlines()[max(0, n - 6) : n + 6])
+                assert "ARSO" in window, (
+                    f"{path.name}:{n} tells the reader to supply a password "
+                    "without naming ARSO nearby. On a machine signed into with "
+                    "a PIN there may be no password to supply, and that advice "
+                    "is then a dead end."
+                )
+
+
+def test_autologon_offers_both_routes_when_the_tasks_are_interactive():
+    """Declining the password is supported, and so is having no password at all.
+
+    Two revisions of this. It first required the summary to say the conversion
+    "has NOT been applied" -- the acquittal to the test above, since a report
+    that goes quiet leaves the reader believing it landed. Then the owner said
+    on 2026-08-30 that no account password exists: they sign in with a PIN, and
+    Windows never made one. "Not applied" plus "supply the password" is then
+    advice to produce a credential that does not exist, and it frames a
+    perfectly complete setup as half-finished.
+
+    So the requirement is now the honest form of the same thing: name BOTH ways
+    out, and let the passwordless one stand as an equal. Silence still fails.
+    """
+    branch = zero_problems_summary()
+    branches = re.split(r"\}\s*(?:elseif[^{]*\{|else\s*\{)", branch)
+    interactive = branches[1]
+    assert "ARSO" in interactive, (
+        "the branch reached when the tasks are Interactive must name ARSO -- "
+        "it is the only route that needs no password, and on a PIN machine it "
+        "is the only reachable one"
+    )
+    assert "NO PASSWORD NEEDED" in interactive, (
+        "it has to say outright that ARSO needs no password. A reader with no "
+        "account password has to be able to tell that this route is open to "
+        "them without knowing what ARSO is"
+    )
+    assert "password" in interactive.lower(), "the credential route stays offered too"
+    assert "nothing here is broken" in interactive.lower(), (
+        "Interactive + ARSO is a complete configuration, so this must not read "
+        "as a fault report"
+    )
+
+
+def test_autologon_still_calls_a_chart_job_on_a_desktopless_logon_wrong():
+    """The narrowing must not cost the original catch."""
+    body = read(AUTOLOGON)
+    section = body.split("3. The desk agent tasks", 1)[1]
+    assert "$wantsDesktop" in section
+    assert "WRONG" in section
+    assert "fail at the first chart call" in section, (
+        "the reason has to be on the page. 'WRONG' alone sends the reader back "
+        "to the decision record to find out what breaks"
+    )
+
+
+def test_autologon_does_not_count_an_interactive_desktop_free_task_as_a_problem():
+    """It works exactly as it always did; it is simply not yet converted.
+
+    Counting it would make a working desk report as broken -- which is the
+    failure this rewrite exists to remove, arriving from the other direction.
+    """
+    section = read(AUTOLOGON).split("3. The desk agent tasks", 1)[1]
+    arm = section.split("} elseif (-not $desktopless) {", 1)[1].split("\n    }", 1)[0]
+    assert (
+        "$problems++" not in arm
+    ), "an unconverted but working task is a note, not a fault"
 
 
 # --------------------------------------------------------- tools/autologon.ps1 --
@@ -525,10 +977,30 @@ def test_autologon_does_not_send_a_pin_user_to_fetch_a_password():
     )
 
 
+def zero_problems_summary():
+    """The whole `if ($problems -eq 0)` block, brace-matched.
+
+    It used to be sliced to the first `} else`, which was right while the block
+    was flat. The block now branches three ways on whether the sign-in is still
+    load-bearing, and `"} elseif"` contains `"} else"` -- so the old slice cut
+    at the first inner branch and read none of the others. That made the guard
+    below pass or fail on which branch happened to come first, which is not
+    what it is for.
+    """
+    body = read(AUTOLOGON)
+    start = body.index("if ($problems -eq 0) {") + len("if ($problems -eq 0) {")
+    depth, i = 1, start
+    while depth:
+        if body[i] == "{":
+            depth += 1
+        elif body[i] == "}":
+            depth -= 1
+        i += 1
+    return body[start : i - 1]
+
+
 def test_the_summary_does_not_round_unchecked_up_to_fine():
-    summary = (
-        read(AUTOLOGON).split("if ($problems -eq 0) {", 1)[1].split("} else", 1)[0]
-    )
+    summary = zero_problems_summary()
     assert "All clear" not in summary, (
         "The per-user ARSO toggle cannot be read from a script, so a run with "
         "zero problems has still not established that the machine signs itself "
@@ -536,4 +1008,73 @@ def test_the_summary_does_not_round_unchecked_up_to_fine():
         "read-back that printed a line from the source file having queried "
         "nothing -- an unchecked thing rounded up to a passing one."
     )
-    assert "not verified" in summary, "it has to name what it could not check"
+    assert "not verified" in summary.lower(), "it has to name what it could not check"
+
+
+def test_every_summary_branch_that_needs_a_sign_in_names_the_unverified_toggle():
+    """The guard above, applied per branch rather than to the block as a whole.
+
+    Only one of the three branches is entitled to stay silent about the ARSO
+    toggle: the one reached when every task carries a stored credential, where
+    the toggle genuinely is not load-bearing. In the other two the sign-in is
+    still what starts the jobs, so an unread toggle is an open question and has
+    to be said out loud.
+    """
+    summary = zero_problems_summary()
+    branches = re.split(r"\}\s*(?:elseif[^{]*\{|else\s*\{)", summary)
+    assert len(branches) == 3, f"expected three summary branches, got {len(branches)}"
+    silent, *needs_sign_in = branches
+    assert "not verified" not in silent.lower(), (
+        "the fully-converted branch must NOT claim the toggle is unverified -- "
+        "nothing depends on it there, so flagging it is its own false report"
+    )
+    for branch in needs_sign_in:
+        assert "not verified" in branch.lower(), (
+            "a branch where the sign-in still starts the jobs has to name the "
+            "toggle it could not read"
+        )
+
+
+# --------------------------------------- what a conflict resolution can break --
+#
+# On 2026-08-30 a branch renamed `$schedCodes` to `$resultCodes`, because the
+# table had grown to cover two families of code, while main added a WakeToRun
+# read-back directly above the lookup. Resolving that conflict the obvious way
+# -- keep both sides -- leaves main's `$schedCodes.ContainsKey(...)` naming a
+# table that no longer exists. A method call on `$null` under
+# `$ErrorActionPreference = 'Stop'` takes the script down part-way through the
+# read-back, which is the one output this whole system exists to produce.
+#
+# Every test in this file passed on that tree, and passed again with conflict
+# markers still in the file. Both of those are the same defect as a scan that
+# resolves nothing and reports everything clean.
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_merge_conflict_markers_survived(path):
+    markers = [
+        n
+        for n, line in enumerate(read(path).splitlines(), 1)
+        if line.startswith(("<<<<<<<", ">>>>>>>")) or line.rstrip() == "======="
+    ]
+    assert not markers, f"{path.name} still carries conflict markers at {markers}"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(REPO.glob("tools/**/*.ps1")), ids=lambda p: p.name
+)
+def test_no_lookup_names_a_table_the_script_never_defines(path):
+    src = read(path)
+    assigned = set(re.findall(r"^\s*\$(\w+)\s*=", src, re.MULTILINE))
+    # `[string] $RepoRoot` and friends inside param() blocks.
+    assigned |= set(re.findall(r"^\s*\[[\w\[\]]+\]\s*\$(\w+)", src, re.MULTILINE))
+    looked_up = set(re.findall(r"\$(\w+)\.ContainsKey\(", src))
+    looked_up |= set(re.findall(r"\$(\w+)\[", src))
+    dangling = sorted(looked_up - assigned)
+    assert not dangling, (
+        f"{path.name} indexes {dangling}, which it never assigns. PowerShell "
+        "throws on a method call against $null, and under "
+        "$ErrorActionPreference = 'Stop' that ends the run where it stands."
+    )

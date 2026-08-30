@@ -102,7 +102,8 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-Three rules that are *not* in the skill:
+Rules that are *not* in the skill (the count in this line went stale three
+times, so it no longer carries one — just add a bullet):
 
 - **Never indent prose underneath a checkbox.** Four-space indentation renders
   as a *code block*, and a code block reads as "paste this". On 2026-08-29 they
@@ -112,6 +113,15 @@ Three rules that are *not* in the skill:
   explanation on the checkbox's own line, or in prose above the block. **An
   indented block inside a NEEDS YOU item means "this is pasteable" and nothing
   else.**
+- **Point at the exact place, never at where to look for it.** Asked for
+  2026-08-29, after a step read "delete the branch on GitHub" and they replied
+  "how I find the branch again? not familiar to working in github. always point
+  to exacted location". So: give the URL that lands on the thing itself, filtered
+  to it where the site allows — `.../branches/all?query=<name>` rather than
+  `.../branches` — then name the control to click and what happens after. Naming
+  a site, a page, or a menu path is a description of a search, and they have to
+  run it. This holds for anything with an address: a settings page, a specific
+  file in a repository, a run in Actions, a row in the ledger.
 - **If a step is also explained in prose above, it still gets repeated in the
   block.** The block is the checklist of record.
 - **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
@@ -263,6 +273,7 @@ python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
@@ -328,6 +339,21 @@ own playbook. Two things are deliberate and both look like oversights:
 Autonomy ceiling is "everything except order entry", on a TradingView login with
 no broker connected. Reasoning in `docs/tradingview-agent-security.md`; setup in
 `tools/desk_agent/README.md`.
+
+**Whether a job needs a desktop is a per-job fact, and it decides how its task
+is registered.** A Windows task set to run whether the user is logged on or not
+gets a logon session with **no desktop** — fatal to a job driving TradingView
+Desktop, irrelevant to one that does not. `premarket` and `journal` read their
+levels from bar data via `tools/desk_levels.py` and render their own images
+headless, so their tasks carry a stored credential and run signed in or not;
+`alerts` and `pine_loop` still drive the chart and still need a desktop. The
+fact lives in `register_desk_agent.ps1`'s `$jobs` table as `NeedsDesktop`, is
+mirrored in `run_job.ps1` and `autologon.ps1`, and a test asserts all three
+agree. **`S4U` is banned for every job regardless** — it carries no credentials,
+so DPAPI secrets and OneDrive paths both fail at run time, unattended. Two
+decision records:
+`docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md` and
+`docs/decisions/2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md`.
 
 ## Backtesting: two things that produced confidently wrong answers
 
