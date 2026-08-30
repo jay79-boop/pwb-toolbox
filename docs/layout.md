@@ -15,7 +15,9 @@ top-level directories and points here for the detail.
   signal, per-singer memory), `sim.py` (simulated pub nights that judge it),
   and `room.py` + `queue_server.py` serving `static/karaoke-queue.html` — one
   command runs the night: big screen with QR + playback, phones join by scan.
-  Protocol in `docs/karaoke-rotation.md`
+  `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
+  `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
+  release. Protocol in `docs/karaoke-rotation.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from

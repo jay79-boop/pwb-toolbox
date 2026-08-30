@@ -75,3 +75,4 @@ watch-state.example.bak
 # mirrored into this repository at all. Ignored rather than merely guarded, so
 # an accidental sync followed by `git add -A` cannot publish it.
 docs/journal/
+dist/
