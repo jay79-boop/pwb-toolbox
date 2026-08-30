@@ -99,8 +99,18 @@ hand-edited commands, and the PowerShell traps. The skill loads before any
 command written for the user to run, and its copy is the one that reaches
 sessions outside this repository — so it is deliberately not restated here.
 
-Two rules that are *not* in the skill:
+Rules that are *not* in the skill (the count was wrong here twice; do not
+write one — just add a bullet):
 
+- **Point at the exact place, never at where to look for it.** Asked for
+  2026-08-29, after a step read "delete the branch on GitHub" and they replied
+  "how I find the branch again? not familiar to working in github. always point
+  to exacted location". So: give the URL that lands on the thing itself, filtered
+  to it where the site allows — `.../branches/all?query=<name>` rather than
+  `.../branches` — then name the control to click and what happens after. Naming
+  a site, a page, or a menu path is a description of a search, and they have to
+  run it. This holds for anything with an address: a settings page, a specific
+  file in a repository, a run in Actions, a row in the ledger.
 - **If a step is also explained in prose above, it still gets repeated in the
   block.** The block is the checklist of record.
 - **Every item is a markdown checkbox — `- [ ]` — never a bullet or a number.**
