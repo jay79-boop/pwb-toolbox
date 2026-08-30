@@ -54,6 +54,8 @@ NEEDS_SONG = "needs_song"  # the stay-and-sing-again prompt
 NO_SHOW = "no_show"  # called, never appeared; back in the pool
 TIMED_OUT = "timed_out"  # too many no-shows; AWAY until marked back
 PRUNED = "pruned"  # away so long the rotation concluded they left
+HOUSE_ON = "house_on"  # stage went quiet: bring the background music up
+HOUSE_OFF = "house_off"  # a singer is starting: fade the background out
 
 WAITING, ON_DECK, SINGING, AWAY, LEFT = (
     "waiting",
@@ -177,6 +179,9 @@ class Rotation:
         self.singers: dict[str, Singer] = {}
         self.stage: Stage | None = None
         self.call: Call | None = None
+        # the room is never silent: house music is assumed already playing
+        # when the night opens, and these events only mark the transitions
+        self.house_on: bool = True
         self.room_walkup_ema: float | None = None
         self._joined_tonight: set[str] = set()
         self._next_id = 1
@@ -286,10 +291,10 @@ class Rotation:
         if profile is not None:
             profile["walkup_ema"] = singer.walkup_ema
         if self.stage is None:
-            return [self._start_song(singer, now)]
+            return self._start_song(singer, now)
         return []  # on deck; starts the moment the current song ends
 
-    def _start_song(self, singer: Singer, now: float) -> Event:
+    def _start_song(self, singer: Singer, now: float) -> list[Event]:
         duration = (
             singer.song.duration_s
             if singer.song and singer.song.duration_s is not None
@@ -298,7 +303,12 @@ class Rotation:
         self.stage = Stage(singer.id, started_at=now, ends_at=now + duration)
         singer.state = SINGING
         self.call = None
-        return Event(SONG_STARTED, now, singer.id, {"ends_at": now + duration})
+        events = []
+        if self.house_on:
+            self.house_on = False
+            events.append(Event(HOUSE_OFF, now))
+        events.append(Event(SONG_STARTED, now, singer.id, {"ends_at": now + duration}))
+        return events
 
     def lead_s(self) -> float:
         """How far before the song's end the next call should go out."""
@@ -415,6 +425,9 @@ class Rotation:
         for _ in range(50):  # a no-show can trigger a redraw in the same tick
             event = self._step(now)
             if event is None:
+                if self.stage is None and not self.house_on:
+                    self.house_on = True
+                    events.append(Event(HOUSE_ON, now))
                 return events
             events.extend(event)
         raise RuntimeError("rotation tick failed to settle")
@@ -486,8 +499,28 @@ class Rotation:
         ]
         call = self.call
         if call and call.appeared_at is not None:
-            events.append(self._start_song(self._singer(call.singer_id), at))
+            # back to back: the next singer starts in the same instant, so
+            # the house music never comes up and never flickers
+            events.extend(self._start_song(self._singer(call.singer_id), at))
         return events
+
+    def retime_stage(self, singer_id: str, now: float, remaining_s: float) -> None:
+        """Correct the current song's end from the real player.
+
+        The engine schedules the end from the submitted (or default)
+        duration, which is a guess until the actual track loads. The
+        screen, which is playing the thing, knows the truth -- including
+        "it just ended", which is remaining 0.
+        """
+        if not self.stage or self.stage.singer_id != singer_id:
+            raise RotationError("that singer is not on stage")
+        if not isinstance(remaining_s, (int, float)) or isinstance(remaining_s, bool):
+            raise RotationError("remaining must be a number of seconds")
+        if remaining_s < 0 or remaining_s > self.cfg.max_song_s:
+            raise RotationError(
+                f"remaining must be between 0 and {self.cfg.max_song_s:.0f} seconds"
+            )
+        self.stage.ends_at = now + remaining_s
 
     def next_due(self, now: float) -> float | None:
         """When tick() next has something to do; None means nothing pending."""

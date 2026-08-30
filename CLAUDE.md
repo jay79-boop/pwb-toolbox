@@ -268,6 +268,7 @@ python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (lo
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
 python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
 python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
+python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
 ```
 
 `docs/layout.md` lists the rest with what each is for.

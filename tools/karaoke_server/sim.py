@@ -97,6 +97,7 @@ class NightReport:
     no_shows: int = 0
     timed_out: int = 0
     dead_air_s: float = 0.0
+    silent_s: float = 0.0
     songs_per_singer: list[int] = field(default_factory=list)
     starved: list[str] = field(default_factory=list)
 
@@ -203,6 +204,8 @@ def run_night(
         # stage is silent. State is constant between visited instants.
         if rot.stage is None and (rot.call is not None or rot._pool()):
             report.dead_air_s += t - prev_t
+            if not rot.house_on:  # a gap the house music failed to cover
+                report.silent_s += t - prev_t
         prev_t = t
 
         if action == "join":
@@ -281,6 +284,7 @@ def run_report(seeds: int = 10, cfg: RotationConfig | None = None) -> dict:
             ),
             "no_shows_mean": round(statistics.mean(r.no_shows for r in reports), 1),
             "dead_air_mean_s": round(statistics.mean(r.dead_air_s for r in reports), 1),
+            "silent_max_s": round(max(r.silent_s for r in reports), 1),
             "songs_spread_max": max(spread, default=0),
             "starved": sorted({n for r in reports for n in r.starved}),
         }
@@ -352,6 +356,13 @@ def run_report(seeds: int = 10, cfg: RotationConfig | None = None) -> dict:
         f"with headroom the ceiling resolved {quiet['ceiling_share']:.1%} of "
         f"draws (saturated room for contrast: {clean['ceiling_share']:.0%})",
     )
+    silent = max(r["silent_max_s"] for r in out["rooms"].values())
+    verdict(
+        "no silent second",
+        silent < 0.5,
+        f"worst uncovered gap across every night: {silent:.1f}s -- house "
+        "music is up whenever the stage is bare",
+    )
     out["control_dead_air_mean_s"] = round(control_dead_air, 1)
     out["seeds"] = seeds
     out["ok"] = all(v["ok"] for v in out["verdicts"])
@@ -368,7 +379,8 @@ def print_report(out: dict) -> None:
         ("worst_misses", "worst miss"),
         ("ceiling_share", "ceiling"),
         ("no_shows_mean", "no-shows"),
-        ("dead_air_mean_s", "dead air s"),
+        ("dead_air_mean_s", "gap s"),
+        ("silent_max_s", "silent s"),
         ("songs_spread_max", "spread"),
     )
     header = f"{'room':<8}" + "".join(f"{label:>12}" for _, label in cols)

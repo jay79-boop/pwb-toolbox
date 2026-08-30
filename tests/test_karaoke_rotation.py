@@ -13,6 +13,8 @@ import pytest
 from tools.karaoke_server.rotation import (
     AWAY,
     CALL,
+    HOUSE_OFF,
+    HOUSE_ON,
     LEFT,
     NEEDS_SONG,
     NO_SHOW,
@@ -304,6 +306,49 @@ class TestRefusals:
         with pytest.raises(RotationError):
             rot.mark_away(singer.id, 1.0)
 
+    def test_house_music_covers_every_gap_and_never_flickers(self):
+        # the room is never silent: music is assumed playing when the night
+        # opens, fades for a singer, and returns the moment the stage is bare
+        rot = make(seed=1)
+        assert rot.house_on  # the pub had music on before we booted
+        first = join_with_song(rot, "First", duration=180.0)
+        second = join_with_song(rot, "Second", duration=180.0)
+        first.misses = rot.ceiling(2)
+        drain(rot, 0.0)
+        events = rot.appeared(first.id, 10.0)
+        assert [e.kind for e in events] == [HOUSE_OFF, SONG_STARTED]
+        assert not rot.house_on
+        # second is called during the outro and walks up in time
+        outro = 190.0 - rot.lead_s()
+        drain(rot, outro)
+        rot.appeared(second.id, 185.0)
+        events = drain(rot, 190.0)
+        kinds = [e.kind for e in events]
+        assert SONG_STARTED in kinds
+        assert HOUSE_ON not in kinds and HOUSE_OFF not in kinds  # no flicker
+        assert not rot.house_on  # music stayed down across the handover
+        # second finishes with nobody on deck: the music comes straight up
+        events = drain(rot, 400.0)
+        assert [e.kind for e in events][-1] == HOUSE_ON
+        assert rot.house_on
+
+    def test_a_no_show_gap_stays_covered(self):
+        # a called singer who never appears must not leave the music down
+        rot = make(seed=1)
+        singer = join_with_song(rot, "Only", duration=120.0)
+        singer.misses = rot.ceiling(1)
+        drain(rot, 0.0)
+        rot.appeared(singer.id, 10.0)
+        assert not rot.house_on
+        drain(rot, 140.0)  # song over, nobody else: music back up
+        assert rot.house_on
+        rot.set_song(singer.id, "encore", duration_s=120.0, now=150.0)
+        drain(rot, 160.0)  # called again (cooldown waived, solo room)
+        assert rot.house_on  # still just walking up; no singer yet
+        events = drain(rot, rot.call.deadline + 1.0)
+        assert NO_SHOW in [e.kind for e in events]
+        assert rot.house_on  # struck out; the room keeps its music
+
     def test_finishing_prompts_for_the_next_song(self):
         rot = make(seed=1)
         singer = join_with_song(rot, "Ada", duration=180.0)
@@ -336,7 +381,8 @@ class TestSimulatedNights:
             report.served,
             report.no_shows,
             round(report.dead_air_s, 1),
-        ) == (61, 18, 9, 471.6)
+            round(report.silent_s, 1),
+        ) == (61, 18, 9, 471.6, 0.0)
 
     def test_the_acquit_room_passes_without_the_ceiling_running_it(self):
         report = sim.run_night("quiet", seed=2)

@@ -40,6 +40,35 @@ call never shrinks anyone's grace. Measured against the same nights with
 the lead forced to zero, the outro draw cuts dead air roughly fivefold
 (~9 minutes a night saved in the standard mixed room).
 
+## The room is never silent
+
+House music is assumed playing when the night opens. The engine emits
+`HOUSE_OFF` the instant a singer starts and `HOUSE_ON` the instant the
+stage goes bare with nobody mid-walk-up onto it -- and nothing between
+back-to-back songs, so the music never flickers through a clean handover.
+The simulator integrates every second the stage was empty while the room
+wanted music and verdicts that none of it was uncovered: the gap time an
+outro call cannot remove is carried by the house playlist instead.
+
+## The no-brainer shell
+
+`room.py` + `queue_server.py` + `static/karaoke-queue.html` wrap the
+engine into the thing a pub actually touches:
+
+    python -m tools.karaoke_server.queue_server
+
+One command, one address (LAN only -- same hosting rule as the
+leaderboard). The big screen opens `/screen`: now singing, the draw
+reveal with its walk-up countdown, a QR to join, an event ticker, and
+YouTube playback when the song came in as a link -- the screen corrects
+the engine's guessed duration from the real player (`retime`), including
+"it just ended". Phones scan the QR: name, song (paste a link or just
+type a title), done. A returning name is greeted with "your usual?" chips
+from the songs it sang here before. The called phone becomes a full-screen
+YOU'RE UP with the countdown and one button. The waiting list a poll
+returns is alphabetical on purpose: the order is the secret, and the only
+ordering that ever leaves the server is the call itself.
+
 ## What it refuses to claim
 
 - **"Nobody waits more than N draws" is impossible in a deep queue.** One
@@ -75,6 +104,7 @@ the lead forced to zero, the outro draw cuts dead air roughly fivefold
 | no mic hog | identical eager singers finish within 2 songs of each other |
 | outro draw beats stage-free draw | dead air vs the lead-zero control, same seeds |
 | the lottery does the work | with headroom the ceiling resolves <10% of draws |
+| no silent second | every stage gap is covered by house music, all nights |
 
 The suite (`tests/test_karaoke_rotation.py`) pins the mechanism the same
 way: a convict test where the pressure is planted and the rule must bite,
