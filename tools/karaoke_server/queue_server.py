@@ -30,6 +30,17 @@ MAX_BODY = 8 * 1024
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
 
+# The standalone build (tools/karaoke_server/build_standalone.py) rebinds
+# this to the page's full text, so the single file needs no static/ dir.
+EMBEDDED_PAGE = None
+
+
+def page_source() -> str | None:
+    if PAGE.exists():
+        return PAGE.read_text(encoding="utf-8")
+    return EMBEDDED_PAGE
+
+
 HEAD = (
     '<!doctype html>\n<html lang="en">\n<head>\n'
     '<meta charset="utf-8">\n'
@@ -50,7 +61,7 @@ POSTS = {
 
 def page_html(role: str, source: str | None = None) -> str:
     """The queue page as a document, told its role and where the API is."""
-    html = source if source is not None else PAGE.read_text(encoding="utf-8")
+    html = source if source is not None else page_source()
     head = HEAD.format(role=role)
     marker = "</style>"
     cut = html.find(marker)
@@ -93,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = urlparse(self.path)
         if route.path in ("/", "/index.html", "/screen"):
-            if not PAGE.exists():
+            if page_source() is None:
                 self._html(404, "<h1>karaoke-queue.html not found</h1>")
                 return
             role = "screen" if route.path == "/screen" else "phone"

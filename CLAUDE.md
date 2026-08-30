@@ -269,6 +269,7 @@ python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal 
 python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
 python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
 python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
+python tools/karaoke_server/build_standalone.py  # one-file karaoke_os.py for any other computer
 ```
 
 `docs/layout.md` lists the rest with what each is for.

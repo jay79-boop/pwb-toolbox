@@ -123,3 +123,22 @@ memory lives in `karaoke-profiles.json` next to where you ran it.
 refuses to promise (a flat "never wait more than 4 draws" is impossible in
 a 15-deep queue; nobody can read your YouTube history, so it remembers
 what you sang *here* instead).
+
+## Take it to another computer
+
+The repo is the workshop, not the product. Two portable builds exist:
+
+- **`karaoke_os.py`** — the whole OS (engine, server, page embedded) as one
+  stdlib-only file. Any machine with Python 3.10+: copy it, `python
+  karaoke_os.py`, done. Build it locally with
+  `python tools/karaoke_server/build_standalone.py`.
+- **`KaraokeQueue.exe`** — the same file frozen with PyInstaller for a
+  Windows machine with no Python at all. Double-click; the console shows
+  the address and the big screen opens itself.
+
+`.github/workflows/release-karaoke.yml` builds and selfchecks both on
+every manual run (grab them from the run's artifacts), and a tag push
+`karaoke-v*` attaches them to a **draft** GitHub release for the owner to
+publish. The single file is generated -- edit the modules here, never the
+artifact; `tests/test_karaoke_standalone.py` proves the build runs a real
+night and carries the page byte for byte.

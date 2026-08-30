@@ -58,7 +58,13 @@ engine into the thing a pub actually touches:
     python -m tools.karaoke_server.queue_server
 
 One command, one address (LAN only -- same hosting rule as the
-leaderboard). The big screen opens `/screen`: now singing, the draw
+leaderboard). For a machine outside this repo, the same OS ships as one
+portable file: `build_standalone.py` concatenates the tested modules and
+embeds the page verbatim into `karaoke_os.py` (stdlib only, Python
+3.10+), and the release workflow freezes that into `KaraokeQueue.exe`
+for a Windows machine with no Python. Both selfcheck before they ship,
+and the artifact is generated, never hand-edited -- the tested modules
+and the shipped file stay the same code. The big screen opens `/screen`: now singing, the draw
 reveal with its walk-up countdown, a QR to join, an event ticker, and
 YouTube playback when the song came in as a link -- the screen corrects
 the engine's guessed duration from the real player (`retime`), including
