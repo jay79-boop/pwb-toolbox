@@ -43,12 +43,14 @@ It prints one address. Open /screen on that address on the big screen
 QR the screen shows and lands on the phone page: name, song, and a
 full-screen YOU'RE UP when the random draw lands on them.
 
-Standard library only. Singer memory is saved next to this file in
+Standard library only. Singer memory is saved next to this program in
 karaoke-profiles.json. Generated from the pwb-toolbox repo by
 tools/karaoke_server/build_standalone.py -- edit there, not here.
 """
 
 from __future__ import annotations
+
+import sys
 '''
 
 QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    main()\n'
@@ -56,6 +58,18 @@ QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    main()\n'
 FOOTER = """
 
 # ==== standalone launcher ============================================
+
+
+def _home_dir():
+    # Where this program lives -- the frozen exe's folder, or the .py's.
+    # NOT the working directory: a double-clicked exe run as administrator
+    # gets C:\\Windows\\System32, and one opened from inside a zip gets a
+    # temp dir that is later deleted, so singer memory would scatter or
+    # vanish. Under PyInstaller __file__ points into the extracted _MEI
+    # dir, which is also wrong -- sys.executable is the exe itself.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 def _standalone_main(argv=None):
@@ -91,11 +105,21 @@ def _standalone_main(argv=None):
         print("karaoke-os selfcheck: OK")
         return 0
 
+    profiles = args.profiles or os.environ.get("KARAOKE_PROFILES")
+    if not profiles:
+        profiles = str(_home_dir() / "karaoke-profiles.json")
+
     if not args.no_browser:
+        # Open the screen on the address PHONES will use, never localhost:
+        # the page builds its QR from location.origin, so a screen opened
+        # at localhost shows a QR that every phone in the room fails to
+        # reach. This is the whole product on the default double-click path.
+        host = args.host if args.host not in ("0.0.0.0", "") else None
+        reachable = host or lan_address() or "localhost"
         threading.Timer(
-            1.5, webbrowser.open, [f"http://localhost:{args.port}/screen"]
+            1.5, webbrowser.open, [f"http://{reachable}:{args.port}/screen"]
         ).start()
-    serve(args.host, args.port, args.profiles)
+    serve(args.host, args.port, profiles)
     return 0
 
 

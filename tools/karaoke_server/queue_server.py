@@ -27,8 +27,23 @@ from urllib.parse import parse_qs, urlparse
 from .room import QueueRoom, RotationError
 
 MAX_BODY = 8 * 1024
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
+
+
+def _repo_page() -> Path | None:
+    """The page in the repo checkout, or None when there isn't one.
+
+    This module is concatenated verbatim into the standalone karaoke_os.py,
+    which can legitimately sit at C:\\karaoke\\ or a USB-stick root. A bare
+    ``parents[2]`` raises IndexError there -- at import, before any
+    friendly message or the embedded fallback could run.
+    """
+    here = Path(__file__).resolve()
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "static" / "karaoke-queue.html"
+
+
+PAGE = _repo_page()
 
 # The standalone build (tools/karaoke_server/build_standalone.py) rebinds
 # this to the page's full text, so the single file needs no static/ dir.
@@ -36,9 +51,13 @@ EMBEDDED_PAGE = None
 
 
 def page_source() -> str | None:
-    if PAGE.exists():
+    # embedded first: the standalone must never consult a disk path that
+    # belongs to whatever happens to sit three levels above it
+    if EMBEDDED_PAGE is not None:
+        return EMBEDDED_PAGE
+    if PAGE is not None and PAGE.exists():
         return PAGE.read_text(encoding="utf-8")
-    return EMBEDDED_PAGE
+    return None
 
 
 HEAD = (
@@ -183,6 +202,10 @@ def serve(host="0.0.0.0", port=8772, profiles_path=None):
     shown = lan or ("localhost" if host in ("0.0.0.0", "") else host)
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
+    print(
+        "If phones cannot connect: allow this app through the firewall for "
+        "BOTH private and public networks (venue Wi-Fi usually counts as public)."
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

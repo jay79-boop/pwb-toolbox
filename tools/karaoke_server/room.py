@@ -80,16 +80,21 @@ class QueueRoom:
         if not self.profiles_path:
             return
         directory = os.path.dirname(os.path.abspath(self.profiles_path))
-        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        tmp = None
         try:
+            # mkstemp itself raises on a read-only folder (an exe dropped in
+            # Program Files), and that must cost the night its memory, not
+            # its ability to run: singers still sing, nothing is remembered
+            fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(self.rot.profiles, fh)
             os.replace(tmp, self.profiles_path)
         except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
     def tick(self, now: float) -> None:
         self._absorb(self.rot.tick(now))
