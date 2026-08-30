@@ -40,6 +40,20 @@ doing the job.
 4. Write the gameplan to `tools/desk_agent/out/gameplan-<YYYY-MM-DD>.md` and
    commit it.
 
+   **This step is currently blocked on every run, and it is not this job's
+   fault.** `.claude/settings.json` grants `Edit(/tools/desk_agent/out/**)` but
+   not `Write` for that path, and the Edit tool can only change a file that
+   already exists — it cannot create the first `gameplan-<date>.md` of the day.
+   Four runs (08-24 x2, 08-25, 08-27) logged `write-tool-denied` in exactly this
+   shape, and the 08-28 `claude-exited-non-zero` failure is consistent with the
+   same denial rather than a new fault. This is why the job has never produced
+   an action in six non-skipped runs — not because there is nothing to write,
+   but because nothing it writes can land. **The fix is a permission-settings
+   change** (add `"Write(/tools/desk_agent/out/**)"` to the `allow` list in
+   `.claude/settings.json`), which the guardrails explicitly forbid this agent
+   from making itself ("Never widen your own access... edit permission
+   settings"). A human needs to add that line by hand.
+
 ## Read the staleness line before you quote a number
 
 Every `desk_levels` run prints the age of the last bar it saw, and says
