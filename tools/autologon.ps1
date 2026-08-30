@@ -409,9 +409,11 @@ if ($tasks.Count -eq 0) {
       # simply still tied to a signed-in machine for no reason left in the
       # code. Counting it would make a working desk report as broken, which is
       # the failure mode this rewrite exists to remove.
-      Write-Host '         This job needs no desktop but is registered Interactive, so it'
-      Write-Host '         still only runs while you are signed in. Re-run'
-      Write-Host '         register_desk_agent.ps1 and give it the password to lift that.'
+      Write-Host '         This job needs no desktop but is registered Interactive, so a'
+      Write-Host '         signed-in session has to exist when it fires. Either give'
+      Write-Host '         register_desk_agent.ps1 the account password, or turn on ARSO'
+      Write-Host '         (Route A above) so a restart recreates the session. ARSO needs'
+      Write-Host '         no password, which matters if you sign in with a PIN.'
     }
   }
 }
@@ -453,15 +455,26 @@ if ($problems -eq 0) {
     Write-Host 'Proof is the next 07:00 run appearing in the log after an overnight reboot.'
   } elseif (-not $desktopNeeded -and $agentTasks.Count -gt 0) {
     # No chart job, but the tasks are Interactive -- so the sign-in is still
-    # what starts them. Saying otherwise here is the bug this branch fixes.
-    Write-Host 'Nothing here is broken, but the conversion has NOT been applied: no registered'
-    Write-Host 'task needs a desktop, yet they are registered Interactive, so they still only'
-    Write-Host 'run while you are signed in. Section 3 names them.'
+    # what starts them, and saying otherwise was the first bug here.
+    #
+    # Do NOT call this a half-finished conversion either, which was the second. Interactive + ARSO is a
+    # complete configuration, and on a machine signed into with a PIN it is
+    # usually the only reachable one: there may be no account password in
+    # existence to supply. Calling it unfinished, and naming the password as
+    # the fix, sends the reader after a credential that does not exist.
+    Write-Host 'Nothing here is broken. No registered task needs a desktop, and they are'
+    Write-Host 'registered Interactive -- so a signed-in session has to exist when they fire.'
+    Write-Host 'Section 3 names them. There are TWO complete ways to settle that:'
     Write-Host ''
-    Write-Host 'So signing in after a restart still matters, and the per-user ARSO toggle above'
-    Write-Host 'was NOT verified -- it cannot be read from here. Either confirm it by eye, or'
-    Write-Host 're-run register_desk_agent.ps1 and supply the password, which removes the'
-    Write-Host 'dependency altogether.'
+    Write-Host '  A. Turn on ARSO (Route A above). A restart signs you back in and locks the'
+    Write-Host '     device, recreating the session. NO PASSWORD NEEDED -- this is the route'
+    Write-Host '     if you sign in with a PIN and no account password exists.'
+    Write-Host '  B. Give register_desk_agent.ps1 the account password, and the tasks stop'
+    Write-Host '     needing a session at all.'
+    Write-Host ''
+    Write-Host 'Neither is confirmed from here. The ARSO toggle is per-user, so it was'
+    Write-Host 'NOT verified above -- confirm it by eye. Proof either way is the next 07:00'
+    Write-Host 'run appearing in the log after an overnight reboot.'
   } else {
     Write-Host 'Nothing here is broken: no blocking policy, the tasks that want a desktop will get'
     Write-Host 'one, and they will wake the machine for their trigger.'
