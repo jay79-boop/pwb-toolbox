@@ -256,6 +256,7 @@ node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
 node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
+node static/karaoke-qr.test.js    # the QR the screen draws (also run by pytest)
 pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker

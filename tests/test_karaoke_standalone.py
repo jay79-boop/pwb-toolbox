@@ -10,7 +10,6 @@ via QueueRoom.
 import importlib.util
 import os
 import random
-import shutil
 import sys
 from pathlib import Path
 
@@ -60,6 +59,13 @@ def test_the_page_travels_inside_the_file(artifact):
     assert artifact.EMBEDDED_PAGE == build_standalone.PAGE.read_text(encoding="utf-8")
 
 
+def test_the_qr_encoder_travels_too(artifact):
+    """The single file has to draw its own QR on a router with no uplink."""
+    assert "// ==== qr, drawn here" in artifact.EMBEDDED_PAGE
+    assert "function qrEncode(" in artifact.EMBEDDED_PAGE
+    assert "cdnjs" not in artifact.EMBEDDED_PAGE
+
+
 def test_the_selfcheck_gate_passes(artifact):
     assert artifact._standalone_main(["--selfcheck"]) == 0
 
@@ -80,11 +86,13 @@ def test_it_runs_from_a_shallow_path():
     file fewer than three directories deep died with IndexError before the
     launcher, the selfcheck, or the embedded page could run. Neither CI nor
     the other tests caught it -- pytest's tmpdir and dist/ are both deep, so
-    this one writes to a genuinely root-adjacent directory on purpose.
+    this one writes to a genuinely root-adjacent path on purpose.
     """
-    shallow_dir = Path("/kqtest")  # /kqtest/k.py has 2 parents, not 3
-    shallow_dir.mkdir(exist_ok=True)
-    shallow = shallow_dir / "k.py"
+    # /tmp/<name>.py has 2 parents, not 3, and unlike a directory made at
+    # the filesystem root it is writable by whoever CI runs the suite as.
+    shallow = Path("/tmp/karaoke_os_shallow_probe.py")
+    if len(shallow.resolve().parents) >= 3:  # /tmp is a symlink on macOS
+        pytest.skip("no writable path shallow enough on this platform")
     try:
         assert len(shallow.resolve().parents) < 3, "path is not actually shallow"
         shallow.write_text(build_standalone.build(), encoding="utf-8")
@@ -98,7 +106,7 @@ def test_it_runs_from_a_shallow_path():
         finally:
             sys.modules.pop("karaoke_shallow", None)
     finally:
-        shutil.rmtree(shallow_dir, ignore_errors=True)
+        shallow.unlink(missing_ok=True)
 
 
 def test_the_repo_page_lookup_survives_a_root_adjacent_file():
