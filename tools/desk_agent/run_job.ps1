@@ -14,6 +14,11 @@
   indistinguishable from a scheduler that never fired, which is the one thing
   the whole design is built to tell apart.
 
+  After the agent exits, however it exits, the launcher commits any record left
+  uncommitted and pushes the branch to the fork ('jay'), then verifies the push
+  with 'runlog unpushed'. A record that is committed and never pushed is
+  invisible to every cloud session, which is the one reader the log exists for.
+
 .PARAMETER Job
   Job name, matching a file under tools/desk_agent/jobs/.
 
@@ -125,6 +130,112 @@ function Record-Failure([string] $blocker, [string] $summary) {
   }
 }
 
+# -- publish the record --------------------------------------------------------
+# The log is committed so that a cloud session can read it, and a cloud session
+# reads GitHub, not this disk. A commit that never leaves the machine is exactly
+# as invisible there as a record that was never written. From 2026-08-31 to
+# 09-01 six commits -- four run records and two notes -- sat on the OneDrive
+# main while GitHub's copy of runs.jsonl stopped at 08-28: the playbook said
+# "commit" and nothing said "push", and nothing noticed for four days.
+#
+# This is the push. It lives in the launcher and not in the playbook on
+# purpose: it runs after the agent exits, whether the agent finished, crashed,
+# or never started, so the failure record Record-Failure writes reaches GitHub
+# too. An instruction to the agent covers only the runs the agent completes.
+#
+# The remote is 'jay' by name. 'origin' is upstream in the OneDrive checkout
+# and the fork in the other, so a bare origin push is wrong in one of them and
+# fails by succeeding. docs/local-checkout.md has the table.
+$remote = 'jay'
+
+function Publish-RunLog([string] $onBranch) {
+  # Native git writes progress to stderr, and under Stop that becomes a
+  # terminating error the moment stderr is redirected. Nothing in here may
+  # take the run down: the record is already written, and this only decides
+  # whether GitHub sees it.
+  $ErrorActionPreference = 'Continue'
+  $paths = @('tools/desk_agent/runs.jsonl', 'tools/desk_agent/out')
+
+  Push-Location $RepoRoot
+  try {
+    # 1. Commit anything the run left behind in the log or the output
+    #    directory. The agent commits its own work; this catches the record
+    #    the launcher wrote for a run that crashed or never started. The paths
+    #    are named and nothing else is staged -- never 'git add -A', which is
+    #    how commit dd6d1d6 once committed the deletion of the log.
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'tools\desk_agent\runs.jsonl'))) {
+      # 'git add' of a tracked file that is gone stages its deletion, and that
+      # is the dd6d1d6 accident with a scheduler behind it. Refuse, loudly.
+      Write-Log 'NOT COMMITTED: runs.jsonl is missing from the checkout. Refusing to commit its deletion.'
+      Write-Log '               Restore it: git checkout HEAD -- tools/desk_agent/runs.jsonl'
+      return
+    }
+    $dirty = (& git status --porcelain -- $paths 2>&1 | Out-String).Trim()
+    if ($dirty) {
+      & git add -- $paths 2>&1 | Out-Null
+      $message = 'desk agent: ' + $Job + ' run record, committed by the launcher'
+      & git commit -q -m $message -- $paths 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+      if ($LASTEXITCODE -ne 0) {
+        Write-Log 'WARNING: commit failed. The record is in the working tree only.'
+      } else {
+        Write-Log 'committed the run record (the agent had not)'
+      }
+    }
+
+    if (-not $onBranch -or $onBranch -eq 'HEAD' -or $onBranch -eq '(unknown)') {
+      Write-Log 'NOT PUSHED: detached HEAD or unknown branch. The record is committed here only.'
+      return
+    }
+    $url = (& git remote get-url $remote 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $url) {
+      Write-Log ("NOT PUSHED: no remote named '" + $remote + "' in this checkout. The record is committed here only.")
+      return
+    }
+
+    # 2. On main, take what GitHub has first. main moves there every time a
+    #    pull request merges, and a push from behind is refused as
+    #    non-fast-forward -- so without this step the push would fail on most
+    #    days while looking like it ran. It is the line the owner runs by hand
+    #    (docs/local-checkout.md). A conflict is aborted, never left half-merged
+    #    for the morning. gc.auto is forced off because a fetch that stops to
+    #    ask about a OneDrive-locked object directory is an unanswerable hang
+    #    from a task with no stdin.
+    if ($onBranch -eq 'main') {
+      & git -c gc.auto=0 fetch $remote main 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Log ('WARNING: git fetch ' + $remote + ' main failed; pushing without it')
+      } else {
+        & git -c gc.auto=0 merge --no-edit ($remote + '/main') 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+        if ($LASTEXITCODE -ne 0) {
+          & git merge --abort 2>&1 | Out-Null
+          Write-Log ('NOT PUSHED: merging ' + $remote + '/main conflicted. Merge aborted, tree left as it was.')
+          Write-Log ('           By hand: git fetch ' + $remote + ' main; git merge --no-edit ' + $remote + '/main; git push ' + $remote + ' main')
+          return
+        }
+      }
+    }
+
+    # 3. Push, then verify by asking git rather than trusting the exit code.
+    #    The verification is the same command a cloud session or the next run
+    #    can use, and it exits 1 when this machine knows runs GitHub does not.
+    & git push $remote $onBranch 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Log ('WARNING: git push ' + $remote + ' ' + $onBranch + ' failed')
+    }
+    & $python -m tools.desk_agent.runlog unpushed --remote $remote --branch $onBranch 2>&1 |
+      ForEach-Object { Write-Log ('  ' + $_) }
+    if ($LASTEXITCODE -eq 0) {
+      Write-Log ('pushed: ' + $remote + '/' + $onBranch + ' carries the run log')
+    } else {
+      Write-Log ('NOT PUSHED: ' + $remote + '/' + $onBranch + ' does not carry every record. See above.')
+    }
+  } catch {
+    Write-Log ('could not publish the run log: ' + $_.Exception.Message)
+  } finally {
+    Pop-Location
+  }
+}
+
 # -- resolve Claude Code -------------------------------------------------------
 # claude.exe is the native install; claude.cmd is the old npm global. Never
 # claude.ps1 -- execution policy blocks it.
@@ -170,6 +281,7 @@ if (-not $claude) {
   Write-Log 'Claude Code not found (looked for claude.exe then claude.cmd).'
   Record-Failure 'claude executable not found on PATH' `
                  'launcher could not resolve Claude Code, job never started'
+  Publish-RunLog $branch
   exit 1
 }
 Write-Log ("claude: " + $claude)
@@ -349,8 +461,10 @@ if ($code -ne 0) {
              '; full log ' + (Split-Path $logFile -Leaf) + '.' + $detail)
 
   Record-Failure ('claude exited non-zero: ' + $code) $record
+  Publish-RunLog $branch
   exit $code
 }
 
+Publish-RunLog $branch
 Write-Log 'done'
 exit 0

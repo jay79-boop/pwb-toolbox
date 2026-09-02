@@ -8,7 +8,8 @@ playbook.md        standing instructions, incl. guardrails it may not edit
 jobs/*.md          one file per job: what that run is for
 runlog.py          the memory: append a record, ask questions of the records
 runs.jsonl         the records themselves, committed on purpose
-run_job.ps1        launcher the scheduled tasks call
+run_job.ps1        launcher the scheduled tasks call; commits and pushes the
+                   record after the agent exits, however it exits
 out/               what the jobs produce (gameplans, Pine reports) - committed
 logs/              raw stdout per run - gitignored, noise
 ```
@@ -23,6 +24,14 @@ playbook to fix what it found and opens a **draft PR**.
 
 So the agent's learning history is `git log -p tools/desk_agent/playbook.md`,
 and undoing a bad lesson is one revert.
+
+The record only counts once it is on GitHub, because the cloud review reads the
+fork and not the owner's disk. The agent commits; **the launcher pushes**, after
+the agent exits and whatever way it exited, then checks its own work with
+`python -m tools.desk_agent.runlog unpushed`. That command is the audit: it
+exits 1 when this machine holds run records that `jay/main` cannot see, and 2
+when it cannot tell. Reasoning in
+`docs/decisions/2026-09-02-the-log-was-committed-and-never-pushed-and-nothing-noticed-for-four-days.md`.
 
 ## Where each job runs, and why
 
@@ -481,6 +490,46 @@ gets by default, so a different machine layout needs no code edit.
 
 The agent could not have done this itself: widening its own access is what the
 guardrail forbids, which is why it filed the request five times instead.
+
+## The log was committed and never pushed
+
+From 2026-08-31 to 09-01 the scheduled jobs did what the playbook asked: each
+appended its record and committed it to the OneDrive checkout's `main`. Four
+records and two notes sat there. GitHub's copy of `runs.jsonl` stopped at the
+08-28 alerts run, so the cloud review — the reader the log exists for — could
+not see a single one of them, and nothing said so for four days. The owner
+found it by hand and pushed the backlog as merge commit `8c822da`.
+
+The playbook's "leave the tree clean" rule said commit and never said push. The
+section above about the review Routine's prompt says that *it* commits and
+pushes, which is true of the Routine in the cloud and was never true of the
+three local jobs; that sentence was read as covering all of them.
+
+The push is now in `run_job.ps1`, not the playbook, and after the agent exits:
+an instruction to the agent covers only the runs the agent completes, while the
+launcher also writes the record for a run that crashed or never started, and
+those need pushing most. It commits anything left in `runs.jsonl` or `out/` by
+naming those two paths — never `git add -A`, the dd6d1d6 trap — merges
+`jay/main` first on `main` so the push is not refused as non-fast-forward
+(aborting on conflict rather than leaving a half-merge), pushes to `jay`, and
+then runs `runlog unpushed` to verify rather than trusting the exit code. A
+`NOT PUSHED` line in the run's log names what went wrong. `.gitattributes`
+gives `runs.jsonl` `merge=union`, so the machine's records and the cloud
+review's records appending to the same file merge instead of conflicting.
+
+**Nothing here executes on Windows before it ships.** The tests read the
+source and convict the previous launcher, which had no push at all; the publish
+step was run end to end under PowerShell 7 on Linux against a scratch fork
+(pushed, merged-then-pushed, committed-then-pushed, union-merged, and refused
+on a deleted log). The first real evidence is the next scheduled run's log
+under `%LOCALAPPDATA%`, which should end with `pushed: jay/main carries the run
+log`, and a `runlog unpushed` from any cloud session afterwards.
+
+**Merging this does not deploy it.** The tasks run the *copy* of `run_job.ps1`
+that `register_desk_agent.ps1` installs under `%LOCALAPPDATA%\pwb-desk-agent`,
+so after `main` is merged into the OneDrive checkout the registration script
+has to be run again to refresh that copy. Until it is, the old launcher runs
+and nothing pushes.
 
 ## A failed run says what it printed
 

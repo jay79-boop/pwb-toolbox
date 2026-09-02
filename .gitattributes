@@ -1,0 +1,8 @@
+# The desk agent's run log is append-only, one JSON record per line, and two
+# checkouts append to it: the scheduled jobs on the owner's machine and the
+# weekly review in the cloud. With the default driver every such pair conflicts
+# at the end of the file, and an unattended launcher has to abort the merge and
+# leave the record unpushed. `union` keeps both sides' lines, which for a log
+# whose lines are independent records is the correct merge, not a shortcut.
+# Order may interleave; nothing reads it positionally.
+tools/desk_agent/runs.jsonl merge=union

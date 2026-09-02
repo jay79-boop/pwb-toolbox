@@ -289,6 +289,7 @@ python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  
 python tools/engagement.py list           # readiness engagements and where each stands
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python -m tools.desk_agent.runlog unpushed  # did its committed log actually reach GitHub?
 python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
 python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
 python tools/desk_watch.py check          # which sessions did the desk not report?
@@ -343,10 +344,12 @@ a fact about the corpus. `convert` is contracted never to raise.
 `tools/desk_agent/` is a Claude Code agent that runs on a schedule and revises its
 own playbook. Two things are deliberate and both look like oversights:
 
-- **The run log is committed.** `runs.jsonl` is tracked because it is the only
-  part of the agent a cloud session can see, and `git log` over it is the audit
-  trail. Raw stdout under `logs/` is ignored — noise, and it can carry chart
-  detail.
+- **The run log is committed, and the launcher pushes it.** `runs.jsonl` is
+  tracked because it is the only part of the agent a cloud session can see, and
+  `git log` over it is the audit trail. Raw stdout under `logs/` is ignored —
+  noise, and it can carry chart detail. Committed is not pushed: four days of
+  records once sat on the OneDrive `main` unseen, so `run_job.ps1` pushes after
+  every run and `runlog unpushed` is the check.
 - **The agent may not edit its own guardrails, its own log, or `runlog.py`.** The
   weekly review rewrites the rest of the playbook freely and opens a draft PR;
   that is the self-improvement loop. But an agent that can loosen its own limits

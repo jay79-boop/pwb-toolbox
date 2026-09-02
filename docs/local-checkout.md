@@ -70,6 +70,12 @@ merge-commit editor from opening mid-paste), and follow it with
 `git push jay main`: those local commits are the only copy of the run log, and a
 cloud session cannot read what was never pushed.
 
+Since 2026-09-02 the launcher does that same fetch, merge and push itself after
+every scheduled run (`tools/desk_agent/run_job.ps1`, `Publish-RunLog`), so the
+OneDrive `main` should stop drifting ahead on its own. `python -m
+tools.desk_agent.runlog unpushed` says whether it has; the plain-merge line
+above stays the right one for a `main` that was left behind anyway.
+
 **Never pin a handed-over command to a feature branch.**
 `.github/workflows/delete-merged-branch.yml` deletes a PR's head branch the
 moment it merges, so a line built around `git fetch jay claude/<slug>` stops

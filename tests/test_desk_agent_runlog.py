@@ -273,3 +273,202 @@ def test_cli_rejects_a_malformed_metric(tmp_path):
                 "candidates",
             ]
         )
+
+
+# ------------------------------------------------------------ pushed? --
+#
+# The log is committed so that a cloud session can read it, and a cloud session
+# reads GitHub. Between 2026-08-31 and 09-01 four records were committed to the
+# OneDrive checkout's main and never pushed; GitHub's copy stopped at 08-28 and
+# nothing said so for four days. `unpushed` is the check that did not exist.
+# Git is mocked throughout: nothing here needs a repository or a network.
+
+import pathlib
+
+from tools.desk_agent.runlog import render_push_report, unpushed
+
+
+def line(job, finished, outcome="failed"):
+    return json.dumps(rec(job=job, outcome=outcome, finished=finished).as_dict())
+
+
+def fake_git(remote_lines, head_lines=None, ahead=0, missing_ref=False):
+    """A stand-in for git_output keyed on the command it is asked to run."""
+    head_lines = remote_lines if head_lines is None else head_lines
+
+    def run(args, cwd=None):
+        cmd = args[0]
+        if cmd == "show":
+            spec = args[1]
+            if spec.startswith("HEAD:"):
+                return "\n".join(head_lines) + "\n"
+            if missing_ref:
+                raise LogError(f"fatal: invalid object name '{spec.split(':')[0]}'.")
+            return "\n".join(remote_lines) + "\n"
+        if cmd == "rev-list":
+            return f"{ahead}\n"
+        if cmd == "rev-parse":
+            raise AssertionError("tests pass a relative log path; toplevel not needed")
+        raise AssertionError(f"unexpected git call: {args}")
+
+    return run
+
+
+@pytest.fixture
+def log(tmp_path, monkeypatch):
+    """A run log at a repo-relative path, so the mock never resolves a toplevel."""
+    monkeypatch.chdir(tmp_path)
+    path = pathlib.Path("tools/desk_agent/runs.jsonl")
+    path.parent.mkdir(parents=True)
+    return path
+
+
+def test_convicts_the_real_four_day_gap(log):
+    # GitHub's copy ended with the 08-28 alerts run; the machine had four more.
+    remote = [line("alerts", "2026-08-28T20:00:00+00:00", "skipped")]
+    local = remote + [
+        line("premarket", "2026-08-31T12:05:23+00:00"),
+        line("journal", "2026-08-31T21:36:25+00:00"),
+        line("premarket", "2026-09-01T12:06:04+00:00"),
+        line("journal", "2026-09-01T21:34:05+00:00"),
+    ]
+    log.write_text("\n".join(local) + "\n", encoding="utf-8")
+
+    report = unpushed(path=log, run=fake_git(remote, head_lines=local, ahead=4))
+
+    assert not report.pushed
+    assert report.commits_ahead == 4
+    assert report.unseen_lines == 4
+    assert report.uncommitted_lines == 0
+    assert [r.finished[:10] for r in report.unseen] == [
+        "2026-08-31",
+        "2026-08-31",
+        "2026-09-01",
+        "2026-09-01",
+    ]
+    text = render_push_report(report)
+    assert "NOT PUSHED" in text
+    assert "oldest: 2026-08-31T12:05:23+00:00  premarket failed" in text
+    assert "newest: 2026-09-01T21:34:05+00:00  journal failed" in text
+
+
+def test_acquits_a_log_the_fork_already_carries(log):
+    lines = [line("premarket", "2026-09-02T12:00:00+00:00", "ok")]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    report = unpushed(path=log, run=fake_git(lines))
+
+    assert report.pushed
+    assert report.unseen == []
+    assert "pushed: jay/main carries every record here." in render_push_report(report)
+
+
+def test_a_record_written_but_not_committed_is_still_unpushed(log):
+    # A commit count of zero is not "pushed": the record the launcher appends
+    # for a crashed run sits in the working tree until something commits it.
+    committed = [line("premarket", "2026-09-02T12:00:00+00:00", "ok")]
+    local = committed + [line("journal", "2026-09-02T21:30:00+00:00")]
+    log.write_text("\n".join(local) + "\n", encoding="utf-8")
+
+    report = unpushed(path=log, run=fake_git(committed, head_lines=committed, ahead=0))
+
+    assert not report.pushed
+    assert report.commits_ahead == 0
+    assert report.unseen_lines == 1
+    assert report.uncommitted_lines == 1
+    assert "not yet committed: 1" in render_push_report(report)
+
+
+def test_being_behind_the_fork_is_reported_but_is_not_unpushed(log):
+    # The cloud review appends its own record to main. A machine that has not
+    # merged it is behind, which is a different fact from having unpushed runs.
+    local = [line("premarket", "2026-09-02T12:00:00+00:00", "ok")]
+    remote = local + [line("review", "2026-09-02T14:00:00+00:00", "ok")]
+    log.write_text("\n".join(local) + "\n", encoding="utf-8")
+
+    report = unpushed(path=log, run=fake_git(remote, head_lines=local))
+
+    assert report.pushed
+    assert report.remote_only_lines == 1
+    assert "behind, not ahead" in render_push_report(report)
+
+
+def test_a_missing_remote_ref_is_could_not_tell_rather_than_clean(log):
+    # A cloud clone has no 'jay'. Reporting that as pushed would turn the one
+    # place the check is meant to run into the one place it always passes.
+    log.write_text(line("premarket", "2026-09-02T12:00:00+00:00") + "\n")
+
+    report = unpushed(path=log, run=fake_git([], missing_ref=True))
+
+    assert report.ref_missing
+    assert not report.pushed
+    assert "could not read jay/main" in render_push_report(report)
+    assert "--remote origin" in render_push_report(report)
+
+
+def test_a_ref_with_no_log_yet_counts_everything_as_unseen(log):
+    log.write_text(line("premarket", "2026-09-02T12:00:00+00:00") + "\n")
+
+    def run(args, cwd=None):
+        if args[0] == "show" and not args[1].startswith("HEAD:"):
+            raise LogError(
+                "fatal: path 'tools/desk_agent/runs.jsonl' does not exist in 'jay/main'"
+            )
+        if args[0] == "show":
+            return ""
+        return "1\n"
+
+    report = unpushed(path=log, run=run)
+    assert not report.ref_missing
+    assert report.unseen_lines == 1
+
+
+def test_the_remote_is_never_a_bare_origin_by_default(log):
+    # 'origin' is upstream in one checkout and the fork in the other, so a
+    # default of origin compares against the wrong project in one of them.
+    log.write_text("")
+    seen = []
+
+    def run(args, cwd=None):
+        seen.append(list(args))
+        if args[0] == "show":
+            return ""
+        return "0\n"
+
+    unpushed(path=log, run=run)
+    assert ["show", "jay/main:tools/desk_agent/runs.jsonl"] in seen
+    assert not any("origin" in " ".join(a) for a in seen)
+
+
+def test_fetch_is_opt_in_and_asks_the_named_remote(log):
+    log.write_text("")
+    seen = []
+
+    def run(args, cwd=None):
+        seen.append(list(args))
+        if args[0] == "show":
+            return ""
+        return "0\n"
+
+    unpushed(path=log, run=run)
+    assert not any(a[0] == "fetch" for a in seen), "no network unless asked"
+    seen.clear()
+    unpushed(path=log, run=run, fetch=True)
+    assert seen[0] == ["fetch", "jay", "main"]
+
+
+def test_cli_unpushed_exit_codes_separate_behind_from_no_idea(log, capsys, monkeypatch):
+    import tools.desk_agent.runlog as runlog
+
+    lines = [line("premarket", "2026-09-02T12:00:00+00:00", "ok")]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(runlog, "git_output", fake_git(lines))
+    assert main(["--log", str(log), "unpushed"]) == 0
+
+    monkeypatch.setattr(runlog, "git_output", fake_git([], head_lines=lines, ahead=1))
+    assert main(["--log", str(log), "unpushed"]) == 1
+    assert "NOT PUSHED" in capsys.readouterr().out
+
+    monkeypatch.setattr(runlog, "git_output", fake_git([], missing_ref=True))
+    assert main(["--log", str(log), "unpushed"]) == 2
