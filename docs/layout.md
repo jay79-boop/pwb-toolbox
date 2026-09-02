@@ -421,6 +421,11 @@ top-level directories and points here for the detail.
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
   traps that otherwise get rediscovered every time),
+  `barehands-phone-camera.md` (running jaredrhod/barehands, the hand-tracked
+  glass board, on a machine with no webcam — the two independent reasons the
+  phone cannot just open the board itself, the virtual-camera route that does
+  work, and the Windows traps in that repo. Same reason as the entry above:
+  unrelated to the library, written down so it is not re-derived),
   `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
   and on which account — the CDP threat model, the two-login rule, and what was
   actually verified about the open-source bridge by reading its source),
