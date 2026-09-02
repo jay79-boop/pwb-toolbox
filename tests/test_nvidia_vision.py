@@ -19,6 +19,7 @@ from tools.nvidia_vision import (
     ImageTooLarge,
     MAX_INLINE_BYTES,
     MissingKey,
+    MODELS_URL,
     NvidiaVisionError,
     VisionClient,
     build_payload,
@@ -67,6 +68,9 @@ class FakeSession:
     def __init__(self, *responses):
         self.queue = list(responses)
         self.calls = []
+
+    def get(self, url, headers=None, stream=None, timeout=None):
+        return self.post(url, headers=headers, stream=stream, timeout=timeout)
 
     def post(self, url, headers=None, json=None, stream=None, timeout=None):
         self.calls.append(
@@ -555,3 +559,51 @@ def test_cli_reports_a_vision_error_without_a_traceback(monkeypatch, capsys):
     monkeypatch.setattr("tools.nvidia_vision._client_from", lambda args: Stub())
     assert main(["ask"]) == 1
     assert "boom" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# the catalog
+# --------------------------------------------------------------------------
+
+
+def test_list_models_returns_sorted_ids():
+    catalog = {"data": [{"id": "b/two"}, {"id": "a/one"}, {"id": ""}]}
+    client = make_client(FakeResponse(payload=catalog))
+    assert client.list_models() == ["a/one", "b/two"]
+    assert client.session.calls[0]["url"] == MODELS_URL
+    assert client.session.calls[0]["headers"]["Authorization"] == f"Bearer {KEY}"
+
+
+def test_list_models_filters_case_insensitively():
+    catalog = {"data": [{"id": "moonshotai/Kimi-K2"}, {"id": "meta/llama"}]}
+    client = make_client(FakeResponse(payload=catalog))
+    assert client.list_models("kimi") == ["moonshotai/Kimi-K2"]
+
+
+def test_list_models_reports_a_non_json_catalog():
+    client = make_client(FakeResponse(text="<html>proxy</html>"))
+    with pytest.raises(NvidiaVisionError) as exc:
+        client.list_models()
+    assert "not JSON" in str(exc.value)
+
+
+def test_list_models_retries_the_transient_statuses_too():
+    client = make_client(
+        FakeResponse(status_code=503, text="busy"),
+        FakeResponse(payload={"data": [{"id": "a/one"}]}),
+    )
+    assert client.list_models() == ["a/one"]
+    assert client.slept == [1.0]
+
+
+def test_cli_models_prints_one_per_line_and_says_when_empty(monkeypatch, capsys):
+    class Stub:
+        def list_models(self, contains=None):
+            return ["a/one", "b/two"] if contains is None else []
+
+    monkeypatch.setattr("tools.nvidia_vision.VisionClient", lambda **k: Stub())
+    assert main(["models"]) == 0
+    assert capsys.readouterr().out.split() == ["a/one", "b/two"]
+
+    assert main(["models", "--filter", "kimi"]) == 0
+    assert "no models matching 'kimi'" in capsys.readouterr().err

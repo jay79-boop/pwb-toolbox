@@ -64,6 +64,10 @@ import requests
 #: The hosted chat-completions endpoint.
 INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 
+#: The catalog listing. ``models`` reads this to answer "does that id exist,
+#: and does it take images?" without spending a completion.
+MODELS_URL = "https://integrate.api.nvidia.com/v1/models"
+
 #: Environment variable holding the API key. Get one at build.nvidia.com.
 ENV_KEY = "NVIDIA_API_KEY"
 
@@ -378,6 +382,7 @@ class VisionClient:
         *,
         session: Any | None = None,
         url: str = INVOKE_URL,
+        models_url: str = MODELS_URL,
         model: str = DEFAULT_MODEL,
         timeout: float = 120.0,
         max_retries: int = 3,
@@ -404,6 +409,7 @@ class VisionClient:
         self.api_key = key
         self.session = session or requests.Session()
         self.url = url
+        self.models_url = models_url
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
@@ -418,17 +424,16 @@ class VisionClient:
             "Content-Type": "application/json",
         }
 
-    def post(self, payload: dict[str, Any]):
-        """POST ``payload``, retrying the transient statuses. Returns the response."""
-        stream = bool(payload.get("stream"))
+    def _send(self, send, url: str, stream: bool = False, **kwargs: Any):
+        """Call ``send``, retrying the transient statuses. Returns the response."""
         last = None
         for attempt in range(self.max_retries + 1):
-            response = self.session.post(
-                self.url,
+            response = send(
+                url,
                 headers=self.headers(stream),
-                json=payload,
                 stream=stream,
                 timeout=self.timeout,
+                **kwargs,
             )
             if response.status_code < 400:
                 return response
@@ -437,8 +442,37 @@ class VisionClient:
                 break
             self._sleep(self.backoff * (2**attempt))
 
-        body = _body_text(last)
-        raise NvidiaVisionError(f"HTTP {last.status_code} from {self.url}: {body}")
+        raise NvidiaVisionError(
+            f"HTTP {last.status_code} from {url}: {_body_text(last)}"
+        )
+
+    def post(self, payload: dict[str, Any]):
+        """POST ``payload`` to the completions endpoint."""
+        return self._send(
+            self.session.post,
+            self.url,
+            stream=bool(payload.get("stream")),
+            json=payload,
+        )
+
+    def list_models(self, contains: str | None = None) -> list[str]:
+        """Every model id the catalog offers, optionally filtered by substring.
+
+        The cheapest answer to "does that id exist" -- it costs no completion,
+        and a name absent here is why a call would come back 400.
+        """
+        response = self._send(self.session.get, self.models_url)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise NvidiaVisionError(
+                f"catalog was not JSON: {_body_text(response)[:400]}"
+            ) from exc
+        ids = [entry.get("id", "") for entry in body.get("data") or []]
+        if contains:
+            needle = contains.lower()
+            ids = [name for name in ids if needle in name.lower()]
+        return sorted(name for name in ids if name)
 
     def ask(
         self,
@@ -619,6 +653,20 @@ def cmd_chart(args) -> int:
     return 0
 
 
+def cmd_models(args) -> int:
+    client = VisionClient(model=DEFAULT_MODEL, max_bytes=MAX_INLINE_BYTES)
+    names = client.list_models(args.filter)
+    if args.json:
+        print(json.dumps(names, indent=2))
+        return 0
+    for name in names:
+        print(name)
+    if not names:
+        where = f" matching {args.filter!r}" if args.filter else ""
+        print(f"no models{where} in the catalog", file=sys.stderr)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -660,6 +708,11 @@ def main(argv=None) -> int:
     chart.add_argument("--prompt", default=CHART_PROMPT)
     chart.add_argument("--keep", default=None, help="path to keep the PNG at")
     chart.set_defaults(func=cmd_chart)
+
+    models = sub.add_parser("models", help="list the catalog: does that id exist?")
+    models.add_argument("--filter", default=None, help="substring to match, e.g. kimi")
+    models.add_argument("--json", action="store_true")
+    models.set_defaults(func=cmd_models)
 
     args = parser.parse_args(argv)
     try:

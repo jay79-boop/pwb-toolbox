@@ -148,7 +148,8 @@ top-level directories and points here for the detail.
   stream is SSE with the model's reasoning on a separate delta key from its
   answer. `docs/nvidia-vision.md` has all four, plus the two things about the
   API that were not verifiable when it was written and are stated as open
-  rather than assumed
+  rather than assumed. `models --filter kimi` lists the catalog, which is how
+  the first of those two gets settled without spending a completion
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently

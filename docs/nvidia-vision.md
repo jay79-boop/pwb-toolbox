@@ -7,6 +7,7 @@ takes a local file, an `http(s)` URL, or a chart it renders itself off bar data.
     python tools/nvidia_vision.py ask chart.png --prompt "What is in this image?"
     python tools/nvidia_vision.py ask https://example.com/x.jpg --stream
     python tools/nvidia_vision.py chart NQ=F --keep nq.png
+    python tools/nvidia_vision.py models --filter kimi
 
 The key comes from `NVIDIA_API_KEY` in the environment (`.env.example` lists
 it). Get one at <https://build.nvidia.com/>.
@@ -54,8 +55,18 @@ images.** It is the model in the snippet this was built from and it is the
 default, but it was never called. Every NVIDIA host is blocked from Claude Code
 on the web by the environment's network policy — `integrate.api.nvidia.com`,
 `build.nvidia.com` and `docs.api.nvidia.com` all answer 403 at the proxy — so
-the catalog could not be listed. `--model` overrides it; a wrong id comes back
-as a 400 with the API's own message, which the CLI prints.
+the catalog could not be listed from here.
+
+That is what the `models` subcommand is for, and it is the first thing to run
+with a working key:
+
+    python tools/nvidia_vision.py models --filter kimi
+    python tools/nvidia_vision.py models --filter vision
+
+It reads `/v1/models` and prints the ids, which costs no completion and settles
+the question outright. An id absent from that list is why a call comes back 400.
+`--model` overrides the default, and the 400 carries the API's own message,
+which the CLI prints.
 
 **The 180,000-byte cap.** It is NVIDIA's documented figure for inline assets,
 carried over rather than re-measured, for the same reason.
