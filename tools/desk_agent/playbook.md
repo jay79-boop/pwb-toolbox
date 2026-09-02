@@ -74,8 +74,15 @@ that case, and do not open anything you would not want left open.
 2. **Read the last few run records** for this job so you are not rediscovering
    yesterday's blocker:
    `python -m tools.desk_agent.runlog summary --job <job> --last 5`
-3. **Do the job**, as its file describes.
-4. **Append one run record.** Always. See below.
+3. **Check that the previous record reached GitHub:**
+   `python -m tools.desk_agent.runlog unpushed`
+   Exit 1 means this machine holds runs the fork's `main` cannot see. Carry on
+   with the job, and add `--blocker "run-log-not-pushed"` to this run's record
+   so the review sees it recur. Exit 2 means it could not tell — no `jay`
+   remote, as in a cloud clone — and is not a blocker. Do not push to fix it;
+   see "Leave the tree clean" below for who does.
+4. **Do the job**, as its file describes.
+5. **Append one run record.** Always. See below.
 
 ## Recording the run
 
@@ -123,7 +130,14 @@ Give `--blocker` a short, stable phrase. It gets slugged and counted, so
 - **Write outcomes, not procedures.** The summary should say what is true now,
   not what you did to find out.
 - **Leave the tree clean.** Commit what you changed with a message that says
-  why, or revert it. Never leave a half-edit for the morning.
+  why, or revert it. Never leave a half-edit for the morning. **Do not push.**
+  The launcher (`run_job.ps1`) pushes `main` to the `jay` remote after you exit
+  and verifies it with `runlog unpushed`, so a run that dies before its last
+  line still reaches GitHub. From 2026-08-31 to 09-01 four records were
+  committed here and never pushed, and no cloud session could see them; that
+  is why the push is mechanical rather than an instruction to you. The weekly
+  review is the exception: it runs in the cloud, on a branch, and its job file
+  says how it pushes.
 - **Say when something is dead weight.** If a job has stopped earning its
   place, the review will raise it — but if you notice it mid-run, say so in the
   summary rather than maintaining it in silence.

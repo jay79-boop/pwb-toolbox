@@ -1078,3 +1078,170 @@ def test_no_lookup_names_a_table_the_script_never_defines(path):
         "throws on a method call against $null, and under "
         "$ErrorActionPreference = 'Stop' that ends the run where it stands."
     )
+
+
+# ------------------------------------------ the record has to leave the machine --
+#
+# Between 2026-08-31 and 09-01 four run records and two notes were committed to
+# the OneDrive checkout's main and never pushed. GitHub's copy of runs.jsonl
+# stopped at 08-28, so for four days no cloud session could see a single run --
+# which is the one thing committing the log is for. The playbook said "commit";
+# nothing said "push". The push now lives in the launcher, after the agent
+# exits, so a run that crashes before its last line still reaches GitHub.
+#
+# Same caveat as everything above: CI is Linux and never executes this file, so
+# these read the source. They convict the previous launcher, which had no push
+# at all, and they convict the obvious careless versions of this change.
+
+
+def publish_function():
+    return read(LAUNCHER).split("function Publish-RunLog", 1)[1].split("\n}\n", 1)[0]
+
+
+def test_the_launcher_pushes_after_the_agent_exits():
+    body = code_lines(LAUNCHER)
+    assert "function Publish-RunLog" in body
+    assert re.search(r"git push \$remote \$onBranch", publish_function()), (
+        "the launcher must push; a commit that never leaves the machine is "
+        "invisible to every cloud session"
+    )
+
+
+def test_the_push_names_the_fork_and_never_a_bare_origin():
+    # 'origin' is upstream in the OneDrive checkout and the fork in the other:
+    # a bare origin push is wrong in one of them and fails by succeeding.
+    assert "$remote = 'jay'" in read(LAUNCHER)
+    assert "origin" not in code_lines(LAUNCHER), (
+        "run_job.ps1 names origin in code. Use the 'jay' remote by name; see "
+        "docs/local-checkout.md"
+    )
+
+
+def test_every_exit_path_publishes_first():
+    """The push covers the runs the agent never completed, or it covers nothing.
+
+    Three ways a run ends with a record to publish: the agent finished, the
+    agent exited non-zero and the launcher wrote the record, or Claude Code
+    was never found and the launcher wrote the record. Each has to publish
+    before it exits. The "not present on this branch" exit is deliberately not
+    one of them: that checkout has no desk agent to commit into.
+    """
+    src = read(LAUNCHER)
+
+    not_found = src.split("if (-not $claude) {", 1)[1].split("exit 1", 1)[0]
+    assert "Publish-RunLog $branch" in not_found, "claude-not-found exits unpublished"
+
+    failed = failure_branch()
+    assert "Publish-RunLog $branch" in failed, "the non-zero-exit path is unpublished"
+    assert failed.index("Record-Failure") < failed.index("Publish-RunLog"), (
+        "the failure record must be written before the publish, or the push "
+        "carries the previous run's record and not this one's"
+    )
+
+    tail = src.split("exit $code", 1)[1]
+    assert (
+        "Publish-RunLog $branch" in tail.split("exit 0", 1)[0]
+    ), "the success path exits without publishing"
+
+
+def test_the_launcher_commits_only_the_named_paths_and_never_add_a():
+    # dd6d1d6 committed the deletion of the log through a `git add -A`. The
+    # launcher commits what the agent left behind by naming the two paths that
+    # are its to commit, and nothing else in the tree.
+    body = publish_function()
+    assert "tools/desk_agent/runs.jsonl" in body and "tools/desk_agent/out" in body
+    code = "\n".join(ln for ln in body.splitlines() if not ln.strip().startswith("#"))
+    for bad in ("git add -A", "git add .", "git add --all", "git commit -a"):
+        assert bad not in code, f"{bad!r} would sweep another session's work in"
+    assert "git commit -q -m $message -- $paths" in code
+
+
+def test_a_missing_log_is_never_committed_as_a_deletion():
+    body = publish_function()
+    guard = body.split("$dirty =", 1)[0]
+    assert "runs.jsonl" in guard and "Refusing to commit its deletion" in guard, (
+        "'git add' of a tracked file that is gone stages its removal; the "
+        "launcher must refuse before it stages anything"
+    )
+
+
+def test_main_is_brought_up_to_date_before_the_push_and_a_conflict_is_aborted():
+    """A push from behind is refused, and main is behind after every merged PR.
+
+    Without the fetch-and-merge the push would fail on most days while looking
+    like it ran -- the fix failing by succeeding. And a merge that conflicts
+    must be aborted: an unattended task that leaves a half-merged tree for the
+    morning has made things worse, not better.
+    """
+    body = publish_function()
+    assert (
+        "if ($onBranch -eq 'main')" in body
+    ), "only main is merged; never a feature branch"
+    main_block = body.split("if ($onBranch -eq 'main')", 1)[1].split("# 3.", 1)[0]
+    assert "fetch $remote main" in main_block
+    assert "merge --no-edit ($remote + '/main')" in main_block
+    assert "merge --abort" in main_block
+    assert "-c gc.auto=0" in main_block, (
+        "a fetch that stops to ask about a OneDrive-locked object directory is "
+        "an unanswerable hang from a task with no stdin"
+    )
+    assert main_block.index("merge --abort") < main_block.index(
+        "return"
+    ), "after an aborted merge the function must stop, not push"
+
+
+def test_the_push_is_verified_by_asking_git_not_by_its_exit_code():
+    # register_desk_agent.ps1's header rule, applied here: the printed line is
+    # not evidence, the read-back is. The verification is the same command a
+    # cloud session or the next run uses, so the two can never disagree.
+    body = publish_function()
+    after_push = body.split("git push $remote $onBranch", 1)[1]
+    assert "runlog unpushed --remote $remote --branch $onBranch" in after_push
+    assert "NOT PUSHED" in after_push and "pushed:" in after_push
+
+
+def test_publishing_cannot_take_the_run_down():
+    # Native git writes progress to stderr, and with $ErrorActionPreference =
+    # 'Stop' a redirected stderr line is a terminating error. The record is
+    # already written by the time this runs; a push that throws must not
+    # convert a logged run into a crashed one.
+    body = publish_function()
+    assert "$ErrorActionPreference = 'Continue'" in body
+    assert "} catch {" in body and "could not publish the run log" in body
+
+
+def test_the_playbook_tells_the_agent_the_launcher_pushes():
+    """The agent has a `git push` grant, so the obvious edit is to tell it to push.
+
+    That covers only the runs the agent completes, which is why the push is in
+    the launcher instead -- and the playbook has to say so, or the next review
+    "fixes" the missing instruction and the two pushes race.
+    """
+    playbook = read(REPO / "tools" / "desk_agent" / "playbook.md")
+    assert (
+        "runlog unpushed" in playbook
+    ), "the playbook must tell each run how to check the previous record reached GitHub"
+    assert (
+        "run-log-not-pushed" in playbook
+    ), "and the blocker key to log when it did not"
+    clean = playbook.split("**Leave the tree clean.**", 1)[1].split("\n- ", 1)[0]
+    assert "push" in clean.lower() and "launcher" in clean.lower(), (
+        "the 'leave the tree clean' rule must say who pushes, or a review adds "
+        "an agent-side push and the two race"
+    )
+
+
+def test_the_run_log_merges_by_union():
+    """Two appends to a line-per-record log are not a conflict.
+
+    The scheduled jobs append on the owner's machine and the weekly review
+    appends in the cloud. With the default driver every such pair conflicts at
+    the end of the file, the launcher aborts the merge, and the record stays
+    unpushed -- the exact outcome the launcher's merge step exists to prevent.
+    Exercised against a scratch fork on 2026-09-02: conflict without this line,
+    a clean merge and push with it.
+    """
+    attrs = read(REPO / ".gitattributes")
+    assert re.search(
+        r"^tools/desk_agent/runs\.jsonl\s+merge=union\s*$", attrs, re.MULTILINE
+    ), "tools/desk_agent/runs.jsonl needs merge=union in .gitattributes"
