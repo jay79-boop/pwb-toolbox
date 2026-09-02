@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-02 | [The awareness layer stores observations, not state](2026-09-02-the-awareness-layer-stores-observations-not-state.md) |
 | 2026-09-02 | [Cosmos is not an install, and it does not direct anything](2026-09-02-cosmos-is-not-an-install-and-it-does-not-direct-anything.md) |
 | 2026-09-02 | [The NVIDIA catalog is GPU-shaped, and exactly one skill survived the filter](2026-09-02-the-nvidia-catalog-is-gpu-shaped-and-one-skill-survived.md) |
 | 2026-09-02 | [Analytics for a page that must work with the router unplugged](2026-09-02-analytics-for-a-page-that-must-work-with-the-router-unplugged.md) |

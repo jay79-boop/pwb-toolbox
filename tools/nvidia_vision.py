@@ -19,14 +19,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pwb_toolbox.vision import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from pwb_toolbox.vision import (  # noqa: E402
     DEFAULT_MODEL,
     MAX_INLINE_BYTES,
     Answer,
     NvidiaVisionError,
     VisionClient,
 )
-from pwb_toolbox.vision import telemetry
+from pwb_toolbox.vision import telemetry  # noqa: E402
 
 CHART_PROMPT = (
     "This is a candlestick chart with market structure levels drawn on it. "

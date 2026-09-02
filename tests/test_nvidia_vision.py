@@ -13,6 +13,7 @@ import base64
 import io
 import json
 import os
+import sys
 
 import pytest
 
@@ -662,3 +663,35 @@ def test_cli_models_prints_one_per_line_and_says_when_empty(monkeypatch, capsys)
 
     assert main(["models", "--filter", "kimi"]) == 0
     assert "no models matching 'kimi'" in capsys.readouterr().err
+
+
+def test_cli_runs_as_a_script_without_pythonpath():
+    """``python tools/nvidia_vision.py`` must work with no PYTHONPATH set.
+
+    Every test above imports ``tools.nvidia_vision`` as a module, which pytest
+    makes importable via ``pythonpath = ["."]`` in ``pyproject.toml``. That is
+    not how the tool is actually invoked. Run as a *script*, Python puts
+    ``tools/`` on ``sys.path`` -- not the repository root -- so the
+    ``pwb_toolbox`` import failed with ``ModuleNotFoundError`` for anyone who
+    had not exported ``PYTHONPATH`` by hand. Five other tools under ``tools/``
+    already carried the ``sys.path`` bootstrap; this one did not, and the
+    inconsistency surfaced on the owner's machine as a tool that looked broken.
+
+    Asserting through a subprocess with ``PYTHONPATH`` stripped is the only
+    shape that convicts: an in-process import passes either way.
+    """
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "tools", "nvidia_vision.py"
+    )
+    proc = subprocess.run(
+        [sys.executable, script, "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=os.sep,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "ModuleNotFoundError" not in proc.stderr

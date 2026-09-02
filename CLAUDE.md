@@ -189,7 +189,7 @@ times, so it no longer carries one — just add a bullet):
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk
-  agent, and the operational IB scripts
+  agent, the situational awareness layer, and the operational IB scripts
 - `static/` — single-file browser tools that open from `file://` with no build
   step, plus the shared JS modules they load
 
@@ -292,6 +292,8 @@ python -m tools.desk_agent.runlog summary --last 20  # is the agent actually wor
 python -m tools.desk_agent.runlog unpushed  # did its committed log actually reach GitHub?
 python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
 python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
+python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
+python tools/awareness.py brief --short    # the same, in six lines
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
@@ -374,6 +376,33 @@ so DPAPI secrets and OneDrive paths both fail at run time, unattended. Two
 decision records:
 `docs/decisions/2026-08-29-the-logon-type-is-not-the-bug.md` and
 `docs/decisions/2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md`.
+
+## Situational awareness: observations, never state
+
+`tools/awareness.py` answers the seven questions the owner asked for on
+2026-09-02 — what is happening now, why, what is changing, what is likely next,
+what is connected to it, what deserves attention, what action is safest — and
+the two things that make it legal here look like oversights.
+
+**It stores observations, not state.** "At 14:03 the run log's newest record for
+`journal` was a failure" is true forever; "the current branch is X" is false in
+an hour. Deltas come from diffing a fresh derivation against an append-only
+observation log in `awareness/` (gitignored), so nothing claims to be current
+except at the moment it is asked. That is how it satisfies *The ledger* rule
+below rather than reproducing the dashboard retired on 2026-08-29.
+
+**It assembles evidence and refuses to conclude.** The answers are read inside a
+Claude session, so the reasoner is already present — "why" and "safest action"
+need no model call, and the core stays deterministic and testable. It also
+refuses three more ways: no history is reported as *unanswerable* rather than
+*calm*, nothing is projected without a named rule, and nothing that moves money
+is ever proposed as an action. It names its own blind spots on every run,
+because a domain with no adapter reads exactly like a domain with nothing wrong.
+
+Only the fleet and this repository are wired. `docs/awareness.md` has the
+protocol and the four false alarms its first run produced;
+`docs/decisions/2026-09-02-the-awareness-layer-stores-observations-not-state.md`
+has the reasoning.
 
 ## Backtesting: two things that produced confidently wrong answers
 
