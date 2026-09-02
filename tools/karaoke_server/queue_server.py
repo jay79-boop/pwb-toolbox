@@ -328,8 +328,15 @@ def build(profiles_path=None, join_url=None, title_lookup=None):
     )
 
 
-def lan_address() -> str | None:
-    """The address phones on the same Wi-Fi can actually reach."""
+def _default_route_address() -> str | None:
+    """Whichever interface the OS would send internet traffic out of.
+
+    Alone this is the wrong question, and it answered wrongly on the
+    owner's machine: a VPN was up, so the route to the internet ran
+    through a tunnel at 10.5.0.2 and the QR published an address no
+    phone in the room could resolve. Kept as one candidate among
+    several, never as the answer.
+    """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("192.0.2.1", 80))  # no packets sent; routing only
@@ -338,17 +345,98 @@ def lan_address() -> str | None:
         return None
 
 
+def _host_addresses() -> list[str]:
+    """Every IPv4 this machine answers to, as far as name resolution knows."""
+    found = []
+    for family, _, _, _, sockaddr in _getaddrinfo_safe():
+        if family == socket.AF_INET and sockaddr[0] not in found:
+            found.append(sockaddr[0])
+    return found
+
+
+def _getaddrinfo_safe():
+    try:
+        return socket.getaddrinfo(socket.gethostname(), None)
+    except (OSError, UnicodeError):
+        return []
+
+
+def address_rank(address: str) -> int:
+    """Lower sorts first. How likely is this the Wi-Fi phones are on?
+
+    A venue or a house hands out 192.168.x.x almost without exception,
+    so that wins. 172.16-31 is the next most likely private range. A
+    10.x address is real too, but it is also what every VPN client and
+    container bridge helps itself to, so it sorts last of the private
+    ranges -- the case that actually bit.
+    """
+    parts = address.split(".")
+    try:
+        octets = [int(p) for p in parts]
+    except ValueError:
+        return 90
+    if len(octets) != 4:
+        return 90
+    if octets[0] == 127:
+        return 99  # loopback: reaches nothing but this machine
+    if octets[0] == 169 and octets[1] == 254:
+        return 98  # link-local: the adapter never got an address
+    if octets[0] == 192 and octets[1] == 168:
+        return 0
+    if octets[0] == 172 and 16 <= octets[1] <= 31:
+        return 1
+    if octets[0] == 10:
+        return 2
+    return 50  # a public address: unusual here, but it is reachable
+
+
+def lan_addresses() -> list[str]:
+    """Every address a phone might reach this machine on, best guess first.
+
+    Ranked rather than chosen, because no rule gets this right on every
+    machine: the list is printed so a wrong guess costs the owner one
+    glance instead of a support round trip.
+    """
+    found = []
+    for address in [_default_route_address()] + _host_addresses():
+        if address and address not in found:
+            found.append(address)
+    return sorted(found, key=lambda a: (address_rank(a), a))
+
+
+def lan_address() -> str | None:
+    """The single best guess at the address phones can reach."""
+    ranked = lan_addresses()
+    return ranked[0] if ranked else None
+
+
 def serve(host="0.0.0.0", port=8772, profiles_path=None):
     profiles_path = profiles_path or os.environ.get(
         "KARAOKE_PROFILES", "karaoke-profiles.json"
     )
-    lan = lan_address()
-    shown = lan or ("localhost" if host in ("0.0.0.0", "") else host)
+    bound = host not in ("0.0.0.0", "")
+    ranked = lan_addresses()
+    shown = host if bound else (ranked[0] if ranked else "localhost")
     httpd = ThreadingHTTPServer(
         (host, port), build(profiles_path, f"http://{shown}:{port}/")
     )
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
+    others = [a for a in ranked if a != shown]
+    if others and not bound:
+        # The guess is a guess. A machine with a VPN up, a container
+        # bridge, or two network cards has several, and only one of them
+        # is the Wi-Fi the phones are on -- so print them all rather than
+        # make anyone go and ask the operating system.
+        print("")
+        print("If phones cannot reach that address, this machine also answers to:")
+        for address in others:
+            print(f"    http://{address}:{port}/screen")
+        print(
+            f"Pick the one starting 192.168 if there is one, then restart with "
+            f"--host <that address> so the QR publishes it."
+        )
+        print("")
     print(
         "If phones cannot connect: allow this app through the firewall for "
         "BOTH private and public networks (venue Wi-Fi usually counts as public)."
