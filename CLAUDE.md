@@ -143,6 +143,15 @@ times, so it no longer carries one — just add a bullet):
   **Append to it; never start a second one.** Read it with the Artifact tool
   (`action: "read"`, that URL), add your items to the state JSON in
   `<script id="app-state">`, and republish with `url` set to that same address.
+
+  **Read it before opening a pull request, not only when appending.** It is the
+  one place every session writes, so it is the only channel through which a
+  session can see what another is doing. On 2026-09-02 that read found two
+  sessions had built the same NVIDIA vision client six minutes apart — thirty
+  seconds after the duplicate PR was opened rather than before it. There is no
+  test behind this rule and there cannot be; it is recorded because it has
+  fired once, on the incident it was written for:
+  `docs/decisions/2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md`.
   Items already ticked stay ticked. An item raised weeks ago staying visibly
   open is the entire point — a fresh list every session is what they asked us to
   stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
