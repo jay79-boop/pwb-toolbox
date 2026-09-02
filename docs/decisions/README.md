@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-02 | [Analytics for a page that must work with the router unplugged](2026-09-02-analytics-for-a-page-that-must-work-with-the-router-unplugged.md) |
 | 2026-09-02 | [The log was committed and never pushed, and nothing noticed for four days](2026-09-02-the-log-was-committed-and-never-pushed-and-nothing-noticed-for-four-days.md) |
 | 2026-09-02 | [One paste, two sessions, and the ledger caught it thirty seconds late](2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md) |
 | 2026-08-30 | [Two sessions fixed the same defect three minutes apart](2026-08-30-two-sessions-fixed-the-same-defect-three-minutes-apart.md) |

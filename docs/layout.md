@@ -152,7 +152,9 @@ top-level directories and points here for the detail.
   the first of those two gets settled without spending a completion. The client
   itself is `pwb_toolbox/vision/`, in the shipped package so anything can import
   it; only the command line lives here, because `chart` reaches for
-  `desk_levels` and the package does not depend on the desk
+  `desk_levels` and the package does not depend on the desk. `pwb_toolbox/vision/telemetry.py`
+  reports each call to Amplitude Agent Analytics when `AMPLITUDE_AI_API_KEY`
+  is set, and says so once on stderr when it is not
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently

@@ -138,3 +138,28 @@ tests calibrate their caps off the image under test rather than hard-coding a
 round number — a gradient PNG compresses so well that a plausible-looking
 constant silently stopped testing anything, which is how the first cut of two of
 them passed while asserting nothing.
+
+## Every call is an Amplitude agent session, when there is a key
+
+`pwb_toolbox/vision/telemetry.py` reports each `ask` and `chart` run to
+Amplitude Agent Analytics: the prompt as the user message, the answer as the AI
+response with the token counts and latency NVIDIA returned, and a session end.
+Amplitude's `amplitude-ai` SDK has no wrapper for NVIDIA's endpoint, so this is
+the manual route its instructions prescribe for an OpenAI-compatible proxy.
+
+The key is `AMPLITUDE_AI_API_KEY`, read from the process environment exactly
+like `NVIDIA_API_KEY`. Unset, the CLI prints one warning to stderr and runs
+untracked; nothing else changes. `AMPLITUDE_USER_ID` names whose sessions they
+are (default `desk-<login>`; Amplitude rejects ids under five characters).
+
+Cost is reported as `0` on purpose. NVIDIA's hosted models are not in the
+pricing table the SDK consults, and a missing cost fails Amplitude's data
+quality gate silently; zero is the SDK's documented suppression value.
+
+`tests/test_amplitude_verify.py` runs the whole path against the SDK's own
+`MockAmplitudeAI`: the agent id, a closed session per call, the seven fields
+Amplitude's quality gate checks on every response, the error path, and the
+missing-key warning. `amplitude-ai-doctor` reports `provider_dependency` here
+because no provider wrapper is installed; that is the expected reading for
+manual tracking and not a failure.
+

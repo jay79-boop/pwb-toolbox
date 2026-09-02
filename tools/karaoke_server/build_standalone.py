@@ -25,11 +25,19 @@ imports the built artifact and runs a night through it.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+try:
+    from .queue_server import VENDOR_FILES
+except ImportError:  # run as a script: python tools/karaoke_server/build_standalone.py
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.karaoke_server.queue_server import VENDOR_FILES
 
 PKG = Path(__file__).resolve().parent
 REPO_ROOT = PKG.parents[1]
 PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
+VENDOR = REPO_ROOT / "static" / "vendor"
 MODULES = ("rotation.py", "room.py", "queue_server.py")
 
 HEADER = '''"""karaoke-os: a random-but-fair karaoke queue for one room. One file.
@@ -158,6 +166,11 @@ def build() -> str:
     page = PAGE.read_text(encoding="utf-8")
     parts.append("\n\n# ==== the page, embedded ==============================\n\n")
     parts.append("EMBEDDED_PAGE = " + repr(page) + "\n")
+    vendor = {
+        name: (VENDOR / name).read_text(encoding="utf-8") for name in VENDOR_FILES
+    }
+    parts.append("\n# ==== scripts the page loads from the server, embedded ====\n\n")
+    parts.append("EMBEDDED_VENDOR = " + repr(vendor) + "\n")
     parts.append(FOOTER)
     return "".join(parts)
 

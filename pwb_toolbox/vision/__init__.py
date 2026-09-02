@@ -19,6 +19,9 @@ shrink ladder that has to stay on PNG or chart text smears, and a stream whose
 reasoning arrives on a different delta key from its answer.
 
 ``tools/nvidia_vision.py`` is the command line over this.
+
+:mod:`pwb_toolbox.vision.telemetry` reports each call to Amplitude Agent
+Analytics when ``AMPLITUDE_AI_API_KEY`` is set, and says so once when it is not.
 """
 
 from .nvidia import (
