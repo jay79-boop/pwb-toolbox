@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "aiq-research": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/aiq-research/SKILL.md",
+      "computedHash": "fd2e99f928f13fc462d1eb9e22145804448c1695088dfdb1ce3d5e7c2493e918"
+    }
+  }
+}
