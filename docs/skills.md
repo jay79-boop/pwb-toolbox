@@ -143,3 +143,26 @@ Three things about the install are deliberate:
   nobody here wrote. Read the failure as a review prompt for the new upstream
   version, not as something to patch locally — a local edit to the skill is
   reverted by the next update without a word.
+
+## The second NVIDIA install, and the 349 that were refused
+
+Installed 2026-09-02, same route and same `--copy` reasoning as above:
+
+```bash
+npx skills add NVIDIA/skills --skill cuopt-numerical-optimization-formulation --copy
+```
+
+Concepts only — LP vs MILP vs QP, when duals and reduced costs exist, and the
+modelling patterns. No API, nothing to install, no network at fire time, and no
+GPU. Unlike `aiq-research` it is expected to fire: framing an allocation under
+constraints is what a ladder or a position-sizing question already is.
+
+**The refusal is the more useful half of that decision.**
+`portfolio-optimization` is the catalogue's obvious fit for this repo and was
+rejected: it hard-requires the cuOpt GPU solver, forbids any CPU fallback in
+its own words, and cuOpt has no hosted path — so on a machine with no GPU it
+would fire on portfolio questions and then decline to answer them. An
+`NVIDIA_API_KEY` does not substitute for a card.
+
+Reasoning, the sweep that produced it, and the four other near-misses:
+`docs/decisions/2026-09-02-the-nvidia-catalog-is-gpu-shaped-and-one-skill-survived.md`.
