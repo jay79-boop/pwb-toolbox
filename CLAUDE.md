@@ -452,6 +452,8 @@ so always spell the OneDrive path out rather than assuming the working directory
   line.** Both fail by succeeding. Write
   `git fetch jay <branch>; git merge --ff-only jay/<branch>` as one line, and end
   it with a `Test-Path` on a file the new commit adds so success is visible.
+  For `main` itself write `git merge --no-edit jay/main`, never `--ff-only`: the
+  OneDrive `main` carries unpushed desk-agent commits and cannot fast-forward.
 - **Do not read staleness out of an ahead/behind count.** It compares two refs,
   not two working trees, and means nothing when the refs are a feature branch and
   someone else's `main`. Check `git log` and the actual files.
