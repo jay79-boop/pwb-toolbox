@@ -288,6 +288,15 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
+- `tools/install_global_instructions.py` — writes `docs/global-instructions.md`,
+  the owner's cross-project working rules, into the user-level `CLAUDE.md`
+  between two marker lines. Only that region is ever replaced, so the Action
+  Ledger rule and any hand-written lines survive a refresh; a lone marker is
+  left as ordinary text rather than guessed at. Idempotent, backs up the file
+  it touches, `--check` and `--diff` report without writing. The source stays
+  in this public fork without the owner's name or city, and a test holds it
+  there. Must run locally, for the same reason as the spend hook
+  (`tests/test_install_global_instructions.py`)
 - `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
   plain markdown. **`--vault` is optional**: Obsidian records every vault it has
   ever opened, with its absolute path, in `obsidian.json` (`%APPDATA%\obsidian`

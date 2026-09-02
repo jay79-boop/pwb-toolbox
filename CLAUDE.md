@@ -236,6 +236,11 @@ time. It has to run **on the machine the sessions run on**: a cloud container's
 `~/.claude` is reclaimed with the container, so a cloud session cannot install it.
 Both hooks share a tier state file, so a pwb-toolbox session warns once, not twice.
 
+The owner's cross-project working rules live in `docs/global-instructions.md`,
+and `tools/install_global_instructions.py` writes them into the same user-level
+`CLAUDE.md` between marker lines, touching nothing outside them. Same constraint:
+local only. Edit the doc here, run the installer there.
+
 By hand:
 
 ```bash
@@ -273,6 +278,7 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_global_instructions.py --check  # are the owner rules in ~/.claude/CLAUDE.md current? (local only)
 python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
