@@ -164,6 +164,48 @@ and the suite drives the real `do_POST` through a socketless handler with
 a fake lookup and a `urlopen` that records any call, so no test ever
 reaches YouTube.
 
+## Walking up to the screen with no phone
+
+Asked for 2026-09-02: *people should also be able to add themselves from
+the queue screen whether they have phone or not.* Until then the only way
+into the draw without a phone was the Host panel, which is behind a button
+and framed as staff-only.
+
+**Sign-up in plain sight.** The side column of `/screen` now carries a
+permanent card — "No phone? No problem / Sign up right here" — with a name,
+an optional song, and one button. It posts to the existing `/api/host/add`,
+parses a pasted YouTube link with the same `youtubeId` helper the phone
+uses, and a blank song leaves the singer exactly where a phone singer sits
+after tapping I'M IN: in the room, still choosing. On success it clears
+itself and names the person back — "You're in, Ada — we'll call you". It is
+markup inside `#sideCol`, which only the screen role ever shows, so the
+phone gets it never and the screen gets it always without a click. **The QR
+box is untouched and stays above it**: a phone is still the better route,
+and this is the way in for everyone else.
+
+**And the arrival control is required, not optional.** A called singer
+confirms they reached the stage by tapping I'M AT THE STAGE, which POSTs
+`/api/here` with the `singer_id` their phone is holding. A walk-up signed
+in at the screen has no phone and therefore no id, so that request can
+never be sent for them. The draw would call them, nobody could answer, the
+clock would run out, and they would be struck out every single time —
+sign-up on its own would have shipped a feature that is worse than not
+having it. So `/api/host/here` and `QueueRoom.host_here` mark **whoever is
+currently called** as arrived, through the same `Rotation.appeared` the
+phone path uses; it refuses with a showable reason when nobody is called or
+when they already appeared, and the phone path is unchanged.
+
+The control is a full-width button **on the stage card**, not in the host
+panel — it is shown only while somebody is called and has not yet appeared,
+and reads "<Name> is at the stage — start the song". The stage card is the
+biggest thing on the screen at the moment it matters, so a host or the
+singer themselves can hit it; a panel behind a Host button is no use to
+someone who has just walked up. `tests/test_karaoke_queue_room.py` pins
+both halves: the room refusals, the end-to-end "a singer who never touched
+a phone gets on stage", the convicting case that they are struck out
+without it, and page-level reads proving the phone role wires neither and
+the sign-up card is not hidden behind the Host button.
+
 ## The address the QR publishes is a guess, so it shows its working
 
 2026-09-02, on the owner's machine: the server printed
