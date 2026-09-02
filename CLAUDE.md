@@ -143,6 +143,15 @@ times, so it no longer carries one — just add a bullet):
   **Append to it; never start a second one.** Read it with the Artifact tool
   (`action: "read"`, that URL), add your items to the state JSON in
   `<script id="app-state">`, and republish with `url` set to that same address.
+
+  **Read it before opening a pull request, not only when appending.** It is the
+  one place every session writes, so it is the only channel through which a
+  session can see what another is doing. On 2026-09-02 that read found two
+  sessions had built the same NVIDIA vision client six minutes apart — thirty
+  seconds after the duplicate PR was opened rather than before it. There is no
+  test behind this rule and there cannot be; it is recorded because it has
+  fired once, on the incident it was written for:
+  `docs/decisions/2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md`.
   Items already ticked stay ticked. An item raised weeks ago staying visibly
   open is the entire point — a fresh list every session is what they asked us to
   stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
@@ -176,7 +185,7 @@ times, so it no longer carries one — just add a bullet):
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`,
-  `performance`, `scraping`, `converting`, `options`, `journal`)
+  `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk
@@ -275,6 +284,7 @@ python tools/engagement.py list           # readiness engagements and where each
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
+python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision

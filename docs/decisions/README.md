@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-02 | [One paste, two sessions, and the ledger caught it thirty seconds late](2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md) |
 | 2026-08-30 | [Two sessions fixed the same defect three minutes apart](2026-08-30-two-sessions-fixed-the-same-defect-three-minutes-apart.md) |
 | 2026-08-30 | [The password prompt asked for a credential that does not exist](2026-08-30-the-password-prompt-asked-for-a-credential-that-does-not-exist.md) |
 | 2026-08-30 | [Needing no desktop is not the same as not needing a sign-in](2026-08-30-needing-no-desktop-is-not-the-same-as-not-needing-a-sign-in.md) |
