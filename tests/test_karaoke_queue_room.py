@@ -302,6 +302,165 @@ class TestHostDesk:
             room.host_end({}, 2.0)
 
 
+class TestTheWalkUpSinger:
+    """Someone who signed up at the screen and never had a phone.
+
+    ``/api/here`` carries a ``singer_id`` only that singer's phone holds,
+    so for a walk-up it can never be sent. Without ``host_here`` the draw
+    calls them, nobody can answer, and the clock strikes them out -- which
+    is why sign-up alone would have shipped a broken feature.
+    """
+
+    def test_a_singer_who_never_touched_a_phone_gets_on_stage(self):
+        room = make_room()
+        added = room.host_add({"name": "Ada", "title": "Sweet Caroline"}, 0.0)
+        assert room.state(1.0)["called"]["singer_id"] == added["singer_id"]
+        out = room.host_here({}, 2.0)
+        assert out["singer_id"] == added["singer_id"] and out["name"] == "Ada"
+        state = room.state(3.0)
+        assert state["singing"]["singer_id"] == added["singer_id"]
+        assert state["singing"]["title"] == "Sweet Caroline"
+        assert state["called"] is None
+        assert state["house_on"] is False
+
+    def test_without_it_the_walk_up_is_struck_out(self):
+        # the convicting case: the same room, nobody able to answer the call
+        room = make_room()
+        room.host_add({"name": "Ada", "title": "Sweet Caroline"}, 0.0)
+        join_and_queue(room, "Zoe", 0.0)  # a second singer, so the call is timed
+        called = room.state(1.0)["called"]
+        assert called["deadline_in_s"] > 0
+        late = called["deadline_in_s"] + 2.0
+        assert room.state(1.0 + late)["called"]["singer_id"] != called["singer_id"]
+
+    def test_it_narrates_and_remembers_like_the_phone_path(self):
+        room = make_room()
+        added = room.host_add({"name": "Ada", "title": "Sweet Caroline"}, 0.0)
+        room.state(1.0)
+        room.host_here({}, 2.0)
+        kinds = [e["kind"] for e in room.state(2.0)["events"]]
+        assert "song_started" in kinds and "house_off" in kinds
+        assert room.rot.singers[added["singer_id"]].walkup_ema is not None
+
+    def test_it_refuses_when_nobody_has_been_called(self):
+        room = make_room()
+        with pytest.raises(RotationError) as err:
+            room.host_here({}, 0.0)
+        assert "called" in str(err.value)
+        assert room.state(1.0)["singing"] is None
+
+    def test_it_refuses_a_second_press(self):
+        # the on-deck case: called during someone else's outro, so the
+        # confirmed singer waits at the stage rather than starting at once
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        room.state(1.0)
+        room.here({"singer_id": ada}, 2.0)
+        room.host_add({"name": "Zoe", "title": "Nine to Five"}, 3.0)
+        end = room.rot.stage.ends_at
+        assert room.state(end - 5.0)["called"]["name"] == "Zoe"
+        assert room.host_here({}, end - 4.0)["name"] == "Zoe"
+        assert room.state(end - 4.0)["called"]["appeared"] is True
+        with pytest.raises(RotationError) as err:
+            room.host_here({}, end - 3.0)
+        assert "already" in str(err.value)
+
+    def test_it_does_not_disturb_the_singer_on_stage(self):
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        room.state(1.0)
+        room.here({"singer_id": ada}, 2.0)  # the phone path, untouched
+        with pytest.raises(RotationError):
+            room.host_here({}, 3.0)
+        assert room.state(3.0)["singing"]["singer_id"] == ada
+
+    def test_the_route_is_wired(self):
+        from tools.karaoke_server.queue_server import POSTS
+
+        assert POSTS["/api/host/here"] == "host_here"
+
+
+class TestTheWalkUpCardIsTheScreensAlone:
+    """Always on the big screen, never on a phone, never behind a button."""
+
+    @pytest.fixture
+    def page(self):
+        from tools.karaoke_server import queue_server
+
+        return queue_server.PAGE.read_text(encoding="utf-8")
+
+    def test_the_sign_up_markup_exists_and_reads_as_an_invitation(self, page):
+        for control in ("walkupCard", "walkupName", "walkupSong", "walkupBtn"):
+            assert page.count('id="%s"' % control) == 1, control
+        assert "No phone? No problem" in page
+        assert "Sign up right here" in page
+        assert "Put me in the draw" in page
+        assert 'id="walkupErr" hidden' in page  # the red line, like hostErr
+
+    def test_the_card_is_not_behind_the_host_button(self, page):
+        # visible the moment the screen opens: no hidden attribute of its
+        # own, and it is a sibling of the QR box rather than a child of the
+        # host panel
+        assert 'id="walkupCard">' in page
+        aside = page[page.index('id="sideCol"') : page.index("</aside>")]
+        assert 'id="walkupCard"' in aside
+        assert aside.index('id="qrBox"') < aside.index('id="walkupCard"')
+        assert aside.index('id="walkupCard"') < aside.index('id="hostPanel"')
+        # nothing ever toggles the card itself
+        assert 'show("walkupCard"' not in page
+
+    def test_the_song_is_optional_and_a_link_is_parsed_like_the_phone(self, page):
+        assert page.count("function youtubeId(") == 1  # still one regex
+        block = page[
+            page.index("// ==== walk-up desk") : page.index("// ==== end walk-up desk")
+        ]
+        assert "youtubeId(raw)" in block
+        assert 'source: vid ? "link" : "title"' in block
+        assert "payload.ref = vid" in block
+        assert "if (raw) { payload.title = raw; }" in block  # blank song allowed
+        assert "You're in, " in block  # the confirmation names them
+
+    def test_the_arrival_button_lives_on_the_stage_card(self, page):
+        stage = page[
+            page.index('id="stageCard"') : page.index(
+                "</section>", page.index('id="stageCard"')
+            )
+        ]
+        assert 'id="stageHereBtn" hidden' in stage
+        assert "is at the stage — start the song" in stage
+        assert 'id="stageHereErr" hidden' in stage
+        # and it is shown only while somebody is called and not yet there
+        assert 'show("stageHereBtn", walking)' in page
+        assert "var walking = !!(state.called && !state.called.appeared);" in page
+
+    def test_only_the_screen_role_wires_it(self, page):
+        script = page[page.index("<script>\n(function") :]
+        start = script.index("// ==== walk-up desk")
+        end = script.index("// ==== end walk-up desk")
+        assert start < end
+        block = script[start:end]
+        assert script.count("wireWalkup(") == 2  # one definition, one call
+        assert "function wireWalkup()" in block
+        assert 'if (ROLE === "screen") walkupRender = wireWalkup();' in block
+        outside = script[:start] + script[end:]
+        for ident in ("walkupBtn", "walkupErr", "walkupNote", "stageHereBtn"):
+            assert ident not in outside, ident
+        # the phone-side render never touches the walk-up desk either
+        phone = script[
+            script.index("function renderPhone") : script.index(
+                "/* ============ SCREEN"
+            )
+        ]
+        assert "walkup" not in phone.lower()
+        assert "stagehere" not in phone.lower()
+
+    def test_the_phone_arrival_path_is_untouched(self, page):
+        assert (
+            '$("hereBtn").onclick = function () { post("/here", {singer_id: singerId}, poll); };'
+            in page
+        )
+
+
 class TestTheHostPanelIsTheScreensAlone:
     """The desk lives on the big screen. A phone must never grow one."""
 

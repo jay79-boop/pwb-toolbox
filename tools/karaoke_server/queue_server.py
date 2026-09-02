@@ -172,6 +172,7 @@ POSTS = {
     "/api/retime": "retime",
     # the host desk on the big screen
     "/api/host/add": "host_add",
+    "/api/host/here": "host_here",
     "/api/host/skip": "host_skip",
     "/api/host/end": "host_end",
 }
