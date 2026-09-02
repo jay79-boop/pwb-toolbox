@@ -75,3 +75,8 @@ watch-state.example.bak
 # mirrored into this repository at all. Ignored rather than merely guarded, so
 # an accidental sync followed by `git add -A` cannot publish it.
 docs/journal/
+dist/
+
+# `npx skills` staging copy. The installed skill is committed under
+# .claude/skills/; this mirror is restorable with `npx skills experimental_install`.
+.agents/

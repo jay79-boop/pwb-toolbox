@@ -143,6 +143,15 @@ times, so it no longer carries one — just add a bullet):
   **Append to it; never start a second one.** Read it with the Artifact tool
   (`action: "read"`, that URL), add your items to the state JSON in
   `<script id="app-state">`, and republish with `url` set to that same address.
+
+  **Read it before opening a pull request, not only when appending.** It is the
+  one place every session writes, so it is the only channel through which a
+  session can see what another is doing. On 2026-09-02 that read found two
+  sessions had built the same NVIDIA vision client six minutes apart — thirty
+  seconds after the duplicate PR was opened rather than before it. There is no
+  test behind this rule and there cannot be; it is recorded because it has
+  fired once, on the incident it was written for:
+  `docs/decisions/2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md`.
   Items already ticked stay ticked. An item raised weeks ago staying visibly
   open is the entire point — a fresh list every session is what they asked us to
   stop doing. Mark anything *you* completed as `"who": "claude"`, `"done": true`
@@ -176,7 +185,7 @@ times, so it no longer carries one — just add a bullet):
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`,
-  `performance`, `scraping`, `converting`, `options`, `journal`)
+  `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk
@@ -227,6 +236,11 @@ time. It has to run **on the machine the sessions run on**: a cloud container's
 `~/.claude` is reclaimed with the container, so a cloud session cannot install it.
 Both hooks share a tier state file, so a pwb-toolbox session warns once, not twice.
 
+The owner's cross-project working rules live in `docs/global-instructions.md`,
+and `tools/install_global_instructions.py` writes them into the same user-level
+`CLAUDE.md` between marker lines, touching nothing outside them. Same constraint:
+local only. Edit the doc here, run the installer there.
+
 By hand:
 
 ```bash
@@ -256,6 +270,7 @@ node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
 node static/process-grammar.test.js  # branch grammar (also run by pytest)
 node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
+node static/karaoke-qr.test.js    # the QR the screen draws (also run by pytest)
 pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
@@ -263,6 +278,7 @@ python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_global_instructions.py --check  # are the owner rules in ~/.claude/CLAUDE.md current? (local only)
 python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
@@ -274,12 +290,14 @@ python tools/engagement.py list           # readiness engagements and where each
 python tools/ai_company.py gates          # can any agent commit money unsupervised?
 python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
 python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
+python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
 python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
 python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
 python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
+python tools/karaoke_server/build_standalone.py  # one-file karaoke_os.py for any other computer
 ```
 
 `docs/layout.md` lists the rest with what each is for.

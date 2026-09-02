@@ -4,7 +4,7 @@ The full inventory of what lives where. `CLAUDE.md` keeps a short map of the
 top-level directories and points here for the detail.
 
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -15,7 +15,9 @@ top-level directories and points here for the detail.
   signal, per-singer memory), `sim.py` (simulated pub nights that judge it),
   and `room.py` + `queue_server.py` serving `static/karaoke-queue.html` — one
   command runs the night: big screen with QR + playback, phones join by scan.
-  Protocol in `docs/karaoke-rotation.md`
+  `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
+  `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
+  release. Protocol in `docs/karaoke-rotation.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
@@ -137,6 +139,20 @@ top-level directories and points here for the detail.
   than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/nvidia_vision.py` — sends an image and a question to a vision model on
+  NVIDIA's hosted API and returns the answer: a local file, an `http(s)` URL, or
+  a desk chart it renders itself through `desk_levels`. Exists because NVIDIA's
+  copy-paste snippet is wrong in four ways that each cost a failed request — the
+  key is a string literal that never expands, an inline image is capped at
+  180 KB, the shrink ladder has to stay on PNG or chart text smears, and a
+  stream is SSE with the model's reasoning on a separate delta key from its
+  answer. `docs/nvidia-vision.md` has all four, plus the two things about the
+  API that were not verifiable when it was written and are stated as open
+  rather than assumed. `models --filter kimi` lists the catalog, which is how
+  the first of those two gets settled without spending a completion. The client
+  itself is `pwb_toolbox/vision/`, in the shipped package so anything can import
+  it; only the command line lives here, because `chart` reaches for
+  `desk_levels` and the package does not depend on the desk
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently
@@ -272,6 +288,15 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
+- `tools/install_global_instructions.py` — writes `docs/global-instructions.md`,
+  the owner's cross-project working rules, into the user-level `CLAUDE.md`
+  between two marker lines. Only that region is ever replaced, so the Action
+  Ledger rule and any hand-written lines survive a refresh; a lone marker is
+  left as ordinary text rather than guessed at. Idempotent, backs up the file
+  it touches, `--check` and `--diff` report without writing. The source stays
+  in this public fork without the owner's name or city, and a test holds it
+  there. Must run locally, for the same reason as the spend hook
+  (`tests/test_install_global_instructions.py`)
 - `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
   plain markdown. **`--vault` is optional**: Obsidian records every vault it has
   ever opened, with its absolute path, in `obsidian.json` (`%APPDATA%\obsidian`

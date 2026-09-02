@@ -107,3 +107,39 @@ hand in the same commit that extracted `process-mapping` from it, six days after
 `uipro init`, and `uipro init` would never have restored it. That mislabel is
 not cosmetic: everything in `VENDORED` is exempt from the description budget, so
 a wrong entry spends always-loaded context that the test then reports as free.
+
+## `aiq-research`, and what `npx skills` leaves behind
+
+Installed on 2026-09-02 by request, from the public NVIDIA catalogue:
+
+```bash
+npx skills add NVIDIA/skills --skill aiq-research --copy
+```
+
+It is a thin stdlib-HTTP client for a **NVIDIA AI-Q Blueprint server**, by
+default at `http://localhost:8000`. Nothing in this repo runs one, so **expect
+it never to fire.** That is the state it was committed in, knowingly — not a
+bug to debug. If a backend never appears, this is the skill retirement rule
+firing on schedule: it is dead weight, and it should go.
+
+Three things about the install are deliberate:
+
+- **`--copy`, not the default symlink.** Without it the installer leaves
+  `.claude/skills/aiq-research` as a symlink into `.agents/`. Git stores that
+  faithfully, and Git for Windows without `core.symlinks` checks it out as a
+  *plain text file containing the target path* — so the skill would work in
+  every cloud session and silently not exist in the owner's local checkout,
+  which is the one that matters. `--copy` gives a real directory on both.
+- **`.agents/` is gitignored.** `--copy` writes the same 88K twice; the
+  `.claude/skills/` copy is the one every tool here reads. `skills-lock.json`
+  is committed, so `npx skills experimental_install` restores the mirror on any
+  machine that wants it.
+- **It is *not* in the `VENDORED` set**, though it would qualify — `npx skills
+  update` really would restore it. Exempting it would hide its description cost
+  and stop `tests/test_skills.py` reading it at all. Left in, an upstream update
+  that bloats the description or names a path we do not have turns CI red
+  *before* the new version is trusted, which is the signal worth having. The
+  cost of that choice is that a future `skills update` can redden CI on prose
+  nobody here wrote. Read the failure as a review prompt for the new upstream
+  version, not as something to patch locally — a local edit to the skill is
+  reverted by the next update without a word.

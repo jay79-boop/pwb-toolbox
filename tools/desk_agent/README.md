@@ -250,6 +250,24 @@ Registering a desktop-free task prompts once for the Windows password
 the PowerShell history in clear text). Press enter, or pass
 `-NoStoredCredential`, and everything registers `Interactive` exactly as before.
 
+**If you sign in with a PIN there may be no account password to type**, and on
+this machine there is not. That is not a dead end and the prompt now says so:
+there are **two complete configurations**, not one plus a compromise.
+
+| | how the session exists when the job fires | needs a password? |
+| --- | --- | --- |
+| **A** | it does not -- the task carries a stored credential | yes |
+| **B** | ARSO recreates it after a restart, then locks the device | **no** |
+
+**B is the one in use here.** The gap it has to close is narrower than it
+looks: the tasks carry `WakeToRun`, so a machine that sleeps overnight while
+signed in -- locked included -- wakes itself and runs the job today. The only
+thing that breaks that is a reboot with nobody signing back in, such as an
+update at 03:00. ARSO closes exactly that, and locks the device on the way in.
+
+Reasoning in
+`docs/decisions/2026-08-30-the-password-prompt-asked-for-a-credential-that-does-not-exist.md`.
+
 **What is still needed for the jobs that do drive the chart** -- `alerts`,
 currently off, and `pine_loop` on demand. Three things all have to be true, and
 they fail independently:

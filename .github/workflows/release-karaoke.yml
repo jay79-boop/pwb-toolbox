@@ -1,0 +1,85 @@
+# Builds the standalone karaoke OS: karaoke_os.py (any machine with
+# Python 3.10+) and KaraokeQueue.exe (Windows, no Python needed).
+#
+# Manual run (workflow_dispatch): builds, selfchecks, uploads both as
+# run artifacts. Tag push karaoke-v*: additionally attaches them to a
+# DRAFT GitHub release -- the owner publishes it, nothing goes public
+# on its own.
+name: Karaoke release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["karaoke-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  single-file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build karaoke_os.py
+        run: python tools/karaoke_server/build_standalone.py --out dist/karaoke_os.py
+      - name: Selfcheck the artifact
+        run: python dist/karaoke_os.py --selfcheck
+      - name: Selfcheck from a shallow path
+        # a user drops it in C:\karaoke\ or a USB root; parents[2] used to
+        # raise IndexError at import there, and dist/ is too deep to notice
+        run: |
+          sudo mkdir -p /kq && sudo cp dist/karaoke_os.py /kq/karaoke_os.py
+          python /kq/karaoke_os.py --selfcheck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: karaoke_os-py
+          path: dist/karaoke_os.py
+          if-no-files-found: error
+          # a "Re-run all jobs" re-uploads the same name into the same run
+          overwrite: true
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build karaoke_os.py
+        run: python tools/karaoke_server/build_standalone.py --out dist/karaoke_os.py
+      - name: Freeze to KaraokeQueue.exe
+        run: |
+          pip install pyinstaller
+          pyinstaller --onefile --name KaraokeQueue --distpath dist/exe dist/karaoke_os.py
+      - name: Selfcheck the exe
+        run: dist/exe/KaraokeQueue.exe --selfcheck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KaraokeQueue-exe
+          path: dist/exe/KaraokeQueue.exe
+          if-no-files-found: error
+          overwrite: true
+
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/karaoke-v')
+    needs: [single-file, windows-exe]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "Karaoke OS $TAG" \
+              --notes "Standalone karaoke queue. KaraokeQueue.exe: double-click on Windows, no install. karaoke_os.py: python karaoke_os.py on any machine with Python 3.10+. Run it on a machine on the venue's Wi-Fi; the big screen opens itself; phones join by the QR on screen. If phones cannot connect, allow the app through Windows Firewall for BOTH private and public networks - venue Wi-Fi usually counts as public."
+          gh release upload "$TAG" dist/karaoke_os.py dist/KaraokeQueue.exe \
+            --repo "$GITHUB_REPOSITORY" --clobber

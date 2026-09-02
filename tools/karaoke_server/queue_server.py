@@ -20,6 +20,7 @@ import os
 import socket
 import threading
 import time
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -27,8 +28,38 @@ from urllib.parse import parse_qs, urlparse
 from .room import QueueRoom, RotationError
 
 MAX_BODY = 8 * 1024
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
+
+
+def _repo_page() -> Path | None:
+    """The page in the repo checkout, or None when there isn't one.
+
+    This module is concatenated verbatim into the standalone karaoke_os.py,
+    which can legitimately sit at C:\\karaoke\\ or a USB-stick root. A bare
+    ``parents[2]`` raises IndexError there -- at import, before any
+    friendly message or the embedded fallback could run.
+    """
+    here = Path(__file__).resolve()
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "static" / "karaoke-queue.html"
+
+
+PAGE = _repo_page()
+
+# The standalone build (tools/karaoke_server/build_standalone.py) rebinds
+# this to the page's full text, so the single file needs no static/ dir.
+EMBEDDED_PAGE = None
+
+
+def page_source() -> str | None:
+    # embedded first: the standalone must never consult a disk path that
+    # belongs to whatever happens to sit three levels above it
+    if EMBEDDED_PAGE is not None:
+        return EMBEDDED_PAGE
+    if PAGE is not None and PAGE.exists():
+        return PAGE.read_text(encoding="utf-8")
+    return None
+
 
 HEAD = (
     '<!doctype html>\n<html lang="en">\n<head>\n'
@@ -48,10 +79,21 @@ POSTS = {
 }
 
 
-def page_html(role: str, source: str | None = None) -> str:
-    """The queue page as a document, told its role and where the API is."""
-    html = source if source is not None else PAGE.read_text(encoding="utf-8")
+def page_html(role: str, source: str | None = None, join_url: str | None = None) -> str:
+    """The queue page as a document, told its role, the API, and the join URL.
+
+    The join URL is the one the screen turns into a QR code. It comes from
+    here rather than from the browser's ``location.origin`` because only
+    this process knows which address phones can actually reach: a screen
+    opened at localhost would otherwise print a QR every phone in the room
+    fails to resolve, which is the entire product silently broken.
+    """
+    html = source if source is not None else page_source()
     head = HEAD.format(role=role)
+    if join_url:
+        head += '<meta name="karaoke-join" content="%s">\n' % escape(
+            join_url, quote=True
+        )
     marker = "</style>"
     cut = html.find(marker)
     if cut == -1:
@@ -66,6 +108,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "KaraokeQueue/1.0"
     room: QueueRoom = None
     lock: threading.Lock = None
+    join_url: str | None = None
 
     def log_message(self, fmt, *args):
         if os.environ.get("KARAOKE_QUIET"):
@@ -93,11 +136,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = urlparse(self.path)
         if route.path in ("/", "/index.html", "/screen"):
-            if not PAGE.exists():
+            if page_source() is None:
                 self._html(404, "<h1>karaoke-queue.html not found</h1>")
                 return
             role = "screen" if route.path == "/screen" else "phone"
-            self._html(200, page_html(role))
+            self._html(200, page_html(role, join_url=self.join_url))
         elif route.path == "/api/state":
             query = parse_qs(route.query)
             singer_id = query.get("singer_id", [None])[0]
@@ -144,12 +187,16 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, out)
 
 
-def build(profiles_path=None):
+def build(profiles_path=None, join_url=None):
     """A handler class bound to one room -- handy for tests."""
     return type(
         "BoundHandler",
         (Handler,),
-        {"room": QueueRoom(profiles_path), "lock": threading.Lock()},
+        {
+            "room": QueueRoom(profiles_path),
+            "lock": threading.Lock(),
+            "join_url": join_url,
+        },
     )
 
 
@@ -167,11 +214,17 @@ def serve(host="0.0.0.0", port=8772, profiles_path=None):
     profiles_path = profiles_path or os.environ.get(
         "KARAOKE_PROFILES", "karaoke-profiles.json"
     )
-    httpd = ThreadingHTTPServer((host, port), build(profiles_path))
     lan = lan_address()
     shown = lan or ("localhost" if host in ("0.0.0.0", "") else host)
+    httpd = ThreadingHTTPServer(
+        (host, port), build(profiles_path, f"http://{shown}:{port}/")
+    )
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
+    print(
+        "If phones cannot connect: allow this app through the firewall for "
+        "BOTH private and public networks (venue Wi-Fi usually counts as public)."
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

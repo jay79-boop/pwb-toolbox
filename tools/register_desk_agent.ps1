@@ -274,7 +274,19 @@ if ($deskFree.Count -gt 0 -and -not $NoStoredCredential) {
   Write-Host ('These jobs need no desktop and can run while nobody is signed in: ' +
               (($deskFree | ForEach-Object { $_.Job }) -join ', '))
   Write-Host ("Windows stores the password for them as an LSA secret, against " + $TaskUser + ".")
-  Write-Host 'Leave it blank to register them Interactive instead (needs you signed in).'
+  Write-Host ''
+  Write-Host 'IF YOU SIGN IN WITH A PIN there may be no account password at all. A PIN is a'
+  Write-Host 'device-local credential sealed in the TPM, not the account password, and on a'
+  Write-Host 'passwordless setup Windows never created one. That is expected, and it is NOT'
+  Write-Host 'a dead end -- there is a second route that needs no password:'
+  Write-Host ''
+  Write-Host '  Press ENTER here to register these Interactive, then turn on ARSO:'
+  Write-Host '    powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\autologon.ps1'
+  Write-Host ''
+  Write-Host '  ARSO signs you back in after a restart and locks the device immediately, so'
+  Write-Host '  the session these tasks need is recreated without any password existing.'
+  Write-Host '  Interactive + ARSO is a COMPLETE setup, not a half-finished one.'
+  Write-Host ''
   $secure = Read-Host -Prompt ("Windows password for " + $TaskUser) -AsSecureString
   $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
   try {
@@ -477,9 +489,15 @@ foreach ($j in $jobs) {
   } elseif ($desktopless) {
     Write-Host '            GOOD: no desktop needed, and none required. Runs signed in or not.'
   } else {
-    Write-Host '            NOTE: this job needs no desktop, but is registered Interactive,'
-    Write-Host '                  so it still only runs while you are signed in. Re-run this'
-    Write-Host '                  script and supply the password to lift that.'
+    # TWO ways to be finished here, and naming only one of them sent a PIN user
+    # after a password that does not exist. Say both.
+    Write-Host '            OK: this job needs no desktop, but is registered Interactive,'
+    Write-Host '                so a signed-in session has to exist when it fires. Two ways'
+    Write-Host '                to settle that, and either is a complete answer:'
+    Write-Host '                  - give this script the account password, so the task'
+    Write-Host '                    needs no session at all; or'
+    Write-Host '                  - turn on ARSO, so a restart recreates the session.'
+    Write-Host '                    No password needed: tools\autologon.ps1'
   }
   if (-not $swa) {
     Write-Host '            WARNING: a run missed while asleep will not catch up.'
