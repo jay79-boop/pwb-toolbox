@@ -6,6 +6,7 @@ clean and the rule must stay out of the way. No clock and no socket -- time
 is a float and randomness is seeded.
 """
 
+import math
 import random
 
 import pytest
@@ -18,7 +19,9 @@ from tools.karaoke_server.rotation import (
     LEFT,
     NEEDS_SONG,
     NO_SHOW,
+    ON_DECK,
     PRUNED,
+    SINGING,
     SONG_STARTED,
     TIMED_OUT,
     WAITING,
@@ -335,16 +338,19 @@ class TestRefusals:
     def test_a_no_show_gap_stays_covered(self):
         # a called singer who never appears must not leave the music down
         rot = make(seed=1)
-        singer = join_with_song(rot, "Only", duration=120.0)
-        singer.misses = rot.ceiling(1)
+        first = join_with_song(rot, "First", duration=120.0)
+        flake = join_with_song(rot, "Flake")
+        join_with_song(rot, "Backup")
+        first.misses = rot.ceiling(3)
         drain(rot, 0.0)
-        rot.appeared(singer.id, 10.0)
+        rot.appeared(first.id, 10.0)  # sings 10.0 -> 130.0
         assert not rot.house_on
-        drain(rot, 140.0)  # song over, nobody else: music back up
+        flake.misses = rot.ceiling(2)
+        drain(rot, 130.0 - rot.lead_s())  # the flake is called in the outro
+        assert rot.call and rot.call.singer_id == flake.id
+        assert not rot.call.solo  # a backup is in the draw: a timed call
+        drain(rot, 135.0)  # song over, the flake still walking: music back up
         assert rot.house_on
-        rot.set_song(singer.id, "encore", duration_s=120.0, now=150.0)
-        drain(rot, 160.0)  # called again (cooldown waived, solo room)
-        assert rot.house_on  # still just walking up; no singer yet
         events = drain(rot, rot.call.deadline + 1.0)
         assert NO_SHOW in [e.kind for e in events]
         assert rot.house_on  # struck out; the room keeps its music
@@ -359,6 +365,177 @@ class TestRefusals:
         assert NEEDS_SONG in [e.kind for e in events]
         assert singer.song is None  # ineligible until they choose again
         assert drain(rot, 300.0) == []
+
+
+class TestSoloMode:
+    """One singer in the draw is nobody to move on to, so no deadline.
+
+    Found by the owner testing alone on one PC: queue a song, get called
+    at once, miss the walk-up twice, and be told "we called you twice" by
+    a room containing nobody else.
+    """
+
+    def test_a_lone_singer_is_called_solo_and_never_struck_out(self):
+        rot = make(seed=1)
+        solo = join_with_song(rot, "Solo", duration=120.0)
+        events = drain(rot, 0.0)
+        assert [e.kind for e in events] == [CALL]
+        assert events[0].detail["solo"] is True
+        assert events[0].detail["deadline"] is None  # nothing to count down
+        assert rot.call.solo and rot.call.deadline == math.inf
+        # however long the clock runs, the call stands and no strike lands
+        for hours in (1, 6, 48):
+            assert drain(rot, hours * 3600.0) == []
+            assert rot.call is not None and rot.call.singer_id == solo.id
+            assert solo.no_shows == 0 and solo.state == ON_DECK
+        assert rot.next_due(1000.0) is None  # nothing to wake up for
+        # and they sing the moment they appear, at their own pace
+        events = rot.appeared(solo.id, 48 * 3600.0 + 5.0)
+        assert [e.kind for e in events] == [HOUSE_OFF, SONG_STARTED]
+        assert solo.state == SINGING and rot.call is None
+
+    def test_a_second_singer_turns_the_solo_call_into_a_timed_one(self):
+        rot = make(seed=1)
+        solo = join_with_song(rot, "Solo")
+        drain(rot, 0.0)
+        assert rot.call.solo
+        join_with_song(rot, "Second", now=500.0)
+        events = drain(rot, 500.0)
+        assert events == []  # same singer, same call: no second announcement
+        assert rot.call.singer_id == solo.id
+        assert not rot.call.solo
+        assert rot.call.deadline == 500.0 + rot.cfg.grace_base_s  # a fresh clock
+        assert rot.next_due(500.0) == rot.call.deadline
+        # and from here it is an ordinary call: miss it and the draw moves on
+        events = drain(rot, rot.call.deadline + 1.0)
+        kinds = [e.kind for e in events]
+        assert NO_SHOW in kinds and CALL in kinds
+        assert solo.no_shows == 1
+
+    def test_the_conversion_keeps_the_songs_end_floor_during_an_outro(self):
+        rot = make(seed=1, end_slack_s=20.0)
+        first = join_with_song(rot, "First", duration=300.0)
+        first.misses = rot.ceiling(1)
+        drain(rot, 0.0)
+        rot.appeared(first.id, 10.0)  # sings 10.0 -> 310.0
+        second = join_with_song(rot, "Second", now=20.0)
+        outro = 310.0 - rot.lead_s()
+        call = drain(rot, outro)[0]
+        assert call.singer_id == second.id and call.detail["solo"] is True
+        join_with_song(rot, "Third", now=outro + 1.0)
+        drain(rot, outro + 1.0)
+        assert not rot.call.solo
+        assert rot.call.deadline >= 310.0 + 20.0  # never shorter than the outro
+
+    def test_a_room_of_two_never_produces_a_solo_call(self):
+        rot = make(seed=3)
+        a = join_with_song(rot, "A")
+        b = join_with_song(rot, "B")
+        for trial in range(50):
+            a.state = b.state = WAITING
+            a.misses = b.misses = 0
+            rot.call = None
+            event = drain(rot, float(trial * 1000))[0]
+            assert event.detail["solo"] is False
+            assert not rot.call.solo
+            assert rot.call.deadline < math.inf
+
+    def test_next_due_never_returns_inf(self):
+        rot = make(seed=1)
+        solo = join_with_song(rot, "Solo", duration=100.0)
+        drain(rot, 0.0)
+        assert rot.next_due(0.0) is None
+        rot.mark_away(join_with_song(rot, "Idler").id, 5.0)
+        due = rot.next_due(5.0)
+        assert due == 5.0 + rot.cfg.away_prune_s  # the prune, not the call
+        assert math.isfinite(due)
+        assert solo.state == ON_DECK
+
+
+class TestHostSkip:
+    def test_skip_is_a_no_show_now_and_the_draw_moves_on(self):
+        rot = make(seed=4)
+        flake = join_with_song(rot, "Flake")
+        backup = join_with_song(rot, "Backup")
+        flake.misses = rot.ceiling(2)
+        drain(rot, 0.0)
+        assert rot.call.singer_id == flake.id
+        event = rot.skip_call(5.0)
+        assert event.kind == NO_SHOW and event.singer_id == flake.id
+        assert flake.no_shows == 1 and flake.state == WAITING
+        assert rot.call is None
+        backup.misses = rot.ceiling(2)  # so the redraw is not the dice
+        redraw = drain(rot, 5.0)[0]
+        assert redraw.kind == CALL and redraw.singer_id == backup.id
+
+    def test_skipping_a_solo_call_strikes_like_any_other(self):
+        rot = make(seed=4, max_no_shows=2)
+        solo = join_with_song(rot, "Solo")
+        drain(rot, 0.0)
+        rot.skip_call(10.0)
+        assert solo.no_shows == 1
+        drain(rot, 10.0)  # drawn again at once: still the only singer
+        assert rot.call.singer_id == solo.id and rot.call.solo
+        event = rot.skip_call(20.0)
+        assert event.kind == TIMED_OUT and solo.state == AWAY
+
+    def test_skip_refuses_when_there_is_nothing_to_skip(self):
+        rot = make(seed=4)
+        with pytest.raises(RotationError):
+            rot.skip_call(0.0)
+
+    def test_skip_refuses_once_the_singer_is_at_the_stage(self):
+        """Skip is for the walk-up that never came, not for a performance."""
+        rot = make(seed=4)
+        singer = join_with_song(rot, "Ada")
+        drain(rot, 0.0)
+        rot.appeared(singer.id, 5.0)  # on stage now, not called
+        with pytest.raises(RotationError):
+            rot.skip_call(6.0)
+
+    def test_the_skipped_singer_sits_out_the_very_next_draw(self):
+        """A button reading "draw again" must not return the same name.
+
+        The lottery alone did exactly that in 32% of seeded two-singer
+        rooms, which is honest randomness and a broken-looking button.
+        Every seed here has to move the mic, so the assertion is the rule
+        and not one lucky draw.
+        """
+        for seed in range(40):
+            rot = make(seed=seed)
+            join_with_song(rot, "Ada")
+            join_with_song(rot, "Lin")
+            drain(rot, 0.0)
+            skipped = rot.call.singer_id
+            rot.skip_call(5.0)
+            drain(rot, 5.0)
+            assert rot.call.singer_id != skipped, f"seed {seed} handed it back"
+
+    def test_but_the_only_singer_left_is_still_called(self):
+        """Sitting out is a courtesy, never a room with nobody on stage."""
+        rot = make(seed=4)
+        alone = join_with_song(rot, "Alone")
+        drain(rot, 0.0)
+        rot.skip_call(5.0)
+        drain(rot, 5.0)
+        assert rot.call.singer_id == alone.id and rot.call.solo
+
+    def test_sitting_out_lasts_exactly_one_draw(self):
+        """The skipped singer is back in the lottery from the draw after."""
+        rot = make(seed=4)
+        ada = join_with_song(rot, "Ada")
+        lin = join_with_song(rot, "Lin")
+        drain(rot, 0.0)
+        first = rot.call.singer_id
+        rot.skip_call(5.0)
+        drain(rot, 5.0)
+        skipped_second = rot.call.singer_id
+        assert skipped_second != first
+        rot.skip_call(10.0)
+        drain(rot, 10.0)
+        # only two in the room, so the draw after has to come back around
+        assert rot.call.singer_id == first
+        assert {ada.id, lin.id} == {first, skipped_second}
 
 
 class TestSimulatedNights:

@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-02 | [Cosmos is not an install, and it does not direct anything](2026-09-02-cosmos-is-not-an-install-and-it-does-not-direct-anything.md) |
 | 2026-09-02 | [The NVIDIA catalog is GPU-shaped, and exactly one skill survived the filter](2026-09-02-the-nvidia-catalog-is-gpu-shaped-and-one-skill-survived.md) |
 | 2026-09-02 | [Analytics for a page that must work with the router unplugged](2026-09-02-analytics-for-a-page-that-must-work-with-the-router-unplugged.md) |
 | 2026-09-02 | [The log was committed and never pushed, and nothing noticed for four days](2026-09-02-the-log-was-committed-and-never-pushed-and-nothing-noticed-for-four-days.md) |
