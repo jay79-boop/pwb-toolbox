@@ -139,6 +139,16 @@ top-level directories and points here for the detail.
   than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/nvidia_vision.py` — sends an image and a question to a vision model on
+  NVIDIA's hosted API and returns the answer: a local file, an `http(s)` URL, or
+  a desk chart it renders itself through `desk_levels`. Exists because NVIDIA's
+  copy-paste snippet is wrong in four ways that each cost a failed request — the
+  key is a string literal that never expands, an inline image is capped at
+  180 KB, the shrink ladder has to stay on PNG or chart text smears, and a
+  stream is SSE with the model's reasoning on a separate delta key from its
+  answer. `docs/nvidia-vision.md` has all four, plus the two things about the
+  API that were not verifiable when it was written and are stated as open
+  rather than assumed
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently
