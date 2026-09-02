@@ -175,3 +175,443 @@ class TestPageWrapper:
         doc = page_html("phone")
         assert "<title>Karaoke Queue</title>" in doc
         assert 'id="youreUp"' in doc and 'id="stageCard"' in doc
+
+
+# ---------- what testing alone on one PC found (2026-09-02) ----------
+
+
+class TestSoloInTheState:
+    def test_a_lone_singer_sees_solo_and_no_countdown(self):
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        state = room.state(1.0, singer_id=ada)
+        assert state["called"]["solo"] is True
+        assert state["called"]["deadline_in_s"] is None  # never inf: it is JSON
+        assert state["you"]["solo"] is True
+        json.dumps(state)  # the whole poll still serialises
+        state = room.state(3600.0, singer_id=ada)  # an hour later, still up
+        assert state["you"]["called"] is True and state["you"]["state"] == "on_deck"
+
+    def test_a_second_singer_puts_the_clock_on_the_call(self):
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        room.state(1.0)
+        zoe = join_and_queue(room, "Zoe", now=30.0)
+        state = room.state(31.0, singer_id=ada)
+        assert state["called"]["singer_id"] == ada  # still Ada's call
+        assert state["called"]["solo"] is False
+        assert state["you"]["solo"] is False
+        assert state["called"]["deadline_in_s"] > 0
+        assert room.state(31.0, singer_id=zoe)["you"]["solo"] is False
+
+
+class TestHostDesk:
+    def test_add_joins_and_queues_in_one_go(self):
+        room = make_room()
+        out = room.host_add({"name": "Lin", "title": "Nine to Five"}, 0.0)
+        assert out["name"] == "Lin" and out["title"] == "Nine to Five"
+        state = room.state(1.0, singer_id=out["singer_id"])
+        assert state["called"]["name"] == "Lin"  # alone, so called at once
+        assert state["you"]["song"] == "Nine to Five"
+
+    def test_add_without_a_song_leaves_them_choosing(self):
+        room = make_room()
+        out = room.host_add({"name": "Lin"}, 0.0)
+        assert out["title"] is None
+        state = room.state(1.0, singer_id=out["singer_id"])
+        assert state["called"] is None
+        assert state["you"]["needs_song"] is True
+        assert room.host_add({"name": "Mo", "title": "   "}, 0.0)["title"] is None
+
+    def test_add_carries_a_link_the_way_the_phone_does(self):
+        room = make_room()
+        out = room.host_add(
+            {
+                "name": "Lin",
+                "title": "https://youtu.be/dQw4w9WgXcQ",
+                "source": "link",
+                "ref": "dQw4w9WgXcQ",
+            },
+            0.0,
+        )
+        called = room.state(1.0, singer_id=out["singer_id"])["called"]
+        assert called["source"] == "link" and called["ref"] == "dQw4w9WgXcQ"
+
+    def test_add_refuses_a_blank_name(self):
+        room = make_room()
+        with pytest.raises(RotationError):
+            room.host_add({"name": "   ", "title": "x"}, 0.0)
+        with pytest.raises(RotationError):
+            room.host_add({}, 0.0)
+        assert room.rot.singers == {}
+
+    def test_a_bad_song_refuses_the_whole_add(self):
+        room = make_room()
+        with pytest.raises(RotationError):
+            room.host_add({"name": "Lin", "title": "x", "duration_s": 4}, 0.0)
+        assert all(s.state == "left" for s in room.rot.singers.values())
+        assert room.state(1.0)["waiting"] == []
+
+    def test_skip_strikes_the_called_singer_and_redraws(self):
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        zoe = join_and_queue(room, "Zoe")
+        up = room.state(1.0)["called"]["singer_id"]
+        other = zoe if up == ada else ada
+        room.rot.singers[other].misses = room.rot.ceiling(2)  # settle the redraw
+        out = room.host_skip({}, 2.0)
+        assert out["skipped"] == up
+        state = room.state(2.0)
+        assert state["called"]["singer_id"] == other  # redrawn in the same call
+        assert room.rot.singers[up].no_shows == 1
+        kinds = [e["kind"] for e in state["events"]]
+        assert "no_show" in kinds and kinds.count("call") == 2
+
+    def test_skip_refuses_with_no_call_or_a_singer_already_there(self):
+        room = make_room()
+        with pytest.raises(RotationError):
+            room.host_skip({}, 0.0)
+        ada = join_and_queue(room, "Ada")
+        room.state(1.0)
+        room.here({"singer_id": ada}, 2.0)
+        with pytest.raises(RotationError):
+            room.host_skip({}, 3.0)  # on stage, not on the way
+        assert room.state(3.0)["singing"]["singer_id"] == ada
+
+    def test_end_finishes_the_song_now(self):
+        room = make_room()
+        ada = join_and_queue(room, "Ada")
+        room.state(1.0)
+        room.here({"singer_id": ada}, 2.0)
+        assert room.state(10.0)["singing"] is not None
+        out = room.host_end({}, 10.0)
+        assert out["ended"] == ada
+        state = room.state(10.0, singer_id=ada)
+        assert state["singing"] is None
+        assert state["you"]["needs_song"] is True
+        assert state["house_on"] is True
+        assert room.rot.singers[ada].songs_sung == 1
+
+    def test_end_refuses_when_nobody_is_on_stage(self):
+        room = make_room()
+        with pytest.raises(RotationError):
+            room.host_end({}, 0.0)
+        join_and_queue(room, "Ada")
+        room.state(1.0)  # called, not yet on stage
+        with pytest.raises(RotationError):
+            room.host_end({}, 2.0)
+
+
+class TestTheHostPanelIsTheScreensAlone:
+    """The desk lives on the big screen. A phone must never grow one."""
+
+    @pytest.fixture
+    def page(self):
+        from tools.karaoke_server import queue_server
+
+        return queue_server.PAGE.read_text(encoding="utf-8")
+
+    def test_the_markup_exists_and_is_hidden_by_default(self, page):
+        assert 'id="hostPanel" hidden' in page
+        assert 'id="hostBtn"' in page and "hidden>Host</button>" in page
+        for control in (
+            "hostName",
+            "hostSong",
+            "hostAddBtn",
+            "hostSkipBtn",
+            "hostEndBtn",
+        ):
+            assert page.count('id="%s"' % control) == 1
+        assert 'id="hostSkipBtn" hidden' in page and 'id="hostEndBtn" hidden' in page
+
+    def test_only_the_screen_role_wires_it(self, page):
+        script = page[page.index("<script>\n(function") :]
+        start, end = script.index("// ==== host desk"), script.index(
+            "// ==== end host desk"
+        )
+        assert start < end
+        block = script[start:end]
+        # one definition, one call site, and the call is gated on the role
+        assert script.count("wireHost(") == 2
+        assert "function wireHost()" in block
+        assert 'if (ROLE === "screen") hostRender = wireHost();' in block
+        # and nothing outside that block ever reveals the panel or its button
+        outside = script[:start] + script[end:]
+        for ident in ("hostPanel", "hostBtn", "hostSkipBtn", "hostEndBtn"):
+            assert ident not in outside, ident
+        # the phone-side render never touches it either
+        phone = script[
+            script.index("function renderPhone") : script.index(
+                "/* ============ SCREEN"
+            )
+        ]
+        assert "host" not in phone.lower()
+
+    def test_the_solo_call_shows_no_countdown_on_the_phone(self, page):
+        assert 'id="upSolo" hidden' in page
+        assert "Only you in the draw so far" in page
+        assert "get to the stage whenever you're ready" in page
+        assert (
+            'show("upCount", !solo); show("upMiss", !solo); show("upSolo", solo);'
+            in page
+        )
+
+    def test_the_host_add_parses_a_link_like_the_phone(self, page):
+        # one regex, two callers: the host desk must not grow its own
+        assert page.count("function youtubeId(") == 1
+        host = page[
+            page.index("// ==== host desk") : page.index("// ==== end host desk")
+        ]
+        assert "youtubeId(raw)" in host
+        assert 'source: vid ? "link" : "title"' in host
+        assert "payload.ref = vid" in host
+
+
+# ---------- the title lookup: the one outbound request, at the edge ----------
+
+
+class FakeResponse:
+    def __init__(self, body, status=200):
+        self._body = body
+        self.status = status
+
+    def read(self, n=-1):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def socketless(handler_cls, path, payload):
+    """Drive do_POST on a handler with no socket under it.
+
+    The handler is built the way http.server would, minus the connection:
+    request bytes come from a BytesIO and the response lands in another.
+    """
+    import io
+
+    handler = handler_cls.__new__(handler_cls)
+    body = json.dumps(payload).encode("utf-8")
+    handler.rfile = io.BytesIO(body)
+    handler.wfile = io.BytesIO()
+    handler.headers = {"Content-Length": str(len(body))}
+    handler.path = path
+    handler.command = "POST"
+    handler.request_version = "HTTP/1.1"
+    handler.requestline = "POST %s HTTP/1.1" % path
+    handler.client_address = ("127.0.0.1", 0)
+    handler.close_connection = True
+    handler.do_POST()
+    raw = handler.wfile.getvalue().decode("utf-8")
+    status = int(raw.split(" ", 2)[1])
+    return status, json.loads(raw.split("\r\n\r\n", 1)[1])
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """Any urlopen in a test is a bug in the test.
+
+    Records rather than raises: the fetcher swallows every exception by
+    design, so a raising stub would be silently forgiven.
+    """
+    import urllib.request
+
+    reached = []
+
+    def refuse(*args, **kwargs):
+        reached.append(args[0] if args else kwargs)
+        raise OSError("a test reached for the network")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setenv("KARAOKE_QUIET", "1")
+    yield reached
+    assert reached == [], "the suite must never reach YouTube"
+
+
+class TestTitleLookup:
+    def test_a_link_becomes_its_title_on_the_phone_and_the_screen(self, no_network):
+        from tools.karaoke_server.queue_server import build
+
+        asked = []
+
+        def lookup(video_id):
+            asked.append(video_id)
+            return "Dolly Parton - 9 to 5"
+
+        handler = build(title_lookup=lookup)
+        status, joined = socketless(handler, "/api/join", {"name": "Ada"})
+        assert status == 200
+        status, out = socketless(
+            handler,
+            "/api/song",
+            {
+                "singer_id": joined["singer_id"],
+                "source": "link",
+                "ref": "UbxUSsFXYo4",
+                "title": "https://www.youtube.com/watch?v=UbxUSsFXYo4",
+            },
+        )
+        assert status == 200 and out["title"] == "Dolly Parton - 9 to 5"
+        state = handler.room.state(1.0, singer_id=joined["singer_id"])
+        assert state["called"]["title"] == "Dolly Parton - 9 to 5"
+        assert state["called"]["ref"] == "UbxUSsFXYo4"  # the player still gets the id
+        assert state["you"]["song"] == "Dolly Parton - 9 to 5"
+        assert asked == ["UbxUSsFXYo4"]
+
+    def test_the_host_desk_gets_the_same_lookup(self, no_network):
+        from tools.karaoke_server.queue_server import build
+
+        handler = build(title_lookup=lambda vid: "Sweet Caroline (Official Audio)")
+        status, out = socketless(
+            handler,
+            "/api/host/add",
+            {
+                "name": "Lin",
+                "source": "link",
+                "ref": "1vrEljMfXYo",
+                "title": "https://youtu.be/1vrEljMfXYo",
+            },
+        )
+        assert status == 200
+        assert out["title"] == "Sweet Caroline (Official Audio)"
+
+    @pytest.mark.parametrize(
+        "lookup",
+        [
+            lambda vid: None,
+            lambda vid: "",
+            lambda vid: (_ for _ in ()).throw(OSError("no uplink")),
+            lambda vid: (_ for _ in ()).throw(TimeoutError()),
+        ],
+    )
+    def test_a_failed_lookup_keeps_the_raw_link(self, no_network, lookup):
+        from tools.karaoke_server.queue_server import build
+
+        handler = build(title_lookup=lookup)
+        _, joined = socketless(handler, "/api/join", {"name": "Ada"})
+        raw = "https://www.youtube.com/watch?v=UbxUSsFXYo4"
+        status, out = socketless(
+            handler,
+            "/api/song",
+            {
+                "singer_id": joined["singer_id"],
+                "source": "link",
+                "ref": "UbxUSsFXYo4",
+                "title": raw,
+            },
+        )
+        assert status == 200 and out["title"] == raw  # exactly as before
+
+    def test_a_typed_title_is_never_looked_up(self, no_network):
+        from tools.karaoke_server.queue_server import build
+
+        asked = []
+        handler = build(title_lookup=lambda vid: asked.append(vid) or "never")
+        _, joined = socketless(handler, "/api/join", {"name": "Ada"})
+        status, out = socketless(
+            handler,
+            "/api/song",
+            {"singer_id": joined["singer_id"], "title": "Hey Jude"},
+        )
+        assert status == 200 and out["title"] == "Hey Jude"
+        # a link with no id is a bare title too (nothing has ticked, so the
+        # song can still be changed)
+        status, out = socketless(
+            handler,
+            "/api/song",
+            {"singer_id": joined["singer_id"], "source": "link", "title": "no ref"},
+        )
+        assert status == 200 and out["title"] == "no ref"
+        assert asked == []
+
+    def test_one_fetch_per_video_for_the_life_of_the_process(self, no_network):
+        from tools.karaoke_server.queue_server import resolve_title
+
+        calls = []
+
+        def lookup(vid):
+            calls.append(vid)
+            return "Title" if vid == "known000000" else None
+
+        cache = {}
+        for _ in range(3):
+            out = resolve_title(
+                {"source": "link", "ref": "known000000", "title": "u"}, lookup, cache
+            )
+            assert out["title"] == "Title"
+            miss = resolve_title(
+                {"source": "link", "ref": "unknown0000", "title": "u"}, lookup, cache
+            )
+            assert (
+                miss["title"] == "u"
+            )  # a miss is remembered too: no 2s stall per poll
+        assert calls == ["known000000", "unknown0000"]
+
+    def test_the_default_is_the_oembed_fetch_and_the_suite_never_runs_it(
+        self, no_network
+    ):
+        from tools.karaoke_server import queue_server
+
+        assert queue_server.Handler.title_lookup is queue_server.youtube_title
+        assert queue_server.build().title_lookup is queue_server.youtube_title
+        # and a room built with a fake never touches the default
+        handler = queue_server.build(title_lookup=lambda vid: "faked")
+        assert handler.title_lookup is not queue_server.youtube_title
+        _, joined = socketless(handler, "/api/join", {"name": "Ada"})
+        _, out = socketless(
+            handler,
+            "/api/song",
+            {
+                "singer_id": joined["singer_id"],
+                "source": "link",
+                "ref": "UbxUSsFXYo4",
+                "title": "u",
+            },
+        )
+        assert out["title"] == "faked"
+
+    def test_the_oembed_parser_reads_a_title_and_shrugs_at_everything_else(
+        self, monkeypatch
+    ):
+        import urllib.request
+
+        from tools.karaoke_server import queue_server
+
+        seen = {}
+
+        def fake_urlopen(url, timeout=None):
+            seen["url"], seen["timeout"] = url, timeout
+            return FakeResponse(
+                b'{"title": "  Dolly Parton - 9 to 5  ", "author_name": "x"}'
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert queue_server.youtube_title("UbxUSsFXYo4") == "Dolly Parton - 9 to 5"
+        assert seen["url"] == (
+            "https://www.youtube.com/oembed?url="
+            "https://www.youtube.com/watch?v=UbxUSsFXYo4&format=json"
+        )
+        assert seen["timeout"] == 2.0
+        # no uplink at all: urlopen raises, the answer is None, nothing escapes
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            lambda url, timeout=None: (_ for _ in ()).throw(OSError("unreachable")),
+        )
+        assert queue_server.youtube_title("UbxUSsFXYo4") is None
+        for body, status in (
+            (b"<html>captive portal</html>", 200),
+            (b'{"no_title": 1}', 200),
+            (b'{"title": ""}', 200),
+            (b'{"title": "x"}', 503),
+            (b"[1, 2]", 200),
+        ):
+            monkeypatch.setattr(
+                urllib.request,
+                "urlopen",
+                lambda url, timeout=None, b=body, s=status: FakeResponse(b, s),
+            )
+            assert queue_server.youtube_title("UbxUSsFXYo4") is None, (body, status)
