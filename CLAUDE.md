@@ -113,6 +113,20 @@ times, so it no longer carries one — just add a bullet):
   explanation on the checkbox's own line, or in prose above the block. **An
   indented block inside a NEEDS YOU item means "this is pasteable" and nothing
   else.**
+- **Switching programs is its own step, with its own success check.** The rule
+  above stops prose being *accidentally* pasteable. This one covers the case
+  where a paste is genuinely meant for something other than PowerShell — a
+  prompt for Claude Code, a field in a browser. On 2026-09-02 a Claude Code
+  prompt was handed over as a fenced block under "Open Claude Code, then paste
+  this", and it went into PowerShell at `C:\Users\Gexio>`, which parsed the
+  parentheses as a subexpression: `Missing argument in parameter list` — the
+  same error as 2026-08-29, from a different cause. The skill's existing rule
+  ("names the program it goes into and how to open it") was followed and was not
+  enough, because **naming the program inside the same step does not move anyone
+  out of the window already in front of them.** So: one step opens the program
+  and states what the new screen looks like ("the prompt is replaced by a
+  bordered box with a `>` at the bottom"), and the *next* step is the paste. The
+  switch has to be something they see happen, not something they remember to do.
 - **Point at the exact place, never at where to look for it.** Asked for
   2026-08-29, after a step read "delete the branch on GitHub" and they replied
   "how I find the branch again? not familiar to working in github. always point
