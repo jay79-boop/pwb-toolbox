@@ -9,7 +9,10 @@ scans the QR the screen shows and lands on the phone page. That is the
 whole setup.
 
 Threading server, so a lock serializes every touch of the room. Real time
-enters here and only here.
+enters here and only here -- and so does the one outbound request the
+whole system makes: a pasted YouTube link is turned into a song title via
+YouTube's oEmbed endpoint, from this module and never from the engine or
+the room, with the raw link kept when that fails for any reason at all.
 """
 
 from __future__ import annotations
@@ -20,14 +23,66 @@ import os
 import socket
 import threading
 import time
+import urllib.request
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from .room import QueueRoom, RotationError
 
 MAX_BODY = 8 * 1024
+
+# A pasted link is shown as the video's title, not the URL. The title comes
+# from YouTube's oEmbed endpoint, which needs no key and no login; the raw
+# link is kept when the answer is anything but a clean one.
+OEMBED_URL = (
+    "https://www.youtube.com/oembed?url="
+    "https://www.youtube.com/watch?v={video_id}&format=json"
+)
+OEMBED_TIMEOUT_S = 2.0
+OEMBED_MAX_BYTES = 64 * 1024
+
+
+def youtube_title(video_id: str, timeout: float = OEMBED_TIMEOUT_S) -> str | None:
+    """The video's title, or None for any failure: offline, slow, odd."""
+    try:
+        url = OEMBED_URL.format(video_id=quote(video_id, safe=""))
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read(OEMBED_MAX_BYTES).decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a venue with no uplink must not care why
+        return None
+    title = data.get("title") if isinstance(data, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        return None
+    return title.strip()
+
+
+def resolve_title(payload: dict, lookup, cache: dict) -> dict:
+    """Swap a link's raw title for the video's, when the lookup can say.
+
+    Only a ``link`` with a ``ref`` is looked up; one fetch per video id for
+    the life of the process, misses included, so a room with no internet
+    pays the timeout once per link rather than once per poll. The payload
+    is returned unchanged in every other case -- the room never learns a
+    lookup happened.
+    """
+    if payload.get("source") != "link":
+        return payload
+    ref = payload.get("ref")
+    if not isinstance(ref, str) or not ref:
+        return payload
+    if ref not in cache:
+        try:
+            title = lookup(ref)
+        except Exception:  # noqa: BLE001 -- same rule: the link is the fallback
+            title = None
+        cache[ref] = title if isinstance(title, str) and title.strip() else None
+    if cache[ref]:
+        payload = dict(payload, title=cache[ref])
+    return payload
 
 
 def _repo_page() -> Path | None:
@@ -115,7 +170,14 @@ POSTS = {
     "/api/back": "back",
     "/api/leave": "leave",
     "/api/retime": "retime",
+    # the host desk on the big screen
+    "/api/host/add": "host_add",
+    "/api/host/skip": "host_skip",
+    "/api/host/end": "host_end",
 }
+
+# the two routes that can carry a pasted link
+TITLED = ("song", "host_add")
 
 
 def page_html(role: str, source: str | None = None, join_url: str | None = None) -> str:
@@ -148,6 +210,9 @@ class Handler(BaseHTTPRequestHandler):
     room: QueueRoom = None
     lock: threading.Lock = None
     join_url: str | None = None
+    # injectable so the suite never reaches YouTube; build() rebinds both
+    title_lookup = staticmethod(youtube_title)
+    title_cache: dict = {}
 
     def log_message(self, fmt, *args):
         if os.environ.get("KARAOKE_QUIET"):
@@ -232,6 +297,9 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             self._json(400, {"error": "body must be a JSON object"})
             return
+        if method in TITLED:
+            # outside the lock: a slow uplink must not stall every poll
+            payload = resolve_title(payload, self.title_lookup, self.title_cache)
         try:
             with self.lock:
                 out = getattr(self.room, method)(payload, time.time())
@@ -241,8 +309,12 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, out)
 
 
-def build(profiles_path=None, join_url=None):
-    """A handler class bound to one room -- handy for tests."""
+def build(profiles_path=None, join_url=None, title_lookup=None):
+    """A handler class bound to one room -- handy for tests.
+
+    ``title_lookup`` replaces the YouTube oEmbed fetch; the suite passes a
+    fake so no test ever reaches the network.
+    """
     return type(
         "BoundHandler",
         (Handler,),
@@ -250,6 +322,8 @@ def build(profiles_path=None, join_url=None):
             "room": QueueRoom(profiles_path),
             "lock": threading.Lock(),
             "join_url": join_url,
+            "title_lookup": staticmethod(title_lookup or youtube_title),
+            "title_cache": {},
         },
     )
 

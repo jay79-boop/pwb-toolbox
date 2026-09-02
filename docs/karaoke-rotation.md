@@ -101,6 +101,69 @@ product silently broken, which is precisely the bug that shipped once
 already. The page falls back to its own origin when no tag is present, and
 says so on screen when that origin is a loopback address.
 
+## Testing alone, and the host desk
+
+Three things the owner hit running the queue alone on one PC, 2026-09-02.
+
+**Solo calls.** With one singer in the room, queueing a song fired the draw
+at once, with a walk-up countdown, and missing it twice produced "we called
+you twice" from a room containing nobody else. Now a draw whose pool holds
+exactly one singer makes a *solo* call: `Call.solo` is set, the deadline is
+`math.inf`, and `_step` never fires a no-show for it. The phone's YOU'RE UP
+shows "Only you in the draw so far — tap when you're ready" instead of the
+clock; the screen says "get to the stage whenever you're ready". The moment
+a second singer becomes eligible the call stays with the same singer but
+converts, on the next tick, into an ordinary timed call with a fresh grace
+(floored at the song's end during an outro); no new CALL event, because
+nobody new was called. A room of two never produces a solo call, and the
+poll carries the flag as `called.solo` / `you.solo` with `deadline_in_s`
+`null` (never `Infinity`, which is not JSON). Note the outro case: a singer
+called while the only other person is *on stage* is solo too — the stage
+is not the draw.
+
+**The host desk.** The manual promised desk sign-in; the page never had it.
+`/screen` now has a small **Host** button in the bottom-right corner (a
+click, not a hover, so a TV remote works) that opens a panel in the side
+column: add a singer (name plus optional song or YouTube link, parsed by
+the same `youtubeId` the phone uses), **skip the call** (shown only while
+someone is called and not yet at the stage; `Rotation.skip_call` is the
+no-show path, so it costs the same strike the clock would), and **end the
+song** (shown only while someone is singing; `retime` with zero
+remaining). Routes are `/api/host/add`, `/api/host/skip`, `/api/host/end`
+and the page wires the panel only when its role is `screen` — the phone
+never grows one, and `tests/test_karaoke_queue_room.py` reads the script to
+prove it.
+
+Two things about skip specifically. **The skipped singer sits out that one
+draw** whenever anyone else is eligible — a strike, as above, but not the
+mic handed straight back. Measured before the rule existed: in a seeded
+room of two, the honest lottery returned the same name 32% of the time,
+which is a correct rotation and a button that looks broken. They are back
+in the pool for the draw after, and a room where they are the only one
+left still calls them.
+
+**And the panel is a convenience, not a permission.** Hiding it from the
+phone role keeps it out of a singer's way; it does not stop anyone on the
+Wi-Fi POSTing to `/api/host/skip` themselves. That is the same trust
+model the rest of the room already runs on — `/api/retime` has always
+been open too — and it is the right one for one room on one LAN for one
+night. A venue that needs the desk to be the only desk needs a secret on
+those three routes, which this does not have.
+
+**A title, not a link.** A pasted YouTube link used to appear as the URL on
+both the phone and the screen. `queue_server.py` — the edge, never the
+engine or the room — now asks YouTube's oEmbed endpoint for the video's
+title (2-second timeout, one fetch per video id for the life of the
+process, misses remembered too so a room with no uplink pays the timeout
+once per link, not once per poll). The fetch runs outside the room lock.
+**It needs internet**; when anything goes wrong — no uplink, a captive
+portal, a slow answer, a non-200, bad JSON — the raw link is kept exactly
+as before, so a venue with no uplink behaves exactly as it did. The
+fetcher is injectable (`build(title_lookup=...)`, `Handler.title_lookup`),
+and the suite drives the real `do_POST` through a socketless handler with
+a fake lookup and a `urlopen` that records any call, so no test ever
+reaches YouTube.
+
 ## What it refuses to claim
 
 - **"Nobody waits more than N draws" is impossible in a deep queue.** One

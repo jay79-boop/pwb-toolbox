@@ -96,6 +96,15 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 #playerWrap iframe,#playerWrap #player{width:100%;height:100%;border:0}
 #ticker{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px}
 #ticker div{font-size:14px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:4px 2px}
+/* ---- the host desk: a corner button, a panel only the screen role wires ---- */
+#hostBtn{position:fixed;right:16px;bottom:16px;z-index:5;font-size:13px;font-weight:600;padding:8px 14px;background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
+#hostBtn[aria-expanded=true]{background:var(--sunken);color:var(--ink)}
+#hostPanel{gap:10px}
+#hostPanel .row{display:flex;gap:8px;flex-wrap:wrap}
+#hostPanel .row button{flex:1}
+#hostSkipBtn{background:var(--call-bg);border-color:var(--call-edge);color:var(--call)}
+#hostEndBtn{background:var(--live-bg);border-color:var(--live-edge);color:var(--live)}
+#hostNote{font-size:13px;color:var(--good);background:var(--good-bg);border-radius:8px;padding:8px 12px;margin:0}
 @media (max-width:760px){
   body[data-role=screen] main{grid-template-columns:1fr}
   #sideCol,#stageCard,#playerWrap,#ticker{grid-column:1}
@@ -170,7 +179,8 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     <p id="upSong"></p>
     <div class="bignum" id="upCount">60</div>
     <button id="hereBtn">I'M AT THE STAGE</button>
-    <p>miss the count and the draw moves on</p>
+    <p id="upMiss">miss the count and the draw moves on</p>
+    <p id="upSolo" hidden>Only you in the draw so far — tap when you're ready</p>
   </div>
 
   <!-- ============ SCREEN ============ -->
@@ -190,7 +200,22 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
         prints instead.</p>
       <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
     </div>
+    <!-- the host desk: markup is inert until the screen role wires it -->
+    <section class="card" id="hostPanel" hidden>
+      <span class="eyebrow">Host desk</span>
+      <label for="hostName">Add a singer</label>
+      <input type="text" id="hostName" maxlength="24" autocomplete="off" placeholder="Name">
+      <input type="text" id="hostSong" autocomplete="off" placeholder="Song or YouTube link (optional)">
+      <button class="primary" id="hostAddBtn">Add</button>
+      <div class="row">
+        <button id="hostSkipBtn" hidden>⏭ Skip the call — draw again</button>
+        <button id="hostEndBtn" hidden>⏹ End the song</button>
+      </div>
+      <p class="err" id="hostErr" hidden></p>
+      <p id="hostNote" hidden></p>
+    </section>
   </aside>
+  <button id="hostBtn" type="button" aria-controls="hostPanel" aria-expanded="false" hidden>Host</button>
   <div id="playerWrap" hidden><div id="player"></div></div>
   <div id="ticker" hidden></div>
 </main>
@@ -253,10 +278,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 
   var DEMO_STATE = {
     singing: {singer_id: "s1", name: "Ada", title: "Twinkle, Twinkle, Little Star", source: "title", ref: null, ends_in_s: 93},
-    called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41},
+    called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41, solo: false},
     house_on: false, waiting: ["Elmore", "Grace", "Jay", "Lin"], waiting_count: 4, seq: 7,
     events: [{seq: 7, kind: "call", name: "Grace", detail: {}}],
-    you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, on_stage: false, needs_song: false}
+    you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, solo: false, on_stage: false, needs_song: false}
   };
 
   function poll() {
@@ -340,9 +365,12 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       show("youreUp", true);
       $("upName").textContent = "YOU'RE UP, " + you.name.toUpperCase();
       $("upSong").textContent = state.called ? state.called.title : "";
-      $("upCount").textContent = fmtClock(state.called ? state.called.deadline_in_s : 0);
+      // a solo call: nobody else in the draw, so no clock and no threat
+      var solo = !!(state.called && state.called.solo);
+      show("upCount", !solo); show("upMiss", !solo); show("upSolo", solo);
+      $("upCount").textContent = fmtClock(state.called ? state.called.deadline_in_s || 0 : 0);
       if (state.called && state.called.appeared) {
-        $("upCount").textContent = "✔"; }
+        $("upCount").textContent = "✔"; show("upCount", true); show("upSolo", false); }
       return;
     }
     if (you.on_stage) { phoneShow("stagePhoneCard"); return; }
@@ -659,8 +687,62 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     house_off: function () { return "♪ house music down"; }
   };
 
+  // ==== host desk ========================================================
+  // Wired only when ROLE is "screen": the phone role never calls wireHost,
+  // so the panel and its button stay hidden markup there. A click, not a
+  // hover, opens it -- a TV remote or a mouse both manage a click.
+  var hostRender = null;
+  function wireHost() {
+    var open = false;
+    show("hostBtn", true);
+    $("hostBtn").onclick = function () {
+      open = !open;
+      show("hostPanel", open);
+      $("hostBtn").setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) $("hostName").focus();
+    };
+    function say(note) {
+      $("hostNote").textContent = note; show("hostNote", !!note);
+    }
+    function oops(err) {
+      $("hostErr").textContent = err; show("hostErr", true); show("hostNote", false);
+    }
+    function ok(note) {
+      show("hostErr", false); say(note); poll();
+    }
+    $("hostAddBtn").onclick = function () {
+      var name = $("hostName").value.trim();
+      var raw = $("hostSong").value.trim();
+      if (!name) { oops("a name is needed"); return; }
+      // the same parse the phone does in submitSong: a link is a link
+      var vid = youtubeId(raw);
+      var payload = {name: name, source: vid ? "link" : "title"};
+      if (raw) { payload.title = raw; }
+      if (vid) { payload.ref = vid; }
+      post("/host/add", payload, function (body) {
+        $("hostName").value = ""; $("hostSong").value = "";
+        ok("✔ added " + body.name + (body.title ? " — " + body.title : " (no song yet)"));
+        $("hostName").focus();
+      }, oops);
+    };
+    $("hostSkipBtn").onclick = function () {
+      post("/host/skip", {}, function () { ok("⏭ skipped — drawing again"); }, oops);
+    };
+    $("hostEndBtn").onclick = function () {
+      post("/host/end", {}, function () { ok("⏹ song ended"); }, oops);
+    };
+    return function () {
+      // the buttons exist only while they apply
+      show("hostSkipBtn", !!(state.called && !state.called.appeared));
+      show("hostEndBtn", !!state.singing);
+    };
+  }
+  if (ROLE === "screen") hostRender = wireHost();
+  // ==== end host desk ====================================================
+
   function renderScreen() {
     show("stageCard", true); show("sideCol", true); show("ticker", true);
+    if (hostRender) hostRender();
     drawQR();
     $("screenCount").textContent = state.waiting_count;
     var badge = $("stageBadge");
@@ -674,7 +756,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       badge.className = "badge call"; badge.textContent = "🎲 the draw has spoken";
       $("stageName").textContent = state.called.name + " — you're up!";
       $("stageSong").textContent = state.called.appeared
-        ? "at the stage ✔" : "get to the stage — " + fmtClock(state.called.deadline_in_s);
+        ? "at the stage ✔"
+        : state.called.solo
+          ? "get to the stage whenever you're ready"
+          : "get to the stage — " + fmtClock(state.called.deadline_in_s);
       show("stageClock", false);
     } else {
       badge.className = "badge wait"; badge.textContent = "♪ house music — the draw continues";

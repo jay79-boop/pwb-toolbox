@@ -143,6 +143,51 @@ class QueueRoom:
         )
         return {"ok": True}
 
+    # ---- the host desk: the screen's corner panel, never the phone ----
+
+    def host_add(self, payload: dict, now: float) -> dict:
+        """Sign a singer in from the desk, with a song when one was typed.
+
+        A blank title means "joined, still choosing" -- the same state a
+        phone sits in after I'M IN. A bad song refuses the whole add rather
+        than leaving a ghost with no song in the room.
+        """
+        singer = self.rot.join(payload.get("name"), now)
+        title = payload.get("title")
+        song_title = None
+        if isinstance(title, str) and title.strip():
+            try:
+                song = self.rot.set_song(
+                    singer.id,
+                    title,
+                    duration_s=payload.get("duration_s"),
+                    source=payload.get("source", "title"),
+                    ref=payload.get("ref"),
+                    now=now,
+                )
+            except RotationError:
+                self.rot.leave(singer.id, now)
+                raise
+            song_title = song.title
+        self._save_profiles()
+        return {"singer_id": singer.id, "name": singer.name, "title": song_title}
+
+    def host_skip(self, payload: dict, now: float) -> dict:
+        """The called singer is not coming: strike them now and redraw."""
+        skipped = self.rot.call.singer_id if self.rot.call else None
+        self._absorb([self.rot.skip_call(now)])
+        self.tick(now)  # the redraw happens in the same request
+        return {"ok": True, "skipped": skipped}
+
+    def host_end(self, payload: dict, now: float) -> dict:
+        """The song is over whatever the player thinks: end it now."""
+        if not self.rot.stage:
+            raise RotationError("nobody is on stage")
+        ended = self.rot.stage.singer_id
+        self.rot.retime_stage(ended, now, 0)
+        self.tick(now)
+        return {"ok": True, "ended": ended}
+
     def state(self, now: float, singer_id: str | None = None, since: int = 0) -> dict:
         self.tick(now)
         rot = self.rot
@@ -167,7 +212,13 @@ class QueueRoom:
                 "source": up.song.source if up.song else "title",
                 "ref": up.song.ref if up.song else None,
                 "appeared": rot.call.appeared_at is not None,
-                "deadline_in_s": round(max(0.0, rot.call.deadline - now), 1),
+                # a solo call has no deadline: None, never inf (JSON)
+                "deadline_in_s": (
+                    None
+                    if rot.call.solo
+                    else round(max(0.0, rot.call.deadline - now), 1)
+                ),
+                "solo": rot.call.solo,
             }
         waiting = sorted(
             s.name
@@ -191,6 +242,9 @@ class QueueRoom:
                 "song": you.song.title if you.song else None,
                 "songs_sung": you.songs_sung,
                 "called": bool(rot.call and rot.call.singer_id == singer_id),
+                "solo": bool(
+                    rot.call and rot.call.singer_id == singer_id and rot.call.solo
+                ),
                 "on_stage": bool(rot.stage and rot.stage.singer_id == singer_id),
                 "needs_song": you.state == "waiting" and you.song is None,
             }
