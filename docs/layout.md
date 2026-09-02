@@ -155,6 +155,19 @@ top-level directories and points here for the detail.
   `desk_levels` and the package does not depend on the desk. `pwb_toolbox/vision/telemetry.py`
   reports each call to Amplitude Agent Analytics when `AMPLITUDE_AI_API_KEY`
   is set, and says so once on stderr when it is not
+- `tools/awareness.py` — the situational awareness layer: what is happening
+  now, why, what is changing, what is likely next, what is connected, what
+  deserves attention, and what action is safest. Assembles evidence from the
+  run log, the scheduler table and git, and **stops there** — the answers are
+  read inside a Claude session, so the reasoner is already present and the tool
+  never editorialises. Stores observations, never state, which is how it
+  satisfies the rule that retired the live dashboard. Refuses four ways: no
+  history is "unanswerable" not "calm", nothing is projected without a named
+  rule, no graph edge is inferred, and nothing that moves money is ever
+  proposed as an action. Names its own blind spots, because an unwired domain
+  reads exactly like a healthy one. `docs/awareness.md`; log in `awareness/`
+  (gitignored). (`tests/test_awareness.py`)
+
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently
