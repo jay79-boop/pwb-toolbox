@@ -142,3 +142,37 @@ hard-coded user path, no `-Host` parameter (`$Host` is an automatic variable),
 the firewall three-state, the busy-port sentence, and `-ExecutionPolicy Bypass`
 in the shortcut. Nothing executes PowerShell -- CI is Linux. The first person
 to run these for real is whoever double-clicks the icon.
+
+## What has actually been tested, and what has not
+
+Both `.ps1` files are written and reviewed on Linux, so be precise about
+what that buys.
+
+**Verified by execution.** `tests/test_karaoke_launcher.py` hands both files
+to a real PowerShell parser (`pwsh`, which GitHub's Ubuntu runners ship), so
+a file the language will not accept fails CI rather than the night. The test
+was confirmed to convict: a planted `if ($true) {` with no closing brace
+fails it and names the line. Beyond parsing, the launcher's own functions
+were pulled out by AST and run against the real world on Linux:
+`Test-PythonCandidate` returns true for a genuine Python 3.11, false for a
+missing command, false for `/bin/echo`, and false for a stand-in for the
+**Microsoft Store stub** (exits 9009, prints nothing) — the case the check
+exists for. `Test-PortBusy` and `Test-PortAnswers` were run against a real
+listener, free and held. `Get-FirewallState` was exercised through all eight
+branches with the Windows cmdlets stubbed: no rule, right rule, wrong port,
+`Any` port, disabled, outbound-only, a Block rule, and the cmdlet throwing —
+each returning the intended `ok` / `missing` / `unknown`.
+
+**Not verified, and the owner is the first to run it.** Parsing under
+PowerShell 7 is not running under Windows PowerShell 5.1. Untested: Python
+discovery against a real Store stub and a real `py -3`; the elevated
+firewall-add path; `WScript.Shell.CreateShortcut` writing the `.lnk`, and
+whether `-ExecutionPolicy Bypass -File` defeats this machine's execution
+policy on double-click; whether `[Environment]::GetFolderPath('Desktop')`
+returns the OneDrive-redirected Desktop; and — the least-proven claim in the
+whole change — **whether closing the window really kills the server.** Ctrl+C
+is covered by the `finally` block; the window-close path rests on console
+attachment semantics that cannot be exercised from a container. If a second
+double-click ever reports "already running" when nothing is, that is the
+guarantee that failed, and the fix is to kill python by hand once and say so.
+

@@ -1,10 +1,13 @@
 """The no-brainer path: a Desktop icon, and nothing else to know.
 
-Nothing in CI runs these two PowerShell files -- CI is Linux and they are
-Windows-only -- so the only thing between an edit and a karaoke night that
-will not start is a reader. Same standing as
-``tests/test_desk_agent_launcher.py``: read the text, assert the things that
-break silently.
+These two PowerShell files are Windows-only and CI is Linux, so almost
+everything here reads the text and asserts the things that break silently --
+same standing as ``tests/test_desk_agent_launcher.py``. The one exception is
+at the foot of this file: GitHub's Ubuntu runners ship ``pwsh``, so the
+scripts are handed to a real PowerShell parser. That catches the failure text
+analysis never can -- a file the language will not accept, which from a
+double-clicked icon is a window that flashes and vanishes with nothing to
+paste back.
 
 Four things went wrong in one sitting on 2026-09-02, each of which read as
 "karaoke is broken" rather than "that command was wrong":
@@ -26,6 +29,8 @@ window that flashes and disappears.
 
 import pathlib
 import re
+import shutil
+import subprocess
 
 import pytest
 
@@ -407,3 +412,42 @@ def test_the_installer_reads_the_shortcut_back(installer):
 def test_the_installer_points_at_the_icon_rather_than_describing_it(installer):
     assert "explorer.exe /select," in installer
     assert "$linkPath" in installer
+
+
+# --------------------------------------------------------------------------
+# the check text analysis cannot make: does PowerShell accept these files
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed")
+@pytest.mark.parametrize("name", ["start_karaoke.ps1", "install_shortcut.ps1"])
+def test_powershell_itself_parses_the_script(name):
+    """Every other assertion here reads the file as text; this one runs a parser.
+
+    A `.ps1` that does not parse emits nothing at all -- from a double-clicked
+    shortcut that is a window that flashes and vanishes, with no error to
+    report and nothing to paste back. The owner would be the first person to
+    find out. GitHub's Ubuntu runners ship pwsh, so this runs in CI; it is
+    skipped rather than failed where PowerShell is absent, because its absence
+    is not a defect in the script.
+
+    Parsing is not execution and pwsh 7 is not Windows PowerShell 5.1, so a
+    pass here does not promise the script *runs* -- only that it is syntax the
+    language accepts, which is the failure that costs a round trip.
+    """
+    path = REPO / "tools" / "karaoke_server" / name
+    script = (
+        "$errors = $null; $tokens = $null; "
+        "$null = [System.Management.Automation.Language.Parser]::ParseFile("
+        f"'{path}', [ref]$tokens, [ref]$errors); "
+        "if ($errors.Count) { foreach ($e in $errors) "
+        "{ Write-Output ('line ' + $e.Extent.StartLineNumber + ': ' + $e.Message) }; exit 1 } "
+        "else { exit 0 }"
+    )
+    done = subprocess.run(
+        [shutil.which("pwsh"), "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert done.returncode == 0, f"{name} does not parse:\n{done.stdout}{done.stderr}"
