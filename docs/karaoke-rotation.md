@@ -164,6 +164,29 @@ and the suite drives the real `do_POST` through a socketless handler with
 a fake lookup and a `urlopen` that records any call, so no test ever
 reaches YouTube.
 
+## The address the QR publishes is a guess, so it shows its working
+
+2026-09-02, on the owner's machine: the server printed
+`http://10.5.0.2:8772` and no phone in the room could reach it. The old
+`lan_address()` opened a UDP socket toward the internet and read back
+which interface the OS chose — a good way to answer "how do I reach the
+internet" and the wrong question entirely. A VPN was up, so the answer
+was the tunnel.
+
+It now collects **every** IPv4 the machine answers to (the default route
+plus `getaddrinfo` on the hostname), ranks them by how likely a venue
+handed them out — `192.168.*` first, then `172.16-31.*`, then `10.*`,
+with loopback and a DHCP-less `169.254.*` last — and publishes the best.
+The ranking puts `10.*` below the other private ranges precisely because
+it is what VPN clients and container bridges help themselves to.
+
+**And it prints the rest.** No rule gets this right on every machine, so
+when there is more than one candidate the console lists the others with
+`--host <address>` to pin one. A wrong guess costs a glance at the
+screen rather than someone going to ask the operating system. Ranking is
+pinned by `TestWhichAddressPhonesCanReach`, including the exact
+`10.5.0.2` / `192.168.1.50` pair that produced the bug.
+
 ## What it refuses to claim
 
 - **"Nobody waits more than N draws" is impossible in a deep queue.** One

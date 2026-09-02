@@ -615,3 +615,79 @@ class TestTitleLookup:
                 lambda url, timeout=None, b=body, s=status: FakeResponse(b, s),
             )
             assert queue_server.youtube_title("UbxUSsFXYo4") is None, (body, status)
+
+
+class TestWhichAddressPhonesCanReach:
+    """The QR is only as good as the address it publishes.
+
+    2026-09-02: the owner's machine had a VPN up, so the route to the
+    internet ran through a tunnel and the server published
+    http://10.5.0.2:8772 -- an address no phone on the Wi-Fi could
+    resolve. The default route answers "how do I reach the internet",
+    which is not the question. These pin the ranking that replaced it.
+    """
+
+    def rank(self, *addresses):
+        from tools.karaoke_server.queue_server import address_rank
+
+        return sorted(addresses, key=lambda a: (address_rank(a), a))
+
+    def test_the_wifi_address_beats_the_vpn_tunnel(self):
+        # the exact pair the owner's machine offered
+        assert self.rank("10.5.0.2", "192.168.1.50")[0] == "192.168.1.50"
+
+    def test_private_ranges_sort_by_how_likely_a_venue_hands_them_out(self):
+        assert self.rank("10.0.0.5", "172.20.0.3", "192.168.0.9") == [
+            "192.168.0.9",
+            "172.20.0.3",
+            "10.0.0.5",
+        ]
+
+    def test_loopback_and_a_dead_adapter_sort_below_anything_usable(self):
+        # 169.254.x is what Windows assigns when DHCP never answered
+        assert self.rank("127.0.0.1", "169.254.7.7", "10.5.0.2") == [
+            "10.5.0.2",
+            "169.254.7.7",
+            "127.0.0.1",
+        ]
+
+    def test_a_junk_string_is_ranked_not_raised(self):
+        from tools.karaoke_server.queue_server import address_rank
+
+        # getaddrinfo can hand back things this parser was not promised
+        assert address_rank("not-an-address") == 90
+        assert address_rank("1.2.3") == 90
+
+    def test_every_address_is_offered_best_guess_first(self, monkeypatch):
+        from tools.karaoke_server import queue_server
+
+        monkeypatch.setattr(queue_server, "_default_route_address", lambda: "10.5.0.2")
+        monkeypatch.setattr(
+            queue_server,
+            "_host_addresses",
+            lambda: ["10.5.0.2", "192.168.1.50", "127.0.0.1"],
+        )
+        found = queue_server.lan_addresses()
+        assert found == ["192.168.1.50", "10.5.0.2", "127.0.0.1"]
+        # the alternates have to survive: they are what the operator reads
+        # off the screen when the guess is wrong
+        assert queue_server.lan_address() == "192.168.1.50"
+
+    def test_a_machine_with_nothing_to_offer_says_so_rather_than_guessing(
+        self, monkeypatch
+    ):
+        from tools.karaoke_server import queue_server
+
+        monkeypatch.setattr(queue_server, "_default_route_address", lambda: None)
+        monkeypatch.setattr(queue_server, "_host_addresses", lambda: [])
+        assert queue_server.lan_addresses() == []
+        assert queue_server.lan_address() is None
+
+    def test_a_broken_hostname_lookup_is_not_fatal(self, monkeypatch):
+        from tools.karaoke_server import queue_server
+
+        def boom(*a, **k):
+            raise OSError("no name resolution here")
+
+        monkeypatch.setattr(queue_server.socket, "getaddrinfo", boom)
+        assert queue_server._host_addresses() == []
