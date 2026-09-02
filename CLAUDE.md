@@ -176,7 +176,7 @@ times, so it no longer carries one — just add a bullet):
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`,
-  `performance`, `scraping`, `converting`, `options`, `journal`)
+  `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk
@@ -261,6 +261,7 @@ pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+python -m pwb_toolbox.vision shot.png --prompt "read this"  # ask a vision model about an image
 python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
 python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)

@@ -46,6 +46,7 @@ COVERAGE_FLOOR = {
     "datasets.md": 1,
     "execution.md": 8,
     "scraping.md": 4,
+    "vision.md": 6,
 }
 
 

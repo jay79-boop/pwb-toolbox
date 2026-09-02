@@ -4,7 +4,7 @@ The full inventory of what lives where. `CLAUDE.md` keeps a short map of the
 top-level directories and points here for the detail.
 
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -372,6 +372,10 @@ top-level directories and points here for the detail.
   live-only and cannot drive paperMoney, so the one account already holding the
   options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
+  `vision.md` (reading a chart shot, a journal shot or a scanned statement with an
+  NVIDIA-hosted vision model — and the three traps that cost a session each: a
+  `$NVIDIA_API_KEY` that never expands, an inline size limit measured in base64
+  characters rather than bytes, and reasoning arriving on its own stream channel),
   `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
   `page-style.md` (the standing look for any page or artifact built here —
   light, colour-coded, validated; the rule is in `CLAUDE.md`, the tokens and
