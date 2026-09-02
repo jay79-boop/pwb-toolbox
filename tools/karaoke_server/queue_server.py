@@ -50,6 +50,45 @@ PAGE = _repo_page()
 # this to the page's full text, so the single file needs no static/ dir.
 EMBEDDED_PAGE = None
 
+# Scripts the page loads from this server rather than from a CDN. On a
+# captive portal a CDN <script> "loads" a login page instead of the library;
+# served from here, the file is on the same LAN as the phone that asked.
+# Only these names are served: the route is not a directory listing.
+VENDOR_FILES = ("amplitude-unified.umd.js",)
+
+
+def _repo_vendor() -> Path | None:
+    here = Path(__file__).resolve()
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "static" / "vendor"
+
+
+VENDOR = _repo_vendor()
+
+# The standalone build rebinds this to {name: text} for every VENDOR_FILES
+# entry, the same way it rebinds EMBEDDED_PAGE.
+EMBEDDED_VENDOR: dict = {}
+
+
+def vendor_name(path: str) -> str | None:
+    """The vendored file a GET path asks for, or None if it is not one."""
+    prefix = "/vendor/"
+    if not path.startswith(prefix):
+        return None
+    name = path[len(prefix) :]
+    return name if name in VENDOR_FILES else None
+
+
+def vendor_source(name: str) -> str | None:
+    if name not in VENDOR_FILES:
+        return None
+    if name in EMBEDDED_VENDOR:
+        return EMBEDDED_VENDOR[name]
+    if VENDOR is not None and (VENDOR / name).exists():
+        return (VENDOR / name).read_text(encoding="utf-8")
+    return None
+
 
 def page_source() -> str | None:
     # embedded first: the standalone must never consult a disk path that
@@ -124,6 +163,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _script(self, status, text):
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _html(self, status, text):
         body = text.encode("utf-8")
         self.send_response(status)
@@ -151,6 +199,12 @@ class Handler(BaseHTTPRequestHandler):
             with self.lock:
                 state = self.room.state(time.time(), singer_id, since)
             self._json(200, state)
+        elif vendor_name(route.path):
+            source = vendor_source(vendor_name(route.path))
+            if source is None:
+                self._json(404, {"error": "not found"})
+            else:
+                self._script(200, source)
         elif route.path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()

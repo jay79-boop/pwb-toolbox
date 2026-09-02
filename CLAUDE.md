@@ -477,7 +477,9 @@ python3 .claude/skills/ui-ux-pro-max/scripts/search.py "fintech dashboard" --dom
 Credentials: `load_dataset` reads `PWB_API_KEY`, falling back to the Hugging Face
 Hub and then yfinance. `.mcp.json` reads `API_KEY_21ST` from the *process*
 environment — `.env` alone does not reach it. **Never commit keys**; `.env` is
-gitignored and `.env.example` lists both variables.
+gitignored and `.env.example` lists every variable, `AMPLITUDE_AI_API_KEY`
+included. The one key that *is* committed is the Amplitude browser ingestion key
+inline in `static/karaoke-queue.html` — public by design, per that page.
 
 `docs/design-tooling.md` covers the rest: how `docs/index.html` was built and why
 it is self-contained, the GitHub Pages branch-source setup and why

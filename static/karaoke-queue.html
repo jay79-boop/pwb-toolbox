@@ -195,6 +195,12 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   <div id="ticker" hidden></div>
 </main>
 
+<!-- Amplitude browser SDK: @amplitude/unified 1.1.32, its own UMD build,
+     vendored at static/vendor/ and served by the queue server itself.
+     Never a CDN: on a captive portal a CDN <script> "loads" a login page
+     (see the QR note below). When this file does not load, analytics is
+     off and the join path is untouched. -->
+<script src="vendor/amplitude-unified.umd.js"></script>
 <script>
 (function () {
   "use strict";
@@ -213,6 +219,22 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   var show = function (id, on) { $(id).hidden = !on; };
 
   if (!API && !DEMO) { show("noServer", true); return; }
+
+  /* ---- analytics ----
+     Initialised once per page load, only when the vendored SDK actually
+     loaded. Every call is guarded so a router with no uplink costs nothing. */
+  // Amplitude ingestion key — public by design; move to an env var when you set up environments.
+  var AMPLITUDE_KEY = "1d5abce26419d85fd651e8276c0a6a59";
+  var analytics = null;
+  if (typeof amplitude !== "undefined" && amplitude && typeof amplitude.initAll === "function") {
+    try {
+      var booted = amplitude.initAll(AMPLITUDE_KEY, {"analytics":{"autocapture":true},"sessionReplay":{"sampleRate":1}});
+      if (booted && typeof booted.catch === "function") { booted.catch(function () {}); }
+      analytics = amplitude;
+    } catch (e) { analytics = null; }
+  } else {
+    console.warn("Amplitude SDK missing — analytics disabled");
+  }
 
   /* ---- shared state ---- */
   var singerId = null, lastSeq = 0, state = null, polling = null;
@@ -280,6 +302,9 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
         singerId = body.singer_id;
         try { localStorage.setItem("kq-singer", singerId); } catch (e) {}
         show("joinErr", false);
+        if (analytics) {
+          try { amplitude.track('Joined Queue', { prompt_version: 'BA400.4' }); } catch (e) {} // helps improve this setup flow — safe to remove once you've verified the event lands
+        }
         if (body.past_songs && body.past_songs.length) {
           $("usualChips").innerHTML = "";
           body.past_songs.slice(0, 5).forEach(function (title) {

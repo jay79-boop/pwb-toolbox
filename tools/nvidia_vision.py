@@ -26,6 +26,7 @@ from pwb_toolbox.vision import (
     NvidiaVisionError,
     VisionClient,
 )
+from pwb_toolbox.vision import telemetry
 
 CHART_PROMPT = (
     "This is a candlestick chart with market structure levels drawn on it. "
@@ -37,6 +38,22 @@ CHART_PROMPT = (
 
 def _client_from(args) -> VisionClient:
     return VisionClient(model=args.model, max_bytes=args.max_bytes)
+
+
+def _telemetry():
+    """Agent Analytics when AMPLITUDE_AI_API_KEY is set; None, said once, when not."""
+    return telemetry.from_environment()
+
+
+def _ask(client: VisionClient, prompt: str, images, **kwargs: Any) -> Answer:
+    """``client.ask`` through Agent Analytics when it is on, straight when not."""
+    tracker = _telemetry()
+    if tracker is None:
+        return client.ask(prompt, images, **kwargs)
+    try:
+        return tracker.ask(client, prompt, images, **kwargs)
+    finally:
+        tracker.close()
 
 
 def _ask_options(payload_args) -> dict[str, Any]:
@@ -91,7 +108,8 @@ def cmd_ask(args) -> int:
     streamed = args.stream
     on_chunk = _printer(args)
 
-    answer = client.ask(
+    answer = _ask(
+        client,
         args.prompt,
         args.images,
         stream=streamed,
@@ -120,7 +138,8 @@ def cmd_chart(args) -> int:
     streamed = args.stream
     on_chunk = _printer(args)
 
-    answer = client.ask(
+    answer = _ask(
+        client,
         args.prompt,
         [out],
         stream=streamed,
