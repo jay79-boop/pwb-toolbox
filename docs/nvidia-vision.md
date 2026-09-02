@@ -1,8 +1,10 @@
 # Reading an image with a hosted vision model
 
-`tools/nvidia_vision.py` sends an image and a question to a vision model on
-NVIDIA's hosted API (`integrate.api.nvidia.com`) and returns the answer. It
-takes a local file, an `http(s)` URL, or a chart it renders itself off bar data.
+Sends an image and a question to a vision model on NVIDIA's hosted API
+(`integrate.api.nvidia.com`) and returns the answer. Built for the three kinds
+of picture this desk produces that no CSV covers: a chart screenshot, a
+trade-journal shot, and a statement or filing that arrived as a scan rather
+than an export.
 
     python tools/nvidia_vision.py ask chart.png --prompt "What is in this image?"
     python tools/nvidia_vision.py ask https://example.com/x.jpg --stream
@@ -11,6 +13,41 @@ takes a local file, an `http(s)` URL, or a chart it renders itself off bar data.
 
 The key comes from `NVIDIA_API_KEY` in the environment (`.env.example` lists
 it). Get one at <https://build.nvidia.com/>.
+
+## Where it lives, and why in two places
+
+The client is `pwb_toolbox.vision`, in the shipped package, so anything can
+import it:
+
+```python
+from pwb_toolbox.vision import VisionClient
+
+client = VisionClient()
+answer = client.ask("Read the session levels off this", ["chart.png"])
+print(answer.content)
+```
+
+An image source is a local path, raw `bytes`, an `http(s)` URL, or a `data:`
+URI already built. **Only local images are ever resized** — a remote URL is
+handed to NVIDIA untouched, because the bytes never pass through this process.
+Raw `bytes` are accepted so a screenshot rendered in memory does not have to be
+written to disk and read back to be asked about.
+
+`tools/nvidia_vision.py` is the command line over that, and it stays on the
+desk rather than in the package because `chart` reaches for
+`tools/desk_levels.py` to draw the picture before reading it. The shipped
+package does not depend on the desk.
+
+## The label on the wire is read off the bytes, not the filename
+
+A file's extension is a claim; its first eight bytes are evidence. A screenshot
+pipeline writing JPEG bytes into a `.png` is an ordinary thing to happen, and
+trusting the name puts `data:image/png;base64,` in front of a JPEG.
+
+The endpoint sniffs the content too and usually forgives the mismatch, which is
+precisely why this would go unnoticed until something did not. `guess_mime`
+takes the bytes when they have already been read and prefers what they say; the
+extension is the fallback for a name with nothing behind it yet.
 
 ## The four things NVIDIA's own snippet gets wrong
 
@@ -94,7 +131,9 @@ legible.
 
 `tests/test_nvidia_vision.py` runs entirely offline: the HTTP layer against a
 fake `requests.Session`, every image built in memory, no `NVIDIA_API_KEY`
-needed. Following the pattern in `tests/test_docs_examples.py`, the size-cap
+needed. It imports the client from `pwb_toolbox.vision` and only `main` from
+`tools.nvidia_vision`, which asserts the split itself rather than describing it.
+Following the pattern in `tests/test_docs_examples.py`, the size-cap
 tests calibrate their caps off the image under test rather than hard-coding a
 round number — a gradient PNG compresses so well that a plausible-looking
 constant silently stopped testing anything, which is how the first cut of two of

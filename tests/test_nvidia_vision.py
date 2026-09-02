@@ -3,6 +3,10 @@
 Everything here runs offline. The HTTP layer is exercised against a fake
 ``requests.Session`` and every image is built in memory, so the suite never
 reaches ``integrate.api.nvidia.com`` and needs no ``NVIDIA_API_KEY``.
+
+The client is imported from ``pwb_toolbox.vision`` and only ``main`` from
+``tools.nvidia_vision``, which is the split itself asserted: the library is in
+the shipped package and the desk half is the command line over it.
 """
 
 import base64
@@ -12,7 +16,7 @@ import os
 
 import pytest
 
-from tools.nvidia_vision import (
+from pwb_toolbox.vision import (
     Answer,
     DEFAULT_MODEL,
     ENV_KEY,
@@ -29,10 +33,11 @@ from tools.nvidia_vision import (
     guess_mime,
     image_part,
     iter_stream,
-    main,
     parse_completion,
     shrink_to_fit,
+    sniff_mime,
 )
+from tools.nvidia_vision import main
 
 KEY = "nvapi-test-key"
 
@@ -237,6 +242,56 @@ def test_guess_mime_reads_the_extension_and_rejects_non_images():
     assert guess_mime("a.webp") == "image/webp"
     with pytest.raises(NvidiaVisionError):
         guess_mime("notes.txt")
+
+
+JPEG_MAGIC = b"\xff\xd8\xff\xe0"
+
+
+def test_the_bytes_beat_the_extension_when_the_two_disagree(tmp_path):
+    """A screenshot pipeline writing JPEG bytes into a `.png` is ordinary.
+
+    Trusting the name puts `data:image/png;base64,` in front of a JPEG. The
+    endpoint sniffs too and usually forgives it, which is exactly why this
+    would have gone unnoticed until something did not.
+    """
+    path = tmp_path / "shot.png"
+    path.write_bytes(JPEG_MAGIC + b"\x00" * 64)
+    assert guess_mime(path, path.read_bytes()) == "image/jpeg"
+    assert image_part(path)["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_the_extension_still_answers_when_there_are_no_bytes_to_read():
+    assert guess_mime("scan.webp") is not None
+    assert guess_mime("scan.webp") == "image/webp"
+
+
+def test_sniff_reports_nothing_rather_than_guessing():
+    assert sniff_mime(b"\x00" * 32) is None
+    assert sniff_mime(png_bytes(4, 4)) == "image/png"
+    assert sniff_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
+
+
+def test_raw_bytes_need_no_file_on_disk():
+    """An in-memory render should not have to round-trip through the disk."""
+    part = image_part(png_bytes(8, 8))
+    assert part["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_bytes_that_are_not_an_image_are_refused():
+    with pytest.raises(NvidiaVisionError):
+        image_part(b"just some text, not a picture")
+
+
+def test_bytes_ride_alongside_paths_and_urls_in_one_payload(tmp_path):
+    path = tmp_path / "a.png"
+    path.write_bytes(png_bytes(8, 8))
+    payload = build_payload(
+        "compare these",
+        [path, png_bytes(8, 8), "https://example.com/c.png"],
+    )
+    parts = [p for p in payload["messages"][0]["content"] if p["type"] == "image_url"]
+    assert len(parts) == 3
+    assert parts[2]["image_url"]["url"] == "https://example.com/c.png"
 
 
 def test_remote_url_is_passed_through_untouched(tmp_path):

@@ -4,7 +4,7 @@ The full inventory of what lives where. `CLAUDE.md` keeps a short map of the
 top-level directories and points here for the detail.
 
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -149,7 +149,10 @@ top-level directories and points here for the detail.
   answer. `docs/nvidia-vision.md` has all four, plus the two things about the
   API that were not verifiable when it was written and are stated as open
   rather than assumed. `models --filter kimi` lists the catalog, which is how
-  the first of those two gets settled without spending a completion
+  the first of those two gets settled without spending a completion. The client
+  itself is `pwb_toolbox/vision/`, in the shipped package so anything can import
+  it; only the command line lives here, because `chart` reaches for
+  `desk_levels` and the package does not depend on the desk
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently

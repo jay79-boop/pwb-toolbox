@@ -176,7 +176,7 @@ times, so it no longer carries one — just add a bullet):
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`,
-  `performance`, `scraping`, `converting`, `options`, `journal`)
+  `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk

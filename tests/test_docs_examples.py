@@ -45,6 +45,7 @@ COVERAGE_FLOOR = {
     "converting.md": 2,
     "datasets.md": 1,
     "execution.md": 8,
+    "nvidia-vision.md": 2,
     "scraping.md": 4,
 }
 
