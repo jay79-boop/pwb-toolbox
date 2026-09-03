@@ -190,6 +190,9 @@ times, so it no longer carries one — just add a bullet):
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the unattended desk
   agent, the situational awareness layer, and the operational IB scripts
+- `signals/` — the desk and content bridges: redacted, schema-validated readings
+  of two domains this repository cannot reach, tracked on purpose so a cloud
+  session can see them
 - `static/` — single-file browser tools that open from `file://` with no build
   step, plus the shared JS modules they load
 
@@ -294,6 +297,9 @@ python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no ch
 python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
 python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
 python tools/awareness.py brief --short    # the same, in six lines
+python tools/desk_signal.py emit          # machine only: carry the desk into git
+python tools/desk_signal.py show          # what the committed desk signal says, and its age
+python tools/content_signal.py capture --platform-json -  # session only: carry the connectors in
 python tools/desk_watch.py check          # which sessions did the desk not report?
 python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
 python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
@@ -399,10 +405,26 @@ refuses three more ways: no history is reported as *unanswerable* rather than
 is ever proposed as an action. It names its own blind spots on every run,
 because a domain with no adapter reads exactly like a domain with nothing wrong.
 
-Only the fleet and this repository are wired. `docs/awareness.md` has the
-protocol and the four false alarms its first run produced;
+**The desk and content are wired, and neither is *read* from the tool.** Both are
+carried to it: `tools/desk_signal.py emit` runs on the owner's machine from
+`run_job.ps1` and rides the push that already carries `runs.jsonl`;
+`tools/content_signal.py capture` runs in a session, because content's
+credentials turned out to be live but held in MCP connectors no Python process
+can call. Both write into `signals/`, which is the one data directory here that
+is **tracked on purpose** — safe to publish because every field is declared in a
+schema permitting only numbers, booleans, ISO dates and closed vocabularies, so
+there is no free-text field for a ticker, a price or a caption to reach. A
+missing signal is reported as a blind spot, never as a quiet domain, and a
+signal that stops being written is reported as *the bridge* stopping rather than
+the desk. `business` is still unwired and still named on every run.
+
+`docs/awareness.md` has the protocol and the four false alarms its first run
+produced; `docs/desk-content-adapters.md` covers the two adapters, the schema
+and what each refuses;
 `docs/decisions/2026-09-02-the-awareness-layer-stores-observations-not-state.md`
-has the reasoning.
+and
+`docs/decisions/2026-09-02-a-blind-domain-is-carried-not-reached.md`
+have the reasoning.
 
 ## Backtesting: two things that produced confidently wrong answers
 
