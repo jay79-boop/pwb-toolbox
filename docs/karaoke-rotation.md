@@ -57,6 +57,14 @@ engine into the thing a pub actually touches:
 
     python -m tools.karaoke_server.queue_server
 
+At home there is not even that: `install_shortcut.ps1` puts a **Karaoke**
+icon on the Desktop and `start_karaoke.ps1` runs the whole night behind it
+— finds Python, refuses a busy port with a sentence, checks the firewall
+rule and prints the exact fix, opens the big screen once the port answers,
+and stops the server when the window closes. `docs/karaoke-setup.md` has
+that path, including the four things that went wrong in one sitting on
+2026-09-02 and the guard each one bought.
+
 One command, one address (LAN only -- same hosting rule as the
 leaderboard). For a machine outside this repo, the same OS ships as one
 portable file: `build_standalone.py` concatenates the tested modules and

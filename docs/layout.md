@@ -17,7 +17,11 @@ top-level directories and points here for the detail.
   command runs the night: big screen with QR + playback, phones join by scan.
   `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
   `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
-  release. Protocol in `docs/karaoke-rotation.md`
+  release. `start_karaoke.ps1` + `install_shortcut.ps1` are the no-brainer path:
+  a Desktop icon that starts the night, opens the big screen itself, and turns
+  a busy port, a missing firewall rule and a missing Python into sentences
+  rather than tracebacks. Protocol in `docs/karaoke-rotation.md`, setup and the
+  four failures the launcher guards in `docs/karaoke-setup.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from

@@ -411,6 +411,43 @@ def lan_address() -> str | None:
     return ranked[0] if ranked else None
 
 
+# The inbound rule the launcher (start_karaoke.ps1) looks for and, when it is
+# running elevated, offers to create. Named rather than matched by port so a
+# non-coder can find it again in Windows Defender Firewall, and so the check
+# and the fix can never drift: both sides import these two from here.
+FIREWALL_RULE_NAME = "Karaoke Queue"
+
+
+def firewall_command(port: int = 8772) -> str:
+    """The exact one-line PowerShell that lets phones reach this machine.
+
+    Printed, never run from here. A server process that silently reconfigured
+    the host firewall would be a worse thing to ship than a room that cannot
+    join, and elevation belongs to whoever opened the window.
+    """
+    return (
+        "New-NetFirewallRule -DisplayName '%s' -Direction Inbound "
+        "-Action Allow -Protocol TCP -LocalPort %d -Profile Any"
+        % (FIREWALL_RULE_NAME, port)
+    )
+
+
+def port_in_use_message(port: int) -> str:
+    """What a busy port means to the person who double-clicked the icon.
+
+    Not "OSError: [WinError 10048]". The cause is almost always the last
+    karaoke window still open behind this one, and that is a sentence, not a
+    stack trace. 2026-09-02: one of the four things that went wrong in a
+    single sitting.
+    """
+    return (
+        "Karaoke is already running -- close the other karaoke window first.\n"
+        "(Something on this machine is already using port %d. If you are sure "
+        "karaoke is not open, restart the computer or start it on another "
+        "port with --port %d.)" % (port, port + 1)
+    )
+
+
 def serve(host="0.0.0.0", port=8772, profiles_path=None):
     profiles_path = profiles_path or os.environ.get(
         "KARAOKE_PROFILES", "karaoke-profiles.json"
@@ -418,9 +455,16 @@ def serve(host="0.0.0.0", port=8772, profiles_path=None):
     bound = host not in ("0.0.0.0", "")
     ranked = lan_addresses()
     shown = host if bound else (ranked[0] if ranked else "localhost")
-    httpd = ThreadingHTTPServer(
-        (host, port), build(profiles_path, f"http://{shown}:{port}/")
-    )
+    try:
+        httpd = ThreadingHTTPServer(
+            (host, port), build(profiles_path, f"http://{shown}:{port}/")
+        )
+    except OSError:
+        # Almost always EADDRINUSE, and there is nothing useful to tell apart:
+        # every way this fails means "this program cannot have that port", and
+        # the reply that helps is the same one.
+        print(port_in_use_message(port))
+        return 1
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
     others = [a for a in ranked if a != shown]
@@ -442,12 +486,15 @@ def serve(host="0.0.0.0", port=8772, profiles_path=None):
         "If phones cannot connect: allow this app through the firewall for "
         "BOTH private and public networks (venue Wi-Fi usually counts as public)."
     )
+    print("Run this once, in a PowerShell window opened as administrator:")
+    print("    " + firewall_command(port))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
         httpd.server_close()
+    return 0
 
 
 def main(argv=None):
@@ -455,9 +502,21 @@ def main(argv=None):
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8772)
     parser.add_argument("--profiles", default=None, help="singer memory JSON path")
+    parser.add_argument(
+        "--print-address",
+        action="store_true",
+        help="print the address phones should use, then exit",
+    )
     args = parser.parse_args(argv)
-    serve(args.host, args.port, args.profiles)
+    if args.print_address:
+        # The launcher asks this rather than ranking addresses itself. Two
+        # implementations of "which address can phones reach" is how the VPN
+        # bug of 2026-09-02 comes back on a path no test covers.
+        bound = args.host not in ("0.0.0.0", "")
+        print(args.host if bound else (lan_address() or "localhost"))
+        return 0
+    return serve(args.host, args.port, args.profiles)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

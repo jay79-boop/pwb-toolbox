@@ -183,3 +183,57 @@ def test_the_firewall_hint_is_printed_where_the_operator_will_see_it(capsys):
     src = build_standalone.module_body("queue_server.py")
     assert "public networks" in src.lower()
     assert "firewall" in src.lower()
+
+
+# ---------- the travelling copy gets the same plain-English failures ----------
+
+
+def test_the_one_file_copy_refuses_a_busy_port_without_a_traceback(
+    artifact, monkeypatch, capsys
+):
+    """No repo, no launcher, no .ps1 -- so the message has to be in the
+    server, which is the one piece all three paths share."""
+
+    def refuse(*args, **kwargs):
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(artifact, "ThreadingHTTPServer", refuse)
+    monkeypatch.setattr(artifact, "lan_addresses", lambda: ["192.168.1.50"])
+    assert artifact.serve(port=8772, profiles_path="ignored.json") == 1
+    out = capsys.readouterr().out
+    assert "already running" in out.lower()
+    assert "Traceback" not in out
+
+
+def test_a_refused_port_does_not_open_a_browser_on_the_other_instance(
+    artifact, monkeypatch
+):
+    """Opening /screen anyway would land on the karaoke already running and
+    make "close the other window" read as a lie."""
+    events = []
+
+    class FakeTimer:
+        def __init__(self, delay, fn, args=None):
+            events.append(("scheduled", args[0]))
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            events.append(("cancelled", None))
+
+    monkeypatch.setattr(artifact.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(artifact, "lan_address", lambda: "192.168.1.50")
+    monkeypatch.setattr(artifact, "serve", lambda *a, **k: 1)
+    assert artifact._standalone_main(["--port", "8772"]) == 1
+    assert events == [
+        ("scheduled", "http://192.168.1.50:8772/screen"),
+        ("cancelled", None),
+    ]
+
+
+def test_the_firewall_fix_the_one_file_copy_prints_is_a_runnable_command(artifact):
+    command = artifact.firewall_command(8772)
+    assert command.startswith("New-NetFirewallRule -DisplayName 'Karaoke Queue'")
+    assert "-LocalPort 8772" in command
+    assert "-Profile Any" in command
