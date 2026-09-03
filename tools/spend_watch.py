@@ -4,6 +4,15 @@ Written after the 2026-08-24 drain (``docs/token-drain-2026-08-24.md``), which
 was invisible until it hit 100%. Nothing warned at 50% or 80%, so the first
 signal was a wall.
 
+Extended after the 2026-09-03 drain, whose mechanism was different: not a
+Routine, but one session left open for 25 hours until each of its turns re-read
+737K tokens. Lifetime cache reads only said so after the fact, so
+``find_heavy_context`` reads ``context_usage`` instead -- what the *next* turn
+will cost, not what past ones did. Reasoning in
+``docs/decisions/2026-09-03-the-cost-of-a-turn-is-set-before-the-turn-begins.md``;
+the account-wide forensics are in the decision record from the same day about
+the usage panel.
+
 **What this tool will not do is invent a burn rate.** A single snapshot reports
 each session's *lifetime* metered total, not what it spent recently, so a rate
 cannot be derived from one file no matter how tempting the arithmetic looks --
@@ -95,6 +104,14 @@ def _rearms(prompt: str) -> bool:
 CONCURRENCY_ALERT = 6
 FAT_SESSION_CACHE_READS = 10_000_000
 
+# ``context_usage.used_tokens`` is what the NEXT turn re-reads, where
+# ``cache_read_tokens`` is what every past turn already cost. A session at
+# three quarters of its context cap has not necessarily been expensive yet --
+# it is about to be, and only this field says so before the money is spent.
+# Set at half the cap: below that a session still has room to finish its
+# thread, above it every further turn is paying near the maximum.
+CONTEXT_HEAVY_FRACTION = 0.5
+
 # Two Routine prompts this similar, on the same cron, are the same job.
 # Set from the real pair: the spec-desk watch and its replacement differed
 # only in a few sentences of preamble.
@@ -171,6 +188,28 @@ def metered(session: Dict[str, Any]) -> float:
 def cache_reads(session: Dict[str, Any]) -> int:
     try:
         return int(_usage(session).get("cache_read_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _context(session: Dict[str, Any]) -> Dict[str, Any]:
+    return (session.get("external_metadata") or {}).get("context_usage") or {}
+
+
+def context_used(session: Dict[str, Any]) -> int:
+    """Tokens the session's conversation currently occupies."""
+
+    try:
+        return int(_context(session).get("used_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def context_cap(session: Dict[str, Any]) -> int:
+    """The session's context window, or 0 when the snapshot does not say."""
+
+    try:
+        return int(_context(session).get("max_tokens") or 0)
     except (TypeError, ValueError):
         return 0
 
@@ -336,6 +375,48 @@ def find_fat_sessions(
                     "Any wake re-reads that context before doing a single useful "
                     "thing. Archive it if its work is finished, and never bind a "
                     "scheduled check-in to it."
+                ),
+                subjects=[str(s.get("id"))],
+            )
+        )
+    return findings
+
+
+def find_heavy_context(
+    sessions: Iterable[Dict[str, Any]],
+    fraction: float = CONTEXT_HEAVY_FRACTION,
+) -> List[Finding]:
+    """Live sessions whose next turn is already expensive.
+
+    This is the forward-looking half of the pair. ``find_fat_sessions`` reads
+    lifetime cache reads and answers "what has this cost"; a session only
+    trips it after the spending has happened. ``context_usage.used_tokens``
+    answers "what will the next turn cost", because that whole conversation is
+    re-read before the model does anything -- so a long-lived session gets
+    steadily more expensive per turn even when each turn does less work.
+
+    Both fields ride along in the bulk ``list_sessions`` response, so this
+    costs no extra call.
+    """
+
+    findings = []
+    for s in sessions:
+        used, cap = context_used(s), context_cap(s)
+        if cap <= 0 or used < cap * fraction:
+            continue
+        findings.append(
+            Finding(
+                severity="high" if used >= cap * 0.7 else "medium",
+                code="heavy-context",
+                title=(
+                    f"Session {s.get('title') or s.get('id')!r} is carrying "
+                    f"{used / 1e3:,.0f}K of a {cap / 1e3:,.0f}K context window"
+                ),
+                detail=(
+                    f"That is {used / cap:.0%} of its cap, and all of it is re-read "
+                    "before every further turn, so each one costs near the maximum "
+                    "however small the work. Finish the thread and start a fresh "
+                    "session for the next task rather than continuing here."
                 ),
                 subjects=[str(s.get("id"))],
             )
@@ -575,6 +656,7 @@ def audit(
     findings += find_persistent_triggers(triggers)
     findings += find_duplicate_triggers(triggers)
     findings += find_fat_sessions(sessions)
+    findings += find_heavy_context(sessions)
 
     # Anchored to the newest activity in the snapshot rather than to the rate
     # limit's reset, so the answer means "awake at the same time" whichever
