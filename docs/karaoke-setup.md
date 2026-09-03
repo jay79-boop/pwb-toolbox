@@ -105,6 +105,24 @@ it belongs to the machine rather than to whichever of the two clones the icon
 points at. `karaoke-profiles.json` is also gitignored, because running the
 server by hand still defaults it to the working directory.
 
+### Turning song search on (optional, and the night runs fine without it)
+
+By default the phone takes a pasted YouTube link or a typed title, which is
+all it ever did. Set `YOUTUBE_API_KEY` in the environment the server starts
+in and the phone additionally gets a search box: type a song name, tap a
+result. The server prints which of the two it is running as its third line.
+
+Getting a key: Google Cloud console, enable **YouTube Data API v3**, then
+Credentials -> API key. It is free, and it is capped -- roughly **100
+searches a day for the whole venue**, shared, because the free 10,000
+daily quota units cost 100 per search. Repeat queries are cached for the
+life of the process, so the cap is less painful than it sounds.
+
+Nothing breaks without it, and nothing breaks when it fails mid-night: a
+missing key, a dead uplink, a captive portal or a spent quota all leave the
+phone with the paste-a-link box it already had and one sentence saying so.
+The reasoning is in `docs/karaoke-rotation.md`.
+
 ## The travelling copy
 
 For a venue machine with no repo -- and no Python -- the same OS ships as one
@@ -176,3 +194,24 @@ attachment semantics that cannot be exercised from a container. If a second
 double-click ever reports "already running" when nothing is, that is the
 guarantee that failed, and the fix is to kill python by hand once and say so.
 
+
+### And the same honesty about song search
+
+**Verified.** The search endpoint, its cache, and every failure it can meet
+are driven through the real `do_GET` on a socketless handler with a fake
+fetcher, plus the parser against captured-shape payloads: escaped titles,
+half-broken rows, a captive portal's HTML, a 403 quota body, a timeout. A
+real browser walk on Chromium queued a song by tapping a stubbed search
+result, and the same walk with the key removed proved the phone still joins
+and queues by typing a title, with no search box shown at all.
+
+**Not verified: the live path.** Nobody has run a single real request
+against `googleapis.com` from here, because there is no key to run it with.
+So the request shape is written from the API's documentation and asserted
+against the URL we build, not against an answer YouTube gave. The first
+real search is the owner's. If it comes back empty or refuses, the thing to
+read is the raw JSON: `curl` the same URL with the key and look at
+`error.errors[0].reason` — `keyInvalid`, `accessNotConfigured` (the API is
+not enabled on that project) and `quotaExceeded` are the three, and all
+three currently look identical from the phone, which is by design for a
+singer and unhelpful for whoever is setting it up.
