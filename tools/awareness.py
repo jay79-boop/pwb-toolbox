@@ -966,6 +966,34 @@ def observe_content(signal, now: dt.datetime) -> list[Observation]:
                     )
                 )
 
+        # Said before anything else in this half, because it qualifies all of
+        # it: a post count and a follower count that describe different channels
+        # are two true numbers and one false picture. Nothing automatic can fix
+        # it -- reconnecting an account is an OAuth flow in a browser -- so it
+        # is `blocking` rather than `stopped`.
+        if signal.channel_match == "different":
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:channel",
+                    summary=(
+                        "publishing and analytics are pointed at different "
+                        "channels -- posts go one way, numbers come back about "
+                        "the other"
+                    ),
+                    at=at,
+                    severity="act",
+                    trigger="blocking",
+                    evidence="the capturing session compared both connectors' accounts",
+                    detail=(
+                        "reconnect the publishing side to the measured channel; "
+                        "until then every figure below describes one or the other, "
+                        "never both"
+                    ),
+                    depends_on=("content:publish", "content:analytics"),
+                )
+            )
+
         if signal.publish_subscription == "inactive":
             observations.append(
                 Observation(
@@ -1546,6 +1574,11 @@ def collect(
         if not content.render_seen:
             blind.append(
                 "the market-close render (render/ is on the machine and gitignored)"
+            )
+        if content.platform_seen and content.channel_match == "unknown":
+            blind.append(
+                "whether publishing and analytics point at the same channel "
+                "(the capture did not say; it is never guessed from handles)"
             )
         if not content.platform_seen:
             blind.append(

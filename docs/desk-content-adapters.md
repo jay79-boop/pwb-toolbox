@@ -25,7 +25,10 @@ process in this repository can reach one, and the awareness core is Python.
 Two things fell out of that check and are worth writing down, because neither is
 visible from the credentials alone. The two services are connected to **different
 TikTok identities** — Blotato holds `@jayshong6`, Windsor holds an account named
-`AlaskaM` — so they are not two views of one channel. And Blotato has **never
+`AlaskaM` — so they are not two views of one channel. The owner confirmed on
+2026-09-03 that **`AlaskaM` is the real channel**, which makes the publishing side
+the one pointed at the wrong place; the signal now carries that verdict as
+`channel_match`. And Blotato has **never
 published anything**: a query across all statuses since 2025-01-01 returns an
 empty list. The publishing connector is paid for, connected, and not in the loop;
 `tools/market_close`'s daily process ends with a human pasting into the platform.
@@ -131,6 +134,18 @@ Following the four refusals `docs/awareness.md` already carries:
   and there is no route by which they reach the journal. That is `blocking` — a
   decision waiting on a person, from the 2026-09-01 desk agent run that found 18
   closed positions nothing was pointed at.
+- **Whether the two connectors describe the same channel is taken, never
+  derived.** Confirmed by the owner on 2026-09-03: `AlaskaM` is the real channel
+  and Blotato publishes to `@jayshong6`, so the post count and the follower count
+  are two true numbers describing one false picture. The signal carries
+  `channel_match` as `same` / `different` / `unknown`, supplied by the session
+  that read both connectors — a publishing *handle* and an analytics account
+  *label* are different kinds of string, and comparing them would manufacture a
+  mismatch for one channel that happens to carry two names. `unknown` is the
+  default and has to be earned out of; it is reported as a blind spot rather than
+  read as agreement. A `different` verdict is `blocking`, not `stopped`:
+  reconnecting an account is an OAuth flow in a browser, so nothing automatic
+  clears it.
 - **An unpaid analytics trial is watched and never interrupts.** Windsor.ai
   reports `is_paid: false`. A lapsed trial does not fail loudly; the reads simply
   stop, and a channel nobody watched looks identical to a channel with nothing

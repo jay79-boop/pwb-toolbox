@@ -64,6 +64,13 @@ DEFAULT_RENDER = REPO_ROOT / "render"
 SUBSCRIPTIONS = ("active", "inactive", "unknown")
 PLANS = ("paid", "trial", "unknown")
 
+# Whether the account that PUBLISHES and the account that is MEASURED are the
+# same channel. Tri-state, and `unknown` is the default that must be earned out
+# of: a publishing handle and an analytics account *name* are different kinds of
+# string, so two that differ are not evidence of two channels. This module never
+# guesses it -- the verdict is supplied by whoever read both, and validated here.
+CHANNEL_MATCHES = ("same", "different", "unknown")
+
 SCHEMA: dict[str, str] = {
     "taken": "stamp",
     "render_taken": "stamp?",
@@ -78,6 +85,7 @@ SCHEMA: dict[str, str] = {
     "analytics_plan": "plan",
     "analytics_connectors": "int",
     "analytics_accounts": "int",
+    "channel_match": "channel_match",
 }
 
 
@@ -103,6 +111,7 @@ class ContentSignal:
     analytics_plan: str = "unknown"
     analytics_connectors: int | None = None
     analytics_accounts: int | None = None
+    channel_match: str = "unknown"
 
     @property
     def render_seen(self) -> bool:
@@ -156,6 +165,11 @@ def validate(payload: dict) -> dict:
         elif kind == "plan":
             if value not in PLANS:
                 raise Unpublishable(f"{key} must be one of {PLANS}, got {value!r}")
+        elif kind == "channel_match":
+            if value not in CHANNEL_MATCHES:
+                raise Unpublishable(
+                    f"{key} must be one of {CHANNEL_MATCHES}, got {value!r}"
+                )
         elif kind == "int":
             if value is not None and (
                 isinstance(value, bool) or not isinstance(value, int)
@@ -219,8 +233,15 @@ def reduce_platform(payload: dict | None, now: dt.datetime) -> dict:
                 stamp = stamp.replace(tzinfo=dt.timezone.utc)
             last_post_days = round((now - stamp).total_seconds() / 86400.0, 2)
 
+    # Taken, never derived. A handle and an account label are different kinds of
+    # string and comparing them would manufacture mismatches; the session that
+    # read both is the thing that can tell, so it says, and this validates.
+    match = payload.get("channel_match")
+    match = match if match in CHANNEL_MATCHES else "unknown"
+
     return {
         "platform_taken": now.isoformat(),
+        "channel_match": match,
         "publish_subscription": subscription,
         "publish_accounts": _int(blotato.get("accounts")),
         "publish_last_post_days": last_post_days,

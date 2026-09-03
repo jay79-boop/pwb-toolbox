@@ -273,3 +273,78 @@ def test_a_capture_over_a_weekend_is_not_stale():
     friday = dict(platform(), platform_taken="2026-08-28T12:00:00+00:00")
     obs = aw.observe_content(signal(**rendered(), **friday), monday)
     assert not [o for o in obs if o.entity == "content:capture"]
+
+
+# ---------------------------------------------------------------------------
+# Whether the two connectors describe the same channel
+#
+# Confirmed by the owner on 2026-09-03: AlaskaM is the real channel, and Blotato
+# publishes to @jayshong6. Two true numbers, one false picture -- the failure the
+# content adapter could not see until it carried this field.
+# ---------------------------------------------------------------------------
+
+
+def test_two_different_channels_are_convicted_as_blocking():
+    obs = aw.observe_content(
+        signal(**rendered(), **platform(channel_match="different")), NOW
+    )
+    channel = [o for o in obs if o.entity == "content:channel"][0]
+    assert channel.severity == "act" and channel.trigger == "blocking"
+
+
+def test_one_channel_on_both_sides_is_acquitted():
+    obs = aw.observe_content(
+        signal(**rendered(), **platform(channel_match="same")), NOW
+    )
+    assert not [o for o in obs if o.entity == "content:channel"]
+
+
+def test_an_unknown_match_says_nothing_rather_than_assuming_agreement():
+    """`unknown` must be earned out of, never read as `same`."""
+    obs = aw.observe_content(
+        signal(**rendered(), **platform(channel_match="unknown")), NOW
+    )
+    assert not [o for o in obs if o.entity == "content:channel"]
+
+
+def test_the_verdict_is_taken_and_never_derived_from_the_handles():
+    """A TikTok handle and a Windsor account label are different kinds of string.
+
+    Comparing them would manufacture a mismatch for one channel that happens to
+    carry two names -- so the reduction refuses to compare, and reports unknown
+    when nobody supplied a verdict.
+    """
+    out = cs.reduce_platform(
+        {
+            "blotato": {"subscription": "active", "username": "jayshong6"},
+            "windsor": {"is_paid": False, "account_name": "AlaskaM"},
+        },
+        NOW,
+    )
+    assert out["channel_match"] == "unknown"
+
+
+def test_an_unrecognised_verdict_word_becomes_unknown():
+    out = cs.reduce_platform({"channel_match": "probably-ish"}, NOW)
+    assert out["channel_match"] == "unknown"
+
+
+def test_the_verdict_carries_no_handle_into_the_signal():
+    payload = {
+        "channel_match": "different",
+        "blotato": {"subscription": "active", "accounts": 1, "username": "jayshong6"},
+        "windsor": {"is_paid": False, "accounts": 1, "account_name": "AlaskaM"},
+    }
+    emitted = json.dumps(
+        cs.derive(None, cs.reduce_platform(payload, NOW), NOW).as_dict()
+    )
+    assert '"channel_match": "different"' in emitted
+    for leak in ("jayshong6", "AlaskaM"):
+        assert leak not in emitted
+
+
+def test_an_illegal_verdict_is_refused_before_it_is_written():
+    payload = signal(channel_match="same").as_dict()
+    payload["channel_match"] = "AlaskaM"
+    with pytest.raises(cs.Unpublishable):
+        cs.validate(payload)
