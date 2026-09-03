@@ -9,10 +9,13 @@ scans the QR the screen shows and lands on the phone page. That is the
 whole setup.
 
 Threading server, so a lock serializes every touch of the room. Real time
-enters here and only here -- and so does the one outbound request the
-whole system makes: a pasted YouTube link is turned into a song title via
-YouTube's oEmbed endpoint, from this module and never from the engine or
-the room, with the raw link kept when that fails for any reason at all.
+enters here and only here -- and so do the two outbound requests the whole
+system makes, both from this module and never from the engine or the room:
+a pasted YouTube link is turned into a song title via YouTube's oEmbed
+endpoint, and a typed query is turned into a list of songs via the YouTube
+Data API. Both keep the venue with no uplink exactly as capable as it was:
+the link stays a link, and the phone still lets anyone paste one or type a
+title.
 """
 
 from __future__ import annotations
@@ -24,10 +27,10 @@ import socket
 import threading
 import time
 import urllib.request
-from html import escape
+from html import escape, unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from .room import QueueRoom, RotationError
 
@@ -83,6 +86,157 @@ def resolve_title(payload: dict, lookup, cache: dict) -> dict:
     if cache[ref]:
         payload = dict(payload, title=cache[ref])
     return payload
+
+
+# ---- song search: type "sweet caroline", tap a result ----------------------
+#
+# The YouTube Data API v3, keyed, and the key is read from the process
+# environment exactly the way pwb_toolbox/vision/nvidia.py reads its own --
+# never hard-coded, never logged, never sent to the page. Search is an
+# ADDITION to the paste-a-link path, never a replacement: with no key, no
+# uplink, a captive portal, a quota refusal, a slow answer or nonsense JSON,
+# this layer answers "search is not available" and the phone falls back to
+# exactly what it could do before.
+SEARCH_ENV_KEY = "YOUTUBE_API_KEY"
+SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+# Shorter than a person's patience and shorter than a poll cycle is long:
+# a search that hangs must never hold up the join flow behind it.
+SEARCH_TIMEOUT_S = 3.0
+SEARCH_MAX_BYTES = 256 * 1024
+SEARCH_MAX_RESULTS = 8
+SEARCH_MAX_QUERY = 120
+
+# One sentence, plain, and the same one whatever went wrong: a singer at the
+# door does not care whether it was the quota, the router or the key.
+SEARCH_OFF_NOTE = (
+    "Search isn't available right now — paste a YouTube link "
+    "or just type the song title."
+)
+
+
+def search_key() -> str:
+    """The API key from the environment, or "" when there is none to use.
+
+    An unexpanded ``$YOUTUBE_API_KEY`` counts as none: that is the exact
+    failure NVIDIA's published snippet ships with, and a placeholder sent
+    as a key buys a 400 rather than an honest "search is off".
+    """
+    key = (os.environ.get(SEARCH_ENV_KEY) or "").strip()
+    if not key or key.startswith("$"):
+        return ""
+    return key
+
+
+def search_available() -> bool:
+    """Is there a key at all? Decided once, at build time, for the page."""
+    return bool(search_key())
+
+
+def youtube_search(query: str, timeout: float = SEARCH_TIMEOUT_S, api_key=None):
+    """Songs for a query, or None when the search could not be run.
+
+    ``None`` and ``[]`` are different answers on purpose: ``[]`` is "we
+    asked and nothing matched", ``None`` is "we could not ask" -- no key,
+    no uplink, quota spent, a captive portal's login page, a non-200, or
+    JSON that is not what the API promised. Only ``None`` sends the phone
+    back to the paste-a-link sentence.
+    """
+    key = api_key if api_key is not None else search_key()
+    key = (key or "").strip()
+    if not key:
+        return None
+    query = (query or "").strip()
+    if not query:
+        return []
+    params = urlencode(
+        {
+            "part": "snippet",
+            "type": "video",
+            "videoEmbeddable": "true",
+            "maxResults": SEARCH_MAX_RESULTS,
+            "q": query[:SEARCH_MAX_QUERY],
+            "key": key,
+        }
+    )
+    try:
+        with urllib.request.urlopen(
+            SEARCH_URL + "?" + params, timeout=timeout
+        ) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read(SEARCH_MAX_BYTES).decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a venue with no uplink must not care why
+        return None
+    return _search_items(data)
+
+
+def _search_items(data) -> list | None:
+    """The API's answer as rows the page can render, or None if it is not one.
+
+    Titles come back HTML-escaped (``Don&#39;t Stop Believin&#39;``), so they
+    are unescaped here rather than in the page: the page sets them with
+    ``textContent`` and would otherwise show the entities.
+    """
+    if not isinstance(data, dict):
+        return None
+    items = data.get("items")
+    if not isinstance(items, list):
+        return None
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ident = item.get("id")
+        ref = ident.get("videoId") if isinstance(ident, dict) else None
+        snippet = item.get("snippet") if isinstance(item.get("snippet"), dict) else {}
+        title = snippet.get("title")
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        if not isinstance(title, str) or not title.strip():
+            continue
+        channel = snippet.get("channelTitle")
+        out.append(
+            {
+                "ref": ref.strip(),
+                "title": unescape(title.strip()),
+                "channel": (
+                    unescape(channel.strip()) if isinstance(channel, str) else ""
+                ),
+            }
+        )
+    return out[:SEARCH_MAX_RESULTS]
+
+
+def search_cache_key(query: str) -> str:
+    """One cache slot per query, whitespace and case ignored."""
+    return " ".join((query or "").split()).lower()[:SEARCH_MAX_QUERY]
+
+
+def resolve_search(query: str, lookup, cache: dict):
+    """Results for a query, remembered for the life of the process.
+
+    Same shape as :func:`resolve_title`, and for a harder reason. The free
+    tier of the Data API allows 10,000 quota units a day and a search costs
+    100 of them: one hundred searches, for the whole day, for the whole
+    venue. A room of twenty people all typing "sweet caroline" must spend
+    one of those, not twenty -- so misses and failures are cached too, and
+    a query answered once is never asked again tonight.
+
+    The trade is stated rather than hidden: a search that failed because
+    the router was rebooting stays failed for that exact query until the
+    program is restarted. Restarting is one double-click, and burning the
+    day's quota on retries is the worse failure.
+    """
+    key = search_cache_key(query)
+    if not key:
+        return []
+    if key not in cache:
+        try:
+            found = lookup(query.strip())
+        except Exception:  # noqa: BLE001 -- same rule: search is never fatal
+            found = None
+        cache[key] = found if isinstance(found, list) else None
+    return cache[key]
 
 
 def _repo_page() -> Path | None:
@@ -175,13 +329,19 @@ POSTS = {
     "/api/host/here": "host_here",
     "/api/host/skip": "host_skip",
     "/api/host/end": "host_end",
+    "/api/host/remove": "host_remove",
 }
 
 # the two routes that can carry a pasted link
 TITLED = ("song", "host_add")
 
 
-def page_html(role: str, source: str | None = None, join_url: str | None = None) -> str:
+def page_html(
+    role: str,
+    source: str | None = None,
+    join_url: str | None = None,
+    search: bool = False,
+) -> str:
     """The queue page as a document, told its role, the API, and the join URL.
 
     The join URL is the one the screen turns into a QR code. It comes from
@@ -189,6 +349,12 @@ def page_html(role: str, source: str | None = None, join_url: str | None = None)
     this process knows which address phones can actually reach: a screen
     opened at localhost would otherwise print a QR every phone in the room
     fails to resolve, which is the entire product silently broken.
+
+    ``search`` states whether this process has a YouTube key at all. It is
+    a meta tag rather than something the page probes for, so a phone with
+    no search never renders a search box that could only fail -- the point
+    of the whole degradation rule is that a keyless venue looks exactly
+    like the venue did before search existed, not like a broken one.
     """
     html = source if source is not None else page_source()
     head = HEAD.format(role=role)
@@ -196,6 +362,8 @@ def page_html(role: str, source: str | None = None, join_url: str | None = None)
         head += '<meta name="karaoke-join" content="%s">\n' % escape(
             join_url, quote=True
         )
+    if search:
+        head += '<meta name="karaoke-search" content="on">\n'
     marker = "</style>"
     cut = html.find(marker)
     if cut == -1:
@@ -211,9 +379,12 @@ class Handler(BaseHTTPRequestHandler):
     room: QueueRoom = None
     lock: threading.Lock = None
     join_url: str | None = None
-    # injectable so the suite never reaches YouTube; build() rebinds both
+    # injectable so the suite never reaches YouTube; build() rebinds all four
     title_lookup = staticmethod(youtube_title)
     title_cache: dict = {}
+    search_lookup = staticmethod(youtube_search)
+    search_cache: dict = {}
+    search_enabled: bool = False
 
     def log_message(self, fmt, *args):
         if os.environ.get("KARAOKE_QUIET"):
@@ -254,7 +425,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._html(404, "<h1>karaoke-queue.html not found</h1>")
                 return
             role = "screen" if route.path == "/screen" else "phone"
-            self._html(200, page_html(role, join_url=self.join_url))
+            self._html(
+                200,
+                page_html(role, join_url=self.join_url, search=self.search_enabled),
+            )
+        elif route.path == "/api/search":
+            # Never behind the room lock: search touches no room state, and a
+            # three-second uplink must not stall every phone's poll. Always
+            # 200 -- "we could not ask" is an answer the page renders, not an
+            # error it has to recover from.
+            query = parse_qs(route.query).get("q", [""])[0]
+            found = resolve_search(query, self.search_lookup, self.search_cache)
+            if found is None:
+                self._json(200, {"ok": False, "results": [], "note": SEARCH_OFF_NOTE})
+            else:
+                self._json(200, {"ok": True, "results": found})
         elif route.path == "/api/state":
             query = parse_qs(route.query)
             singer_id = query.get("singer_id", [None])[0]
@@ -310,11 +495,20 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, out)
 
 
-def build(profiles_path=None, join_url=None, title_lookup=None):
+def build(
+    profiles_path=None,
+    join_url=None,
+    title_lookup=None,
+    search_lookup=None,
+    search_enabled=None,
+):
     """A handler class bound to one room -- handy for tests.
 
-    ``title_lookup`` replaces the YouTube oEmbed fetch; the suite passes a
-    fake so no test ever reaches the network.
+    ``title_lookup`` replaces the YouTube oEmbed fetch and ``search_lookup``
+    the Data API search; the suite passes fakes so no test ever reaches the
+    network. ``search_enabled`` defaults to "is there a key in the
+    environment", which is what decides whether the phone shows a search box
+    at all.
     """
     return type(
         "BoundHandler",
@@ -325,6 +519,11 @@ def build(profiles_path=None, join_url=None, title_lookup=None):
             "join_url": join_url,
             "title_lookup": staticmethod(title_lookup or youtube_title),
             "title_cache": {},
+            "search_lookup": staticmethod(search_lookup or youtube_search),
+            "search_cache": {},
+            "search_enabled": (
+                search_available() if search_enabled is None else bool(search_enabled)
+            ),
         },
     )
 
@@ -432,6 +631,25 @@ def firewall_command(port: int = 8772) -> str:
     )
 
 
+def search_status_line() -> str:
+    """Which of the two phones the operator is about to hand out.
+
+    States the fact, never the key. Off is a supported way to run the night,
+    not a warning: the phone still takes a pasted link or a typed title, and
+    that is the whole of what it could do before search existed.
+    """
+    if search_available():
+        return (
+            "Song search: ON — phones can type a song name and tap a result. "
+            "(Free tier: about 100 searches a day, shared by the room.)"
+        )
+    return (
+        "Song search: off — phones paste a YouTube link or type the song title, "
+        "exactly as before. Set %s in the environment to turn search on."
+        % SEARCH_ENV_KEY
+    )
+
+
 def port_in_use_message(port: int) -> str:
     """What a busy port means to the person who double-clicked the icon.
 
@@ -467,6 +685,9 @@ def serve(host="0.0.0.0", port=8772, profiles_path=None):
         return 1
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
+    # Never the key itself, only whether there is one. The operator needs to
+    # know which of the two phones they are about to hand out.
+    print(search_status_line())
     others = [a for a in ranked if a != shown]
     if others and not bound:
         # The guess is a guess. A machine with a VPN up, a container

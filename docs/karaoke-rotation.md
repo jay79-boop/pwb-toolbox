@@ -76,7 +76,7 @@ and the shipped file stay the same code. The big screen opens `/screen`: now sin
 reveal with its walk-up countdown, a QR to join, an event ticker, and
 YouTube playback when the song came in as a link -- the screen corrects
 the engine's guessed duration from the real player (`retime`), including
-"it just ended". Phones scan the QR: name, song (paste a link or just
+"it just ended". Phones scan the QR: name, song (search it, paste a link, or just
 type a title), done. A returning name is greeted with "your usual?" chips
 from the songs it sang here before. The called phone becomes a full-screen
 YOU'RE UP with the countdown and one button. The waiting list a poll
@@ -213,6 +213,98 @@ both halves: the room refusals, the end-to-end "a singer who never touched
 a phone gets on stage", the convicting case that they are struck out
 without it, and page-level reads proving the phone role wires neither and
 the sign-up card is not hidden behind the Host button.
+
+## Type the song, tap the song
+
+Pasting a YouTube link is a thing you do at a desk, not standing at a bar
+holding a drink. So the phone can also search: type *sweet caroline*, get
+rows, tap one, and that video is queued exactly as a pasted link would be.
+
+The endpoint is `GET /api/search?q=` in `queue_server.py` -- **the edge,
+never the engine or the room** -- backed by the YouTube Data API v3
+(`search.list`, `part=snippet`, `type=video`, `videoEmbeddable=true`,
+`maxResults=8`). The key is read from `YOUTUBE_API_KEY` in the process
+environment, the same way `pwb_toolbox/vision/nvidia.py` reads
+`NVIDIA_API_KEY`: never hard-coded, never logged, never sent to the page,
+and an unexpanded `$YOUTUBE_API_KEY` counts as no key rather than as a
+400. The fetcher is injectable (`build(search_lookup=...)`,
+`Handler.search_lookup`) and the suite drives the real `do_GET` through a
+socketless handler with a fake, so **no test reaches YouTube**.
+
+**With no key the phone is exactly the phone it was.** Not "mostly": the
+server sends no `karaoke-search` meta, `#searchWrap` is never revealed, and
+`page_html("phone")` is byte for byte the document it was before search
+existed -- `TestNoKeyIsTodaysPhoneExactly` pins that as a string
+comparison. Paste a link or type a title, as always. The operator is told
+which of the two nights they are running by one line at startup, which
+states the fact and never the key.
+
+**And every other failure lands in the same place.** No uplink, a captive
+portal's login page, a slow answer, a non-200, a quota refusal, JSON that
+is not what the API promised: all of them are `None` from the fetcher,
+`{"ok": false}` from the endpoint -- always HTTP 200, never an error the
+page has to recover from -- and one plain sentence under the search box
+pointing at the paste-a-link box, which is still right there. The timeout
+is 3 seconds, short on purpose: a search must never hang the join flow
+behind it.
+
+**The quota is the part that bites.** The free tier is 10,000 units a day
+and `search.list` costs 100 of them: about **one hundred searches a day for
+the whole venue**, not per person. So results are cached per query for the
+life of the process -- whitespace and case folded onto one slot, and misses
+and failures cached too, exactly as `resolve_title` does. A room of twenty
+people all typing "sweet caroline" spends one search, not twenty. The trade
+is stated rather than hidden: a search that failed because the router was
+rebooting stays failed *for that query* until the program is restarted, and
+restarting is one double-click. Burning the day's quota on retries is the
+worse failure.
+
+Search is on the phone only. The screen's walk-up card was left alone
+deliberately: it exists for the person standing at the TV with no phone,
+who has no pointer to tap a result row with, and its whole virtue is that
+it is two fields and a button. Typing a title there already works.
+
+## The host can see who is waiting, and only that
+
+`/api/host/remove` plus `QueueRoom.host_remove` take somebody off the list
+when they have gone home or fallen asleep. It is the same engine path as
+the phone's "I'm done for tonight" (`Rotation.leave`), so the refusals come
+for free and are the right ones -- a singer mid-song is refused rather than
+yanked off the stage, and removing the *called* singer clears the call,
+which the same request then redraws. **Removal costs no strike**: leaving is
+not missing. It is addressed by `singer_id`, never by name, because two
+Daves in one pub are two singers sharing one profile and removing the wrong
+Dave is worse than not having the button.
+
+The panel needs a list to remove from, so the poll gained `waiting_list`:
+the same people as `waiting`, in the same alphabetical order, carrying the
+id. The ids are no new exposure -- every event in the feed already carries
+one -- and alphabetical is the whole point.
+
+**The host desk shows WHO is waiting and never WHO IS NEXT, and there is no
+reordering, ever.** Nobody knowing who is next is the product; a panel that
+could promote a name would quietly turn the lottery into a list the desk
+keeps. The heading on the panel says "A–Z, not the running order" so the
+host is not left wondering, the page never re-sorts what the server sent,
+and a test asserts that no `/host/move`, `/host/promote`, `/host/reorder`
+or `draggable` exists anywhere in the page.
+
+## The screen has to teach the room with nobody helping
+
+A TV in a pub is read by strangers from across the room, at a glance, with
+no one to explain it. So `/screen` states the whole thing itself: the QR,
+the address in large type with the scheme on its own line so a line break
+can never land inside the IP, three numbered steps, and a signpost to the
+walk-up card for whoever has no phone. Then who is singing, who has been
+called, **what happens if they miss it** -- shown only while it is actually
+hanging over somebody -- and how many are waiting.
+
+Sizes are for three metres, not for a monitor: the screen role sets its own
+base type rather than inheriting the phone's, and the ticker, notes and
+labels scale with it. Style is unchanged (`docs/page-style.md`): committed
+light, every surface and ink stated, and blue / warm-red / grey stay the
+stage-state system -- the no-phone signpost is deliberately neutral rather
+than borrowing a stage colour it does not mean.
 
 ## The address the QR publishes is a guess, so it shows its working
 
