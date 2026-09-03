@@ -50,16 +50,17 @@ pwb-toolbox and this session was not in pwb-toolbox.
 ## It is not only cache read, and the second half is worse per token
 
 Modelling the meter from published rates reproduces it closely enough to trust
-the split — 98.9% against the Opus 5 sessions ($5 in / $25 out / $0.50 cache
-read / $10 cache write), 92.0% against the Fable 5.1 ones ($10 / $50 / $0.25 /
-$12.50):
+the split — 98.9% at Opus 5 rates ($5 in / $25 out / $0.50 cache read / $10
+cache write), 92.0% at Fable 5.1 rates ($10 / $50 / $0.25 / $12.50). Both
+bracket the same conclusion, which is why the split survives the model
+ambiguity described below:
 
 | | tokens | share of tokens | share of spend |
 | --- | ---: | ---: | ---: |
-| cache read | 354.1M | 94.4% | ~21% (Fable) / ~46% (Opus 5) |
-| cache write | 18.6M | 5.0% | ~61% (Fable) / ~40% (Opus 5) |
-| output | 1.7M | 0.5% | ~17% / ~14% |
-| fresh input | 0.6M | 0.2% | ~2% / ~0.2% |
+| cache read | 354.1M | 94.4% | ~21% to ~46% |
+| cache write | 18.6M | 5.0% | ~40% to ~61% |
+| output | 1.7M | 0.5% | ~14% to ~17% |
+| fresh input | 0.6M | 0.2% | under 2% |
 
 Cache read is the volume; cache write is the money. **Together they are 86% of
 the spend and 99.4% of the tokens**, and they have one shared cause: a
@@ -67,12 +68,50 @@ conversation that is re-read in full on every turn and re-checkpointed as it
 grows. Neither number is about the work being done. They are the cost of
 remembering.
 
-## Model choice doubled it
+## Model choice was NOT the story — a first pass said it was, and was wrong
 
-Six of the nineteen sessions ran `claude-fable-5-1` at $10/$50 per MTok —
-double Opus 5. Those six are **32% of the sessions and 65% of the meter**
-($282.11 of $434.02), the 133M session among them. Nothing about installing
-analytics or pushing a run log needed the most expensive model on the account.
+The session list reports `configured_model`, and six of the nineteen sessions
+carried `claude-fable-5-1` on that field — $10/$50 per MTok, double Opus 5.
+Attributing 65% of the meter to model choice on that basis was wrong, and the
+archive responses are what disproved it. They also carry `last_served_model`
+and `user_switched_model`:
+
+| session | configured | last served | switched |
+| --- | --- | --- | --- |
+| Amplitude Analytics installation | fable-5-1 | **opus-5** | opus-5 |
+| NVIDIA Cosmos installation | fable-5-1 | **opus-5** | opus-5 |
+| NVIDIA skills installation | fable-5-1 | **opus-5** | opus-5 |
+| Computer shutdowns investigation | fable-5-1 | fable-5-1 | opus-5 |
+| Desk agent: push the run log | fable-5-1 | fable-5-1 | — |
+
+Most were created as Fable and switched to Opus 5; only one ran Fable
+throughout. Cost cannot arbitrate either — on the 133M session, Fable rates
+model the meter to 95.1% and Opus 5 rates to 95.6%. The two are
+indistinguishable from spend alone.
+
+**`configured_model` is the model a session was created with, not the model
+that served its turns.** Ranking spend by it produces a confident, wrong
+answer, in the same way the desktop panel does. Read `last_served_model`.
+
+So the correction is not a smaller version of the claim; it is the opposite
+one. **Session length is the whole story, and there is no second factor.**
+
+## The session that hit the wall, and what it was carrying
+
+`Amplitude Analytics installation` is not merely the largest. Its record says
+so directly:
+
+    rate_limit_info: {"rateLimitType": "five_hour", "status": "rejected",
+                      "isUsingOverage": false}
+    post_turn_summary: "You've hit your session limit · resets 12:10pm (UTC)"
+    context_usage:     {"max_tokens": 1000000, "used_tokens": 736272}
+
+**736,272 tokens of live context.** That is what every one of its turns
+re-read before doing anything at all, and it is the number the whole drain
+reduces to. A 1M context window is not a budget to fill; filling it makes each
+subsequent turn cost three-quarters of a million tokens to take.
+
+`status: "rejected"` marks it as the session that actually met the wall.
 
 ## What follows
 
@@ -86,9 +125,11 @@ analytics or pushing a run log needed the most expensive model on the account.
    a session paid for hundreds of times.
 3. **Finish a task, then start a new session.** Resuming a large old session to
    ask one small question pays the whole history to ask it.
-4. **Fable 5.1 is a deliberate choice, not a default.** At 2x Opus 5 on input
-   and output it needs a reason. Installation, configuration and log-pushing
-   are not reasons.
+4. **Rank spend by `last_served_model`, never `configured_model`.** The first
+   pass at this document blamed model choice for 65% of the meter using the
+   configured field. Most of those sessions had been switched to Opus 5 and
+   were served by it. A field that looks authoritative and answers a slightly
+   different question is the same failure as the desktop panel, one layer in.
 5. **A warning scoped to one repository warns about the wrong sessions.**
    `session-size.sh` did its job and was in the wrong place;
    `tools/install_spend_hook.py` puts a copy in `~/.claude/` so it fires
