@@ -4,11 +4,14 @@ Written after the 2026-08-24 drain (``docs/token-drain-2026-08-24.md``), which
 was invisible until it hit 100%. Nothing warned at 50% or 80%, so the first
 signal was a wall.
 
-Extended after the 2026-09-02 drain (``docs/token-drain-2026-09-02.md``), whose
-mechanism was different: not a Routine, but one session left open for 24 hours
-until each of its turns re-read 737K tokens. Lifetime cache reads only said so
-after the fact, so ``find_heavy_context`` reads ``context_usage`` instead --
-what the *next* turn will cost, not what past ones did.
+Extended after the 2026-09-03 drain, whose mechanism was different: not a
+Routine, but one session left open for 25 hours until each of its turns re-read
+737K tokens. Lifetime cache reads only said so after the fact, so
+``find_heavy_context`` reads ``context_usage`` instead -- what the *next* turn
+will cost, not what past ones did. Reasoning in
+``docs/decisions/2026-09-03-the-cost-of-a-turn-is-set-before-the-turn-begins.md``;
+the account-wide forensics are in the decision record from the same day about
+the usage panel.
 
 **What this tool will not do is invent a burn rate.** A single snapshot reports
 each session's *lifetime* metered total, not what it spent recently, so a rate
