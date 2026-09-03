@@ -74,28 +74,67 @@ button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .badge.warn{background:var(--warn-bg);color:var(--warn)}
 .badge.bad{background:var(--bad-bg);color:var(--bad)}
 .bignum{font-family:"JetBrains Mono",ui-monospace,monospace;font-weight:700;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+/* ---- phone: song search ----
+   An addition to the paste-a-link box below it, never a replacement: with
+   no key the server sends no karaoke-search meta, #searchWrap stays hidden,
+   and the card is exactly the card it was before search existed. */
+#searchWrap{display:flex;flex-direction:column;gap:10px}
+.searchRow{display:flex;gap:8px}
+.searchRow input{flex:1 1 auto;min-width:0}
+.searchRow button{flex:0 0 auto}
+#searchResults{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto}
+button.result{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;padding:12px 14px;font-weight:400;background:var(--card);border:1px solid var(--rule)}
+button.result:hover{background:var(--live-bg);border-color:var(--live-edge)}
+button.result .rTitle{font-weight:700;color:var(--ink);line-height:1.3}
+button.result .rChan{font-size:13px;color:var(--ink-3)}
+#searchNote{font-size:14px;color:var(--ink-2);background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:9px 12px;margin:0}
+.orRule{display:flex;align-items:center;gap:10px;margin:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.orRule::before,.orRule::after{content:"";flex:1 1 auto;height:1px;background:var(--rule)}
 /* ---- the phone call-up takeover ---- */
 #youreUp{position:fixed;inset:0;background:var(--call);color:#ffffff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px;z-index:10}
 #youreUp h1{font-size:clamp(44px,14vw,96px);color:#ffffff}
 #youreUp .bignum{font-size:64px;color:#ffffff}
 #youreUp button{background:#ffffff;border-color:#ffffff;color:var(--call);font-size:22px;padding:18px 28px}
 #youreUp p{color:#fdece5;font-size:18px;margin:0}
-/* ---- the big screen ---- */
-body[data-role=screen]{background:var(--page)}
-body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;padding-top:28px}
+/* ---- the big screen ----
+   This is a TV, read by strangers from across the room, so the screen role
+   scales its own type up rather than inheriting the phone's. Everything a
+   newcomer needs -- the address, the three steps, who is up, what happens
+   if they miss it, how many are waiting -- is sized to be read standing at
+   the bar, not leaning on the monitor. */
+body[data-role=screen]{background:var(--page);font-size:18px}
+body[data-role=screen] main{max-width:1180px;display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;padding-top:28px}
+body[data-role=screen] .note{font-size:17px}
+body[data-role=screen] .eyebrow{font-size:13px}
+body[data-role=screen] label{font-size:16px}
 #stageCard{grid-column:1;min-height:380px;justify-content:center;text-align:center;gap:18px}
 #stageCard h1{font-size:clamp(40px,6vw,84px)}
 #stageCard .song{font-size:clamp(20px,3vw,34px);color:var(--ink-2);font-family:"Newsreader",Georgia,serif}
+#stageCard .badge{align-self:center;font-size:18px;padding:6px 16px}
+/* what happens if the called singer never turns up -- stated on the screen
+   rather than only on their phone, because the room is what makes them run */
+#stageMiss{font-size:clamp(15px,1.7vw,22px);font-weight:600;color:var(--call);margin:0}
+#stageWait{font-size:clamp(16px,1.8vw,24px);color:var(--ink-2);margin:0;border-top:1px solid var(--rule);padding-top:14px}
+#stageWait .mono{font-weight:700;color:var(--ink)}
 #sideCol{grid-column:2;display:flex;flex-direction:column;gap:16px}
 #qrBox{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+#qrBox h2{font-size:26px}
 #qr{width:100%;box-sizing:border-box;min-height:120px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
 #qr canvas{display:block;image-rendering:pixelated}
-#joinUrl{font-size:15px;font-weight:700;word-break:break-all;color:var(--ink)}
-#qrWarn{font-size:12px;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad);border-radius:6px;padding:6px 8px;margin:0}
+#joinUrl{font-size:clamp(19px,2.1vw,28px);font-weight:700;word-break:break-all;color:var(--ink);font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;line-height:1.25;margin:0}
+/* the scheme gets its own line so a break can never land inside the IP: an
+   address split as "192.168.1.5" / "0:8797" is one somebody will mistype */
+#joinUrl .scheme{display:block;font-size:.55em;font-weight:500;color:var(--ink-3)}
+#joinSteps{margin:0;padding:0 0 0 24px;text-align:left;display:flex;flex-direction:column;gap:8px;font-size:17px;color:var(--ink-2)}
+#joinSteps b{color:var(--ink)}
+/* neutral on purpose: blue/red/grey are the stage-state system (singing /
+   called / waiting) and a signpost is not a stage state */
+#noPhone{font-size:17px;font-weight:700;color:var(--ink);background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:9px 12px;margin:0;width:100%}
+#qrWarn{font-size:14px;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad);border-radius:6px;padding:6px 8px;margin:0}
 #playerWrap{grid-column:1 / -1;border-radius:12px;overflow:hidden;border:1px solid var(--rule);background:#000000;aspect-ratio:16/9;max-height:420px}
 #playerWrap iframe,#playerWrap #player{width:100%;height:100%;border:0}
 #ticker{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px}
-#ticker div{font-size:14px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:4px 2px}
+#ticker div{font-size:17px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:5px 2px}
 /* ---- the host desk: a corner button, a panel only the screen role wires ---- */
 #hostBtn{position:fixed;right:16px;bottom:16px;z-index:5;font-size:13px;font-weight:600;padding:8px 14px;background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
 #hostBtn[aria-expanded=true]{background:var(--sunken);color:var(--ink)}
@@ -104,6 +143,15 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 #hostPanel .row button{flex:1}
 #hostSkipBtn{background:var(--call-bg);border-color:var(--call-edge);color:var(--call)}
 #hostEndBtn{background:var(--live-bg);border-color:var(--live-edge);color:var(--live)}
+/* who is waiting, and the button that takes one of them off the list.
+   A-Z, never a running order: the panel may show WHO is waiting and must
+   never show WHO IS NEXT -- see docs/karaoke-rotation.md. */
+#hostWaiting{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule);padding-top:12px}
+#hostWaitingList{display:flex;flex-direction:column;gap:6px;max-height:38vh;overflow-y:auto}
+.wRow{display:flex;align-items:center;gap:8px;background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:7px 8px 7px 12px}
+.wRow .wName{flex:1 1 auto;min-width:0;font-weight:600;font-size:16px;overflow-wrap:anywhere}
+.wRow button{flex:0 0 auto;padding:6px 12px;font-size:13px;background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
+.wRow button:hover{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
 #hostNote,#walkupNote{font-size:13px;color:var(--good);background:var(--good-bg);border-radius:8px;padding:8px 12px;margin:0}
 /* ---- the walk-up desk: sign-up and arrival, both in plain sight ---- */
 #walkupCard{gap:10px}
@@ -147,6 +195,20 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     <div id="usual" hidden>
       <p class="note">Your usual?</p>
       <div class="chips" id="usualChips"></div>
+    </div>
+    <!-- search: shown only when the server said it has a key, via the
+         karaoke-search meta it injects. With no key this block never
+         appears and the paste/type box below is the whole card, which is
+         exactly what it was before search existed. -->
+    <div id="searchWrap" hidden>
+      <label for="searchIn">Search for it</label>
+      <div class="searchRow">
+        <input type="text" id="searchIn" autocomplete="off" placeholder="sweet caroline">
+        <button class="primary" id="searchBtn">Search</button>
+      </div>
+      <div id="searchResults" hidden></div>
+      <p id="searchNote" hidden></p>
+      <p class="orRule">or</p>
     </div>
     <label for="songIn">Paste a YouTube link, or just type the song</label>
     <input type="url" id="songIn" autocomplete="off" placeholder="https://youtube.com/watch?v=… or Sweet Caroline">
@@ -201,16 +263,31 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
          panel behind a button is no use to someone walking up. -->
     <button class="urgent" id="stageHereBtn" hidden><span id="stageHereName"></span> is at the stage — start the song</button>
     <p class="err" id="stageHereErr" hidden></p>
+    <!-- what happens if the called singer never appears. On the phone this
+         is #upMiss; the room needs it too, because a stranger watching a
+         countdown with no explanation has no idea it is a countdown for
+         somebody, or that nothing is broken when it runs out. -->
+    <p id="stageMiss" hidden></p>
+    <p id="stageWait"><span class="mono" id="screenCount">0</span> waiting<span id="stageWaitTail"> — the draw is random, so anyone could be next</span></p>
   </section>
   <aside id="sideCol" hidden>
+    <!-- the door. A room of strangers has to be able to work the whole
+         thing out from this box alone: scan or type the address, what the
+         two steps after that are, and where to go if they have no phone. -->
     <div class="card" id="qrBox">
       <span class="eyebrow">Join the draw</span>
+      <h2>Sing with us</h2>
       <div id="qr"></div>
-      <p id="joinUrl" class="mono"></p>
+      <p id="joinUrl"></p>
       <p id="qrWarn" hidden>⚠ This screen was opened at localhost, so the QR
         only works on this computer. Restart and open the address the program
         prints instead.</p>
-      <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
+      <ol id="joinSteps">
+        <li><b>Scan the code</b>, or type that address into your phone</li>
+        <li><b>Your name, then your song</b> — search it, paste a link, or just type it</li>
+        <li><b>Keep your phone out.</b> It goes full-screen when the draw picks you</li>
+      </ol>
+      <p id="noPhone">No phone? Sign up right here ↓</p>
     </div>
     <!-- walk-up sign-up. Not hidden and not behind a button: it lives in
          #sideCol, which only the screen role ever shows, so the phone role
@@ -241,6 +318,14 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
         <button id="hostSkipBtn" hidden>⏭ Skip the call — draw again</button>
         <button id="hostEndBtn" hidden>⏹ End the song</button>
       </div>
+      <!-- who is waiting, and a way to take one of them off the list when
+           they have gone home. A-Z and labelled as A-Z: this is not, and
+           must never become, the running order. -->
+      <div id="hostWaiting">
+        <label id="hostWaitingHead">Waiting</label>
+        <p class="note" id="hostWaitingNone" hidden>Nobody in the draw yet.</p>
+        <div id="hostWaitingList"></div>
+      </div>
       <p class="err" id="hostErr" hidden></p>
       <p id="hostNote" hidden></p>
     </section>
@@ -267,6 +352,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   var qs = new URLSearchParams(location.search);
   var API = meta("karaoke-queue");
   var ROLE = qs.get("role") || meta("karaoke-role") || "phone";
+  // The server states whether it has a YouTube key. No meta means no key
+  // means no search box at all -- a phone that shows a search that can only
+  // fail is worse than the phone we already had, which pastes links fine.
+  var SEARCH = meta("karaoke-search") === "on" || qs.get("search") === "1";
   var DEMO = qs.get("demo") === "1";
   document.body.dataset.role = ROLE;
 
@@ -310,6 +399,8 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     singing: {singer_id: "s1", name: "Ada", title: "Twinkle, Twinkle, Little Star", source: "title", ref: null, ends_in_s: 93},
     called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41, solo: false},
     house_on: false, waiting: ["Elmore", "Grace", "Jay", "Lin"], waiting_count: 4, seq: 7,
+    waiting_list: [{singer_id: "s4", name: "Elmore"}, {singer_id: "s2", name: "Grace"},
+                   {singer_id: "s3", name: "Jay"}, {singer_id: "s5", name: "Lin"}],
     events: [{seq: 7, kind: "call", name: "Grace", detail: {}}],
     you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, solo: false, on_stage: false, needs_song: false}
   };
@@ -338,20 +429,95 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     phoneCards.forEach(function (id) { show(id, id === card); });
   }
 
-  function submitSong() {
-    var raw = $("songIn").value.trim();
-    if (!raw) return;
-    var vid = youtubeId(raw);
-    var payload = {singer_id: singerId, source: vid ? "link" : "title"};
-    if (vid) { payload.ref = vid; payload.title = raw; }
-    else { payload.title = raw; }
+  // One way into the queue, whether the title was typed, pasted, tapped off
+  // a "your usual?" chip, or tapped off a search result. A ref means the
+  // screen can play it; no ref is a bare title, which the engine has always
+  // accepted and a venue with its own karaoke rig runs on.
+  function queueSong(title, ref) {
+    if (!title) return;
+    var payload = {singer_id: singerId, source: ref ? "link" : "title", title: title};
+    if (ref) payload.ref = ref;
     post("/song", payload, function () {
-      show("songErr", false); $("songIn").value = ""; poll();
+      show("songErr", false);
+      $("songIn").value = "";
+      clearResults();
+      poll();
     }, function (err) { $("songErr").textContent = err; show("songErr", true); });
   }
 
+  function submitSong() {
+    var raw = $("songIn").value.trim();
+    if (!raw) return;
+    queueSong(raw, youtubeId(raw));
+  }
+
+  // ==== song search ======================================================
+  // Type "sweet caroline", tap a row. Every failure -- no key, no uplink,
+  // the day's quota spent, a slow answer, nonsense back -- lands in one
+  // plain sentence under the box, and the paste-a-link path underneath is
+  // untouched and still visible. The server answers 200 with ok:false for
+  // all of them, so there is one path here, not five.
+  var SEARCH_FALLBACK =
+    "Search isn't available right now — paste a YouTube link or just type the song title.";
+
+  function clearResults() {
+    $("searchIn").value = "";
+    $("searchResults").textContent = "";
+    show("searchResults", false);
+    show("searchNote", false);
+  }
+
+  function saySearch(text) {
+    $("searchResults").textContent = "";
+    show("searchResults", false);
+    $("searchNote").textContent = text;
+    show("searchNote", true);
+  }
+
+  function showResults(body) {
+    if (!body || body.ok !== true) { saySearch((body && body.note) || SEARCH_FALLBACK); return; }
+    var rows = body.results || [];
+    if (!rows.length) {
+      saySearch("Nothing found — try fewer words, or paste a link below.");
+      return;
+    }
+    show("searchNote", false);
+    var box = $("searchResults");
+    box.textContent = "";
+    rows.forEach(function (row) {
+      var pick = document.createElement("button");
+      pick.type = "button"; pick.className = "result";
+      var title = document.createElement("span");
+      title.className = "rTitle"; title.textContent = row.title;
+      var channel = document.createElement("span");
+      channel.className = "rChan"; channel.textContent = row.channel || "";
+      pick.appendChild(title); pick.appendChild(channel);
+      pick.onclick = function () { queueSong(row.title, row.ref); };
+      box.appendChild(pick);
+    });
+    show("searchResults", true);
+  }
+
+  function runSearch() {
+    var query = $("searchIn").value.trim();
+    if (!query) return;
+    $("searchBtn").disabled = true;
+    saySearch("Searching…");
+    fetch(API + "/search?q=" + encodeURIComponent(query))
+      .then(function (r) { return r.json(); })
+      .then(showResults)
+      .catch(function () { saySearch(SEARCH_FALLBACK); })
+      .then(function () { $("searchBtn").disabled = false; });
+  }
+  // ==== end song search ==================================================
+
   if (ROLE === "phone") {
     phoneShow(singerId ? null : "joinCard");
+    if (SEARCH) {
+      show("searchWrap", true);
+      $("searchBtn").onclick = runSearch;
+      $("searchIn").onkeydown = function (e) { if (e.key === "Enter") runSearch(); };
+    }
     $("joinBtn").onclick = function () {
       post("/join", {name: $("nameIn").value.trim()}, function (body) {
         singerId = body.singer_id;
@@ -675,6 +841,24 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     return null;                        // opened from a file:// path
   }
 
+  function setJoinAddress(url) {
+    // Scheme on its own line, host:port big underneath. Somebody across the
+    // room is going to type the second half into a phone, and a line break
+    // landing inside "192.168.1.50" hands them an address that resolves to
+    // somewhere else entirely.
+    var box = $("joinUrl");
+    box.textContent = "";
+    var cut = url.indexOf("://");
+    if (cut === -1) { box.textContent = url; return; }
+    var scheme = document.createElement("span");
+    scheme.className = "scheme";
+    scheme.textContent = url.slice(0, cut + 3);
+    var host = document.createElement("span");
+    host.textContent = url.slice(cut + 3).replace(/\/+$/, "");
+    box.appendChild(scheme);
+    box.appendChild(host);
+  }
+
   var qrDrawn = false;
   function drawQR() {
     if (qrDrawn) return;
@@ -684,7 +868,7 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       return;
     }
     qrDrawn = true;
-    $("joinUrl").textContent = url;
+    setJoinAddress(url);
     show("qrWarn", /^https?:\/\/(localhost|127\.|\[?::1\]?)/i.test(url));
     var m = qrEncode(url);
     if (!m) return;                     // longer than any address we serve
@@ -761,10 +945,45 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     $("hostEndBtn").onclick = function () {
       post("/host/end", {}, function () { ok("⏹ song ended"); }, oops);
     };
+    // Who is waiting, and a Remove for the one who went home. The list is
+    // state.waiting_list: the same people as the public waiting list, in the
+    // same alphabetical order, carrying the id Remove needs. It is A-Z and
+    // says so, because WHO is waiting is public and WHO IS NEXT is the whole
+    // product -- this panel must never become a running order.
+    var listedIds = null;
+    function drawWaiting() {
+      var rows = state.waiting_list || [];
+      $("hostWaitingHead").textContent =
+        "Waiting — " + rows.length + " in the draw (A–Z, not the running order)";
+      show("hostWaitingNone", rows.length === 0);
+      var signature = rows.map(function (r) { return r.singer_id; }).join(",");
+      if (signature === listedIds) return;   // no rebuild under the host's finger
+      listedIds = signature;
+      var box = $("hostWaitingList");
+      box.textContent = "";
+      rows.forEach(function (row) {
+        var line = document.createElement("div");
+        line.className = "wRow";
+        var who = document.createElement("span");
+        who.className = "wName"; who.textContent = row.name;
+        var drop = document.createElement("button");
+        drop.type = "button"; drop.textContent = "Remove";
+        drop.setAttribute("aria-label", "Remove " + row.name + " from the draw");
+        drop.onclick = function () {
+          post("/host/remove", {singer_id: row.singer_id}, function (body) {
+            listedIds = null;               // rebuild on the next poll
+            ok("✔ removed " + body.name);
+          }, oops);
+        };
+        line.appendChild(who); line.appendChild(drop);
+        box.appendChild(line);
+      });
+    }
     return function () {
       // the buttons exist only while they apply
       show("hostSkipBtn", !!(state.called && !state.called.appeared));
       show("hostEndBtn", !!state.singing);
+      drawWaiting();
     };
   }
   if (ROLE === "screen") hostRender = wireHost();
@@ -836,6 +1055,16 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     if (walkupRender) walkupRender();
     drawQR();
     $("screenCount").textContent = state.waiting_count;
+    $("stageWaitTail").textContent = state.waiting_count
+      ? " — the draw is random, so anyone could be next"
+      : " — scan the code and be the first";
+    // the miss rule, shown only while it is actually hanging over somebody:
+    // a timed call nobody has answered yet
+    var pending = !!(state.called && !state.called.appeared && !state.called.solo);
+    $("stageMiss").textContent = pending && !state.singing
+      ? "Not at the mic when that hits zero? We draw somebody else — you stay in for the next one."
+      : "";
+    show("stageMiss", pending && !state.singing);
     var badge = $("stageBadge");
     if (state.singing) {
       badge.className = "badge live"; badge.textContent = "🎤 now singing";
