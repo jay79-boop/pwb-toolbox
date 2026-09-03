@@ -174,6 +174,26 @@ times, so it no longer carries one — just add a bullet):
   work, and say in the row what confirmed it. Leave it open only when you cannot
   confirm it.
 
+  **A question you put to them goes in the ledger too, not only in the box.**
+  Asked for 2026-09-03, after a question box closed before they could answer and
+  there was no way back to it: *"if it close I can still open and answer, if I
+  haven't already answer"*. `AskUserQuestion` renders once and is gone — it
+  scrolls away with the session exactly like a terminal checkbox does, which is
+  the failure the ledger already exists to fix, arriving one layer up.
+
+  So the ledger carries questions as a first-class item: `"kind": "question"`
+  with an `options` array of `{id, label, note}`, `"multi": true` where more than
+  one answer can be true at once, and `answer` / `answerNote` once they pick.
+  The page renders those as clickable options that republish on answer, so an
+  unanswered question stays visibly open on any device and an answered one can
+  still be changed. Unanswered questions are counted separately in the header,
+  because one buried among fifty actions is one nobody sees.
+
+  **Ask in the box AND write it here, in the same turn.** The box is the fast
+  path when they are watching; the ledger is what survives when they are not.
+  Tick the ledger copy yourself when they answer in chat — that is a confirmed
+  row like any other, and leaving it open would make them answer twice.
+
   The bar is unchanged and is the whole safeguard: *verified*, not *believed* —
   tick when the work is confirmed by something outside your own reasoning: a test
   run, an API read, a file checked, an artefact off their disk. Otherwise leave it
