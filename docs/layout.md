@@ -446,8 +446,11 @@ top-level directories and points here for the detail.
   owner's nightly backup pushes without pulling, so a commit from a session
   breaks it. The procedure is the `vault-route` skill; `tests/test_vault_boundary.py`
   fails CI if vault content lands in this fork),
-  and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
-  five-hour window, measured rather than guessed) and `spend-safety.md` (every
+  and the spend-safety set — `token-drain-2026-08-24.md` (what exhausted a
+  five-hour window, measured rather than guessed), `token-drain-2026-09-02.md`
+  (the second one, with a different mechanism: a single session left open for
+  24 hours, where age rather than effort level was the cost), and
+  `spend-safety.md` (every
   surface that can reach a card, ranked by worst case, and the five layers that
   bound them; the rules themselves are the `spend-safety` skill)
 
