@@ -61,7 +61,7 @@ from __future__ import annotations
 import sys
 '''
 
-QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    main()\n'
+QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    raise SystemExit(main())\n'
 
 FOOTER = """
 
@@ -117,6 +117,7 @@ def _standalone_main(argv=None):
     if not profiles:
         profiles = str(_home_dir() / "karaoke-profiles.json")
 
+    timer = None
     if not args.no_browser:
         # Open the screen on the address PHONES will use, never localhost:
         # the page builds its QR from location.origin, so a screen opened
@@ -124,11 +125,17 @@ def _standalone_main(argv=None):
         # reach. This is the whole product on the default double-click path.
         host = args.host if args.host not in ("0.0.0.0", "") else None
         reachable = host or lan_address() or "localhost"
-        threading.Timer(
+        timer = threading.Timer(
             1.5, webbrowser.open, [f"http://{reachable}:{args.port}/screen"]
-        ).start()
-    serve(args.host, args.port, profiles)
-    return 0
+        )
+        timer.start()
+    code = serve(args.host, args.port, profiles)
+    if code and timer is not None:
+        # serve() refused the port -- almost always the last karaoke window
+        # still open. Opening a browser now would land on THAT instance and
+        # make the "close the other window" message read as a lie.
+        timer.cancel()
+    return code
 
 
 if __name__ == "__main__":

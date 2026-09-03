@@ -1245,3 +1245,143 @@ def test_the_run_log_merges_by_union():
     assert re.search(
         r"^tools/desk_agent/runs\.jsonl\s+merge=union\s*$", attrs, re.MULTILINE
     ), "tools/desk_agent/runs.jsonl needs merge=union in .gitattributes"
+
+
+# ----------------------------------- what the jobs may actually run --------
+#
+# A fortnight of denials, and not one of them was a bug in the job.
+#
+# premarket and journal both stop at their FIRST step -- `python
+# tools/desk_levels.py ...` -- with `requires-approval`, and a headless
+# `claude -p` run has nobody to answer a prompt, so that is a denial and not a
+# pause. Ten runs between 2026-08-31 and 09-01 died there, each one correctly
+# reporting that it had not read a single level, while `runlog review` filed
+# both jobs under "never produced an action" -- reading the counts right and
+# the situation exactly wrong.
+#
+# Three consecutive run records diagnosed it precisely and all three refused to
+# fix it, which was the correct call: the guardrail forbids an agent widening
+# its own access, and reaching the command through an already-permitted one
+# would be that same violation wearing a hat.
+#
+# So the grant goes on the launcher. The check below is the part that lasts: it
+# does not assert the four entries exist, it asserts that EVERY command the job
+# files invoke is covered by something -- settings.json or the launcher, either
+# is fine. A new step added to a job file with no matching grant fails here
+# rather than silently on a Tuesday morning three weeks later.
+
+SETTINGS = REPO / ".claude" / "settings.json"
+
+# `python tools/x.py ...` or `python -m package.module ...`, at the start of a
+# line in a job file's numbered steps.
+JOB_COMMAND = re.compile(
+    r"^\s*(python3?\s+(?:-m\s+[A-Za-z_][\w.]*|tools/[\w/]+\.py))", re.MULTILINE
+)
+
+# A grant is written `Bash(<command prefix>:*)`.
+GRANT = re.compile(r"^Bash\((.+?):\*\)$")
+
+
+def settings_grants():
+    import json
+
+    data = json.loads(read(SETTINGS))
+    return list(data.get("permissions", {}).get("allow", []))
+
+
+def launcher_grants():
+    src = read(LAUNCHER)
+    # Split on the array's own closing line, not on ")" -- every grant string
+    # ends in ":*)" and a naive split stops inside the first one.
+    block = src.split("$jobTools = @(", 1)[1].split("\n)", 1)[0]
+    return re.findall(r"'([^']+)'", block)
+
+
+def granted_prefixes():
+    out = []
+    for entry in settings_grants() + launcher_grants():
+        found = GRANT.match(entry)
+        if found:
+            out.append(" ".join(found.group(1).split()))
+    return out
+
+
+def job_commands():
+    found = {}
+    for path in sorted(JOBS_DIR.glob("*.md")):
+        for match in JOB_COMMAND.finditer(read(path)):
+            found.setdefault(" ".join(match.group(1).split()), path.name)
+    return found
+
+
+def test_the_job_files_do_invoke_commands_worth_checking():
+    # Guard the guard. A regex that silently matches nothing would make every
+    # assertion below pass forever -- the exact shape of
+    # docs/decisions/2026-08-29-a-check-that-hardcodes-its-input-is-not-a-check.
+    commands = job_commands()
+    # Deduplicated, so this counts distinct commands rather than call sites:
+    # premarket invokes desk_levels twice and that is one command to grant.
+    assert len(commands) >= 2, commands
+    assert any("desk_levels.py" in c for c in commands), commands
+    assert any("runlog" in c for c in commands), commands
+
+
+def test_every_command_a_job_file_invokes_is_permitted():
+    prefixes = granted_prefixes()
+    ungranted = {
+        command: origin
+        for command, origin in job_commands().items()
+        if not any(command.startswith(p) for p in prefixes)
+    }
+    assert not ungranted, (
+        "these commands appear in a job file with no matching grant, so an "
+        "unattended run will stop at requires-approval with nobody to answer "
+        "it: " + repr(ungranted)
+    )
+
+
+def test_the_grant_is_carried_on_the_launch_command():
+    # It cannot live in settings.json: that allowlist is guarded against agent
+    # edits by design, and a grant there would reach every session in the
+    # checkout rather than only this unattended run.
+    src = read(LAUNCHER)
+    assert "$claudeArgs += @('--allowedTools') + $jobTools" in src
+    assert "& $claude @claudeArgs" in src
+    # Ordering: the grant has to be appended before the invocation reads it.
+    assert src.index("$jobTools = @(") < src.index("& $claude @claudeArgs")
+
+
+def test_the_grant_covers_both_interpreter_spellings():
+    # `python3` is how the existing runlog grants are written, and a machine
+    # that resolves only one of the two would otherwise be a silent denial.
+    grants = launcher_grants()
+    for script in ("tools/desk_levels.py", "tools/backtest_lab.py"):
+        assert f"Bash(python {script}:*)" in grants
+        assert f"Bash(python3 {script}:*)" in grants
+
+
+def test_the_repo_venv_is_put_ahead_of_the_agents_path():
+    # The launcher resolved the venv interpreter and then used it only for its
+    # own fallback record, so every python the AGENT ran was the system one.
+    # That cost the chart step a ModuleNotFoundError on matplotlib while the
+    # .venv beside it had the package installed.
+    src = read(LAUNCHER)
+    assert "$venvScripts = Join-Path $RepoRoot '.venv\\Scripts'" in src
+    assert "$env:PATH = $venvScripts + ';' + $env:PATH" in src
+    assert src.index("$env:PATH = $venvScripts") < src.index("& $claude @claudeArgs")
+
+
+def test_the_path_change_is_process_scoped_and_never_persisted():
+    # A launcher that writes the user's real PATH would leak one job's
+    # environment into every program they open afterwards.
+    src = read(LAUNCHER)
+    assert "SetEnvironmentVariable" not in src
+
+
+def test_the_venv_is_only_used_when_it_is_actually_there():
+    # The second checkout's .venv is near-empty, and a machine may have none.
+    # Prepending a directory that does not exist would be harmless but the
+    # guard is what keeps the failure honest if it ever stops being.
+    src = read(LAUNCHER)
+    guard = src.split("$venvScripts = Join-Path", 1)[1].split("$env:PATH =", 1)[0]
+    assert "Test-Path -LiteralPath $venvScripts" in guard

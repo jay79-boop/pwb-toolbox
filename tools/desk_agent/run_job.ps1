@@ -94,9 +94,21 @@ try {
   $OutputEncoding           = New-Object Text.UTF8Encoding $false
 } catch { }
 
-# -- resolve python, for the fallback record -----------------------------------
+# -- resolve python, and put the repo venv ahead of the child's PATH -----------
+# Two uses, and the second is why this block is no longer only about the
+# fallback record. $python runs runlog from THIS script. The PATH line is for
+# the agent: claude and everything it spawns inherit this process's environment,
+# and without the venv on PATH a bare `python` in an agent tool call resolves to
+# the system install -- which is not the interpreter this repo's requirements
+# are installed into. On 2026-09-01 that surfaced as ModuleNotFoundError for
+# matplotlib inside desk_levels' chart path, on a machine whose .venv had it.
+# Scoped to this process: nothing here edits a persisted PATH.
 $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { 'python' }
+$venvScripts = Join-Path $RepoRoot '.venv\Scripts'
+if (Test-Path -LiteralPath $venvScripts) {
+  $env:PATH = $venvScripts + ';' + $env:PATH
+}
 
 function Get-OutputTail([string] $text, [int] $max = 600) {
   # What reaches the record has to be bounded, and it has to be one line.
@@ -350,6 +362,40 @@ foreach ($dir in (@($jobDirs[$Job]) + $AddDir)) {
     Write-Log ("NOT added, path does not exist: " + $dir)
   }
 }
+
+# -- what this job is allowed to run -------------------------------------------
+# The grant lives here rather than in .claude/settings.json, for two reasons and
+# both are deliberate.
+#
+# That file's allowlist is guarded: a session cannot edit it, by design. An
+# agent able to widen its own permissions does not have permissions, and the
+# desk agent's own guardrail says the same thing in its own words -- three run
+# records in a row identified this exact fix and correctly refused to apply it.
+#
+# And a grant there would reach every session in this checkout, interactive ones
+# included, when what needs it is this unattended run and nothing else. Narrower
+# is the point, not a consolation.
+#
+# Why it is needed: premarket and journal both stopped at requires-approval on
+# their first step, ten runs between them, because python tools/desk_levels.py
+# is not permitted and a headless run has nobody to answer a prompt. Granted in
+# the path form because that is the form the job files invoke --
+# jobs/premarket.md lines 18-19 and jobs/journal.md line 28 -- and in both
+# interpreter spellings, matching how the runlog grants are written.
+#
+# --allowedTools ADDS to what settings.json already permits rather than
+# replacing it, so the runlog grants this job needs to write its own record are
+# untouched. tests/test_desk_agent_launcher.py checks every command the job
+# files invoke is covered by one of the two lists, so a new step in a job file
+# cannot quietly reintroduce the fortnight of denials this ended.
+$jobTools = @(
+  'Bash(python tools/desk_levels.py:*)',
+  'Bash(python3 tools/desk_levels.py:*)',
+  'Bash(python tools/backtest_lab.py:*)',
+  'Bash(python3 tools/backtest_lab.py:*)'
+)
+$claudeArgs += @('--allowedTools') + $jobTools
+Write-Log ("granted: " + ($jobTools -join ' '))
 
 # -- run -----------------------------------------------------------------------
 $promptLines = @(

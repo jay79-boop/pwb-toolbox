@@ -87,3 +87,8 @@ dist/
 # ignored, or the tool observes its own output as uncommitted work.
 awareness/*
 !awareness/README.md
+
+# singer memory written by the karaoke queue server. The launcher puts it
+# under %LOCALAPPDATA%, but 'python -m tools.karaoke_server.queue_server'
+# defaults to the working directory, which is usually this checkout.
+karaoke-profiles.json

@@ -104,7 +104,12 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 #hostPanel .row button{flex:1}
 #hostSkipBtn{background:var(--call-bg);border-color:var(--call-edge);color:var(--call)}
 #hostEndBtn{background:var(--live-bg);border-color:var(--live-edge);color:var(--live)}
-#hostNote{font-size:13px;color:var(--good);background:var(--good-bg);border-radius:8px;padding:8px 12px;margin:0}
+#hostNote,#walkupNote{font-size:13px;color:var(--good);background:var(--good-bg);border-radius:8px;padding:8px 12px;margin:0}
+/* ---- the walk-up desk: sign-up and arrival, both in plain sight ---- */
+#walkupCard{gap:10px}
+#walkupCard h2{font-size:23px}
+#stageHereBtn{align-self:center;max-width:100%}
+#stageHereErr{align-self:center}
 @media (max-width:760px){
   body[data-role=screen] main{grid-template-columns:1fr}
   #sideCol,#stageCard,#playerWrap,#ticker{grid-column:1}
@@ -189,6 +194,13 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     <h1 id="stageName">Warming up…</h1>
     <p class="song" id="stageSong">Scan the QR to get in the draw</p>
     <div class="bignum" id="stageClock" hidden>0:00</div>
+    <!-- arrival, confirmable by the room: /api/here needs a singer_id only
+         a phone holds, so a walk-up signed in at this screen could be
+         called and never answer. Here on the stage card rather than in the
+         host panel because the singer it exists for has no phone, and a
+         panel behind a button is no use to someone walking up. -->
+    <button class="urgent" id="stageHereBtn" hidden><span id="stageHereName"></span> is at the stage — start the song</button>
+    <p class="err" id="stageHereErr" hidden></p>
   </section>
   <aside id="sideCol" hidden>
     <div class="card" id="qrBox">
@@ -200,6 +212,24 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
         prints instead.</p>
       <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
     </div>
+    <!-- walk-up sign-up. Not hidden and not behind a button: it lives in
+         #sideCol, which only the screen role ever shows, so the phone role
+         gets it never and the screen gets it always. The QR above stays the
+         first thing anyone sees -- this is the way in for whoever has no
+         phone, or no wish to scan one. -->
+    <section class="card" id="walkupCard">
+      <span class="eyebrow">No phone? No problem</span>
+      <h2>Sign up right here</h2>
+      <p class="note">Your name, and your song if you've picked one. You go
+        in the same random draw as everybody else.</p>
+      <label for="walkupName">Your name</label>
+      <input type="text" id="walkupName" maxlength="24" autocomplete="off" placeholder="Ada">
+      <label for="walkupSong">Your song — or leave it, and choose later</label>
+      <input type="text" id="walkupSong" autocomplete="off" placeholder="Sweet Caroline, or a YouTube link">
+      <button class="primary" id="walkupBtn">Put me in the draw</button>
+      <p class="err" id="walkupErr" hidden></p>
+      <p id="walkupNote" hidden></p>
+    </section>
     <!-- the host desk: markup is inert until the screen role wires it -->
     <section class="card" id="hostPanel" hidden>
       <span class="eyebrow">Host desk</span>
@@ -740,9 +770,70 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   if (ROLE === "screen") hostRender = wireHost();
   // ==== end host desk ====================================================
 
+  // ==== walk-up desk =====================================================
+  // Two controls for the person standing at the big screen with no phone.
+  // Both are in plain sight, and that is the point: behind the Host button
+  // they would read as staff tools, which is the thing being fixed.
+  //
+  // Sign-up sits in the side column under the QR. The QR keeps its place
+  // and stays the better route for anyone holding a phone; this is the
+  // way in for everyone else, and it posts to the same /host/add route.
+  //
+  // Arrival ("they're here") sits on the stage card -- see the markup
+  // comment there. A walk-up has no phone carrying their singer_id, so
+  // /api/here can never be sent for them; without a control the room can
+  // reach, the draw calls them, nobody can answer, and the clock strikes
+  // them out. Sign-up without this is not half a feature, it is a broken
+  // one, so the two ship together.
+  //
+  // Same gate as the host desk: wired only when ROLE is "screen".
+  var walkupRender = null;
+  function wireWalkup() {
+    function oops(err) {
+      $("walkupErr").textContent = err; show("walkupErr", true);
+      show("walkupNote", false);
+    }
+    $("walkupBtn").onclick = function () {
+      var name = $("walkupName").value.trim();
+      var raw = $("walkupSong").value.trim();
+      if (!name) { oops("pop your name in first"); return; }
+      // the same parse the phone does in submitSong: a link is a link
+      var vid = youtubeId(raw);
+      var payload = {name: name, source: vid ? "link" : "title"};
+      if (raw) { payload.title = raw; }
+      if (vid) { payload.ref = vid; }
+      post("/host/add", payload, function (body) {
+        $("walkupName").value = ""; $("walkupSong").value = "";
+        show("walkupErr", false);
+        $("walkupNote").textContent = "You're in, " + body.name +
+          " — we'll call you." + (body.title ? "" : " Tell the desk your song when you've picked one.");
+        show("walkupNote", true);
+        $("walkupName").focus();
+        poll();
+      }, oops);
+    };
+    $("stageHereBtn").onclick = function () {
+      post("/host/here", {}, function () {
+        show("stageHereErr", false); poll();
+      }, function (err) {
+        $("stageHereErr").textContent = err; show("stageHereErr", true);
+      });
+    };
+    return function () {
+      // only while somebody is called and has not yet reached the stage
+      var walking = !!(state.called && !state.called.appeared);
+      if (walking) $("stageHereName").textContent = state.called.name;
+      else show("stageHereErr", false);
+      show("stageHereBtn", walking);
+    };
+  }
+  if (ROLE === "screen") walkupRender = wireWalkup();
+  // ==== end walk-up desk =================================================
+
   function renderScreen() {
     show("stageCard", true); show("sideCol", true); show("ticker", true);
     if (hostRender) hostRender();
+    if (walkupRender) walkupRender();
     drawQR();
     $("screenCount").textContent = state.waiting_count;
     var badge = $("stageBadge");
