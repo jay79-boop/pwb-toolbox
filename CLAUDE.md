@@ -37,6 +37,12 @@ rules live in the `gexio-machine` skill. Rules that are *not* in the skill:
 - **Never indent prose under a checkbox.** Four-space indent renders as a code
   block, which reads as "paste this" — and they have pasted explanation text
   into PowerShell. An indented block means pasteable and nothing else.
+- **Switching programs is its own step, with its own success check.** Naming the
+  program inside the same step does not move anyone out of the window already in
+  front of them — a Claude Code prompt handed over that way went into PowerShell
+  and its parentheses parsed as a subexpression. One step opens the program and
+  states what the new screen looks like; the *next* step is the paste.
+  `docs/decisions/2026-09-04-naming-the-program-does-not-move-anyone-out-of-the-window.md`
 - **Point at the exact place**, never at where to look for it: give the URL that
   lands on the thing, filtered to it, then name the control to click.
 - **A step explained in prose above still gets repeated in the block.**
