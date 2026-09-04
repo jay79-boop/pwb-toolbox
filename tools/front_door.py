@@ -22,8 +22,8 @@ reach it, what Claude loads without being asked, and every decision on record.
 Everything is scanned. Nothing here keeps its own list of tools, because a list
 beside the tree is a second copy and the two stop agreeing on the first edit --
 which is why the command one-liners come from the ``## Commands`` block in
-``CLAUDE.md`` (already written in the owner's language) and the tool
-one-liners from ``docs/layout.md``, rather than being typed in here.
+``docs/layout.md`` (already written in the owner's language) and the tool
+one-liners from the same file, rather than being typed in here.
 
     python tools/front_door.py build --out docs/desk-index.html
     python tools/front_door.py check          # what the page would claim
@@ -97,15 +97,38 @@ def _first_sentence(text, limit=240, sentences=1):
     return out
 
 
+def commands_source(root=ROOT):
+    """The file the ``## Commands`` block is read from, or ``None``.
+
+    It lives in ``docs/layout.md``. It used to live in ``CLAUDE.md``, which is
+    read into every session; on 2026-09-04 that file was cut from 32KB to under
+    12KB because the full text cost roughly 8,200 tokens before a word was
+    typed. CLAUDE.md is still checked as a fallback so an older checkout, or a
+    branch that has not taken the cut yet, still indexes.
+
+    Exposed rather than inlined so the tests can assert every blurb is quotable
+    from the file the scan actually read, instead of a filename typed twice.
+    """
+    for candidate in (root / "docs" / "layout.md", root / "CLAUDE.md"):
+        if candidate.is_file() and re.search(
+            r"^## Commands\s*$", candidate.read_text(encoding="utf-8"), re.M
+        ):
+            return candidate
+    return None
+
+
 def scan_commands(root=ROOT):
-    """The ``## Commands`` block of CLAUDE.md: what the owner actually types.
+    """The ``## Commands`` block: what the owner actually types.
 
     Each line is already ``command  # what it is for`` in their own words, so
     the blurb is lifted rather than invented. Lines with no comment are still
     listed -- a command with no explanation is a gap worth seeing.
     """
-    text = (root / "CLAUDE.md").read_text(encoding="utf-8")
-    match = re.search(r"^## Commands\s*\n+```bash\n(.*?)^```", text, re.S | re.M)
+    source = commands_source(root)
+    if source is None:
+        return []
+    text = source.read_text(encoding="utf-8")
+    match = re.search(r"^## Commands\s*$.*?^```bash\n(.*?)^```", text, re.S | re.M)
     if not match:
         return []
     entries = []
