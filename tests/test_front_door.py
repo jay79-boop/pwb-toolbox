@@ -98,11 +98,14 @@ def test_the_page_says_where_live_state_comes_from(page):
 def test_nothing_on_the_page_is_typed_into_the_generator(index):
     """Every blurb must be quotable from the file it claims to come from."""
     root = front_door.ROOT
-    claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    source = front_door.commands_source(root)
+    assert source is not None, "no file carries the ## Commands block"
+    commands = source.read_text(encoding="utf-8")
+    where = source.relative_to(root)
     for entry in index.commands:
-        assert entry.name in claude, f"{entry.name!r} is not in CLAUDE.md"
+        assert entry.name in commands, f"{entry.name!r} is not in {where}"
         if entry.blurb:
-            assert entry.blurb in claude, f"{entry.blurb!r} is not in CLAUDE.md"
+            assert entry.blurb in commands, f"{entry.blurb!r} is not in {where}"
 
     for entry in index.skills:
         text = (root / ".claude" / "skills" / entry.name / "SKILL.md").read_text(
