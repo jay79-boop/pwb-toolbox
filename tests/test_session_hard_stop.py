@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "session-hard-stop.sh"
+HOOK = (
+    Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "session-hard-stop.sh"
+)
 
 ALLOW, BLOCK = 0, 2
 
@@ -50,7 +52,9 @@ def _run(payload, env=None, threshold="1000000"):
 
 
 def test_blocks_once_over_threshold(tmp_path):
-    r = _run({"transcript_path": str(_transcript(tmp_path, 5_000_000)), "tool_name": "Read"})
+    r = _run(
+        {"transcript_path": str(_transcript(tmp_path, 5_000_000)), "tool_name": "Read"}
+    )
     assert r.returncode == BLOCK
     decision = json.loads(r.stdout)["hookSpecificOutput"]
     assert decision["permissionDecision"] == "deny"
@@ -66,7 +70,9 @@ def test_silent_under_threshold(tmp_path):
 @pytest.mark.parametrize("tool", ["Write", "Edit", "NotebookEdit", "TodoWrite"])
 def test_work_in_flight_can_still_be_saved(tmp_path, tool):
     """A stop that strands uncommitted work costs more than the tokens it saves."""
-    r = _run({"transcript_path": str(_transcript(tmp_path, 5_000_000)), "tool_name": tool})
+    r = _run(
+        {"transcript_path": str(_transcript(tmp_path, 5_000_000)), "tool_name": tool}
+    )
     assert r.returncode == ALLOW
 
 
