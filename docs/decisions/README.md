@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-04 | [The drain confound was never installs vs. plan change](2026-09-04-the-drain-confound-was-never-installs-vs-plan-change.md) |
 | 2026-09-04 | [The floor is paid before the first word](2026-09-04-the-floor-is-paid-before-the-first-word.md) |
 | 2026-09-03 | [The cost of a turn is set before the turn begins](2026-09-03-the-cost-of-a-turn-is-set-before-the-turn-begins.md) |
 | 2026-09-03 | [The usage panel cannot see the sessions that drained the window](2026-09-03-the-usage-panel-cannot-see-the-sessions-that-drained-the-window.md) |
