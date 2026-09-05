@@ -127,6 +127,40 @@ def test_bash_is_not_a_loophole(tmp_path, command):
     assert r.returncode == BLOCK
 
 
+def test_default_threshold_is_thirty_million(tmp_path):
+    """Pins the doubled default -- a future edit to the hardcoded fallback must
+    be deliberate, not a silent drift back toward the old 15M value."""
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin"}
+
+    under = subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps(
+            {
+                "transcript_path": str(_transcript(tmp_path, 29_999_999)),
+                "tool_name": "Read",
+            }
+        ),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert under.returncode == ALLOW
+
+    over = subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps(
+            {
+                "transcript_path": str(_transcript(tmp_path, 30_000_000)),
+                "tool_name": "Read",
+            }
+        ),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert over.returncode == BLOCK
+
+
 def test_env_escape_hatch(tmp_path):
     r = _run(
         {"transcript_path": str(_transcript(tmp_path, 5_000_000)), "tool_name": "Read"},

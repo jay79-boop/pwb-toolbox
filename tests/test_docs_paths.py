@@ -123,6 +123,12 @@ NOT_IN_THIS_TREE = {
         "reference this check was written to catch, so the record has to be able "
         "to say the name."
     ),
+    ".claude/.hard-stop-off": (
+        "session-hard-stop.sh's escape hatch: a file the owner creates by hand "
+        "only when the hook needs to be waved through once. It deliberately does "
+        "not exist in the tree, and is not gitignored either -- creating it is "
+        "meant to be a rare, deliberate act, not something a checkout ships with."
+    ),
 }
 
 # Backticked tokens containing a slash. Globs (`season/*`), gitignore negations

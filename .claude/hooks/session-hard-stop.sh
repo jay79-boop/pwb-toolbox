@@ -30,7 +30,7 @@
 # breaking the session it protects would be a far worse outcome than not firing.
 set -uo pipefail
 
-THRESHOLD="${PWB_HARD_STOP_TOKENS:-15000000}"
+THRESHOLD="${PWB_HARD_STOP_TOKENS:-30000000}"
 
 # --- escape hatches, checked first and cheaply ------------------------------
 [ "${PWB_HARD_STOP_OFF:-0}" = "1" ] && exit 0
@@ -116,8 +116,16 @@ Every further turn re-reads all of that before doing any work, so this session
 is now the expensive part, not the task. New work is blocked here.
 
 Still allowed, so nothing in flight is stranded: git add/commit/push/status/diff/log,
-and Write/Edit. Land what you have, tell the owner what is done and what is not,
-then STOP and let them open a fresh session for the next task.
+and Write/Edit. Land what you have: commit, push, and put one line starting with
+'RESUME:' in the commit message or PR description, saying exactly what is done
+and the next concrete step. That line is what lets the next session start from a
+single paste instead of a re-explanation -- write it before you stop, not after.
+
+Then STOP and let the owner open a fresh session for the next task. The same
+RESUME: line is what a fresh session reads first if this one instead got cut off
+by the account's five-hour window rather than this hook -- both endings hand off
+the same way, so write it every time you sense either one coming, not only when
+this hook fires.
 
 Do not try to work around this. Do not spawn a subagent to continue. Say plainly
 that the session hit its limit.

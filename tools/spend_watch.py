@@ -547,7 +547,12 @@ def find_rate(
 # told it is getting big.
 SESSION_SIZE_TIERS = (
     (50_000_000, "high", "very large -- start a fresh session for the next task"),
-    (25_000_000, "medium", "large -- finish the current thread, then start fresh"),
+    (
+        25_000_000,
+        "medium",
+        "large -- this is the last warning before the hard stop; commit, push, "
+        "and write a 'RESUME:' line now so the next session starts from one paste",
+    ),
     (10_000_000, "low", "getting big -- worth splitting the next task out"),
 )
 
