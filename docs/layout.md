@@ -17,7 +17,11 @@ top-level directories and points here for the detail.
   command runs the night: big screen with QR + playback, phones join by scan.
   `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
   `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
-  release. Protocol in `docs/karaoke-rotation.md`
+  release. `start_karaoke.ps1` + `install_shortcut.ps1` are the no-brainer path:
+  a Desktop icon that starts the night, opens the big screen itself, and turns
+  a busy port, a missing firewall rule and a missing Python into sentences
+  rather than tracebacks. Protocol in `docs/karaoke-rotation.md`, setup and the
+  four failures the launcher guards in `docs/karaoke-setup.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
@@ -466,3 +470,51 @@ top-level directories and points here for the detail.
   surface that can reach a card, ranked by worst case, and the five layers that
   bound them; the rules themselves are the `spend-safety` skill)
 
+
+## Commands
+
+What the owner actually types. This block was in `CLAUDE.md` until
+2026-09-04, when that file was cut to stop it costing ~8,200 tokens in
+every session. It is the canonical list now, and `tools/front_door.py`
+scans it from here.
+
+```bash
+pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
+black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
+black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
+node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
+node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
+node static/process-grammar.test.js  # branch grammar (also run by pytest)
+node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
+node static/karaoke-qr.test.js    # the QR the screen draws (also run by pytest)
+pytest tests/test_skills.py -q    # skills: live paths, description budget
+
+python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
+python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+python tools/spend_watch.py audit snapshot.json  # what is draining the window
+python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
+python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_global_instructions.py --check  # are the owner rules in ~/.claude/CLAUDE.md current? (local only)
+python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
+python tools/night_lab.py plan            # queue tonight's stress jobs
+python tools/season_scan.py report        # seasonality: report + watchlist + json
+python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
+python -m tools.strategy_lab               # live run dashboard on :8771
+python tools/reversal_15m_sim.py bars.csv --post  # send that run to it
+python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  # bars with real volume
+python tools/engagement.py list           # readiness engagements and where each stands
+python tools/ai_company.py gates          # can any agent commit money unsupervised?
+python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python -m tools.desk_agent.runlog unpushed  # did its committed log actually reach GitHub?
+python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
+python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
+python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
+python tools/awareness.py brief --short    # the same, in six lines
+python tools/desk_watch.py check          # which sessions did the desk not report?
+python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
+python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
+python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
+python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
+python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
+python tools/karaoke_server/build_standalone.py  # one-file karaoke_os.py for any other computer
+```

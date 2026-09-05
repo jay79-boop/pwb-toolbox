@@ -172,12 +172,56 @@ class QueueRoom:
         self._save_profiles()
         return {"singer_id": singer.id, "name": singer.name, "title": song_title}
 
+    def host_here(self, payload: dict, now: float) -> dict:
+        """The called singer is at the stage -- confirmed by the room, not a phone.
+
+        ``/api/here`` needs the singer's own id, which only their phone
+        holds. A walk-up signed in at the screen never had a phone, so
+        without this route the draw calls them, nobody can answer, and the
+        clock strikes them out. Same engine path as the phone
+        (``Rotation.appeared``); the only difference is who is allowed to
+        say so -- whoever is standing at the screen.
+        """
+        call = self.rot.call
+        if call is None:
+            raise RotationError("nobody has been called yet")
+        if call.appeared_at is not None:
+            raise RotationError("they are already at the stage")
+        singer_id = call.singer_id
+        name = self.rot.singers[singer_id].name
+        self._absorb(self.rot.appeared(singer_id, now))
+        return {"ok": True, "singer_id": singer_id, "name": name}
+
     def host_skip(self, payload: dict, now: float) -> dict:
         """The called singer is not coming: strike them now and redraw."""
         skipped = self.rot.call.singer_id if self.rot.call else None
         self._absorb([self.rot.skip_call(now)])
         self.tick(now)  # the redraw happens in the same request
         return {"ok": True, "skipped": skipped}
+
+    def host_remove(self, payload: dict, now: float) -> dict:
+        """Take someone off the list: they left, or they fell asleep.
+
+        The same engine path as the phone's "I'm done for tonight"
+        (``Rotation.leave``), so the refusals come for free and are the
+        right ones -- a singer mid-song is refused rather than yanked off
+        the stage, and a removed *callee* clears the call, which the tick
+        below then redraws. Removal costs no strike: leaving is not
+        missing.
+
+        Addressed by ``singer_id``, never by name, because two Daves in
+        one pub are two singers with one profile -- a name is not an
+        identity here, and removing the wrong Dave is worse than not
+        having the button.
+        """
+        singer_id = payload.get("singer_id", "")
+        singer = self.rot.singers.get(singer_id) if isinstance(singer_id, str) else None
+        if singer is None:
+            raise RotationError("that singer is not in the room")
+        name = singer.name
+        self.rot.leave(singer_id, now)
+        self.tick(now)  # a cleared call is redrawn in the same request
+        return {"ok": True, "singer_id": singer_id, "name": name}
 
     def host_end(self, payload: dict, now: float) -> dict:
         """The song is over whatever the player thinks: end it now."""
@@ -220,16 +264,29 @@ class QueueRoom:
                 ),
                 "solo": rot.call.solo,
             }
-        waiting = sorted(
-            s.name
+        in_draw = [
+            s
             for s in rot.singers.values()
             if s.state == "waiting" and s.song is not None
+        ]
+        # The host's copy of the same list: same people, same alphabetical
+        # order, carrying the id the remove button needs. Alphabetical for
+        # the same reason -- WHO is waiting is public, WHO IS NEXT is the
+        # product, and this list must never become a running order. The ids
+        # are no new exposure: every event in the feed already carries one.
+        # ``waiting`` is derived from it rather than sorted separately, so
+        # the two can never disagree about the order of two similar names.
+        waiting_list = sorted(
+            ({"singer_id": s.id, "name": s.name} for s in in_draw),
+            key=lambda row: (row["name"], row["singer_id"]),
         )
+        waiting = [row["name"] for row in waiting_list]
         out = {
             "singing": singing,
             "called": called,
             "house_on": rot.house_on,
             "waiting": waiting,  # alphabetical on purpose: order is a secret
+            "waiting_list": waiting_list,  # the same list, with ids, same order
             "waiting_count": len(waiting),
             "seq": self.seq,
             "events": [e for e in self.events if e["seq"] > since],
