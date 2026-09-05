@@ -423,6 +423,29 @@ def test_the_cli_writes_the_export_end_to_end(tmp_path):
     assert exported["trades"][0]["symbol"] == "ES=F"
 
 
+def test_the_cli_writes_a_csv_spreadsheet_end_to_end(tmp_path):
+    csv_path = tmp_path / "bars.csv"
+    rows = ["timestamp,open,high,low,close"]
+    for bar in winning_long_day():
+        rows.append(
+            f"{bar.ts.strftime('%Y-%m-%dT%H:%M:%S')},"
+            f"{bar.open},{bar.high},{bar.low},{bar.close}"
+        )
+    csv_path.write_text("\n".join(rows) + "\n")
+
+    out = tmp_path / "trades.csv"
+    rc = main([str(csv_path), "--no-sma", "--trades-csv", str(out)])
+    assert rc == 0
+
+    import csv as csv_module
+
+    with out.open(newline="") as fh:
+        (row,) = list(csv_module.DictReader(fh))
+    assert row["direction"] == "long"
+    assert row["reason"] == "target"
+    assert float(row["r_multiple"]) > 0
+
+
 # ---------------------------------------------------------------------------
 # The SMA starvation the first live fetch hit: a 59-day 15m window can never
 # warm up an SMA(60) of daily closes, so the filter silently skipped every
