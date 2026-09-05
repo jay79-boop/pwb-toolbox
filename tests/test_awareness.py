@@ -479,4 +479,17 @@ def test_the_layer_names_what_it_cannot_see(capsys):
     assert "BLIND" in out
     # A domain the owner asked for and this slice does not cover reads exactly
     # like a domain with nothing wrong, unless it says so.
-    assert "adapters not built yet" in out
+    assert "the businesses -- adapter not built yet" in out
+
+
+def test_a_domain_with_a_bridge_and_no_signal_is_blind_rather_than_quiet(tmp_path):
+    """desk and content are wired but carried, not read. No carrier, no claim.
+
+    This is the same failure the whole layer exists to catch, one level up: an
+    adapter that exists and has never been fed reads exactly like a domain with
+    nothing wrong, so the absence of the signal is named rather than assumed.
+    """
+    (tmp_path / "tools").mkdir()
+    _, _, blind = aw.collect(tmp_path, NOW)
+    assert any("no signals/desk.json" in item for item in blind)
+    assert any("no signals/content.json" in item for item in blind)

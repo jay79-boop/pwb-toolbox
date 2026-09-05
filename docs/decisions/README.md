@@ -19,6 +19,7 @@ point of the directory; a single shared list is what used to collide.
 | 2026-09-04 | [The floor is paid before the first word](2026-09-04-the-floor-is-paid-before-the-first-word.md) |
 | 2026-09-03 | [The cost of a turn is set before the turn begins](2026-09-03-the-cost-of-a-turn-is-set-before-the-turn-begins.md) |
 | 2026-09-03 | [The usage panel cannot see the sessions that drained the window](2026-09-03-the-usage-panel-cannot-see-the-sessions-that-drained-the-window.md) |
+| 2026-09-02 | [A blind domain is carried to the observer, not reached by it](2026-09-02-a-blind-domain-is-carried-not-reached.md) |
 | 2026-09-02 | [The grant goes on the launcher, not the guarded allowlist](2026-09-02-the-grant-goes-on-the-launcher-not-the-guarded-allowlist.md) |
 | 2026-09-02 | [The awareness layer stores observations, not state](2026-09-02-the-awareness-layer-stores-observations-not-state.md) |
 | 2026-09-02 | [Cosmos is not an install, and it does not direct anything](2026-09-02-cosmos-is-not-an-install-and-it-does-not-direct-anything.md) |

@@ -1471,3 +1471,45 @@ def test_the_venv_is_only_used_when_it_is_actually_there():
     src = read(LAUNCHER)
     guard = src.split("$venvScripts = Join-Path", 1)[1].split("$env:PATH =", 1)[0]
     assert "Test-Path -LiteralPath $venvScripts" in guard
+
+
+# ------------------------------------------------- the desk signal it carries --
+#
+# The launcher is the one process that runs on the machine, on a schedule, with
+# a push at the end of it -- so it is where the desk signal has to be refreshed
+# if a cloud session is ever to see the desk at all. Two things about that are
+# easy to get wrong and both were, on the way in.
+
+
+def test_the_launcher_refreshes_the_desk_signal_before_it_commits():
+    body = read(LAUNCHER)
+    emit = body.index("desk_signal.py'")
+    commit = body.index("git commit -q -m $message")
+    assert emit < commit, "the signal is emitted after the commit that should carry it"
+
+
+def test_the_desk_signal_is_staged_only_when_it_exists():
+    """`git add` of a pathspec matching nothing is fatal, and the commit it would
+    take down is the run record's -- the one thing the launcher guarantees.
+
+    So the signal joins `$paths` behind a `Test-Path`, and never as a literal in
+    the initial list. A first run on a machine that has never emitted one must
+    still commit its record.
+    """
+    body = read(LAUNCHER)
+    initial = body.split("$paths = @(", 1)[1].split(")", 1)[0]
+    assert "signals/desk.json" not in initial
+    guarded = re.search(
+        r"if \(Test-Path -LiteralPath \(Join-Path \$RepoRoot 'signals\\desk\.json'\)\) \{\s*"
+        r"\$paths \+= 'signals/desk\.json'",
+        body,
+    )
+    assert guarded, "signals/desk.json must be appended behind a Test-Path guard"
+
+
+def test_a_failed_signal_emit_cannot_take_the_run_down():
+    """The run record matters more than the signal. Warn, never throw."""
+    body = read(LAUNCHER)
+    block = body.split("desk_signal.py'", 1)[1].split("# 1. Commit", 1)[0]
+    assert "catch {" in block
+    assert "WARNING: desk signal not refreshed this run" in block

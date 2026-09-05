@@ -56,6 +56,10 @@ rules live in the `gexio-machine` skill. Rules that are *not* in the skill:
 - **Tick every row you can confirm is done, including theirs**, in the same turn,
   and say what confirmed it. The bar is *verified* — a test run, an API read, a
   file checked — never *believed*, and never to tidy the list.
+- **The ledger also carries questions, not just actions** — `"kind": "question"`
+  items with clickable options that republish the page on answer, so a question
+  survives past the reply that asked it. Ask in the box AND write it in the
+  ledger, same turn; tick the ledger copy yourself once they answer in chat.
 
 ## Layout
 
@@ -64,6 +68,8 @@ rules live in the `gexio-machine` skill. Rules that are *not* in the skill:
 - `pwb_toolbox_legacy/` — superseded, kept for reference; not public API
 - `tests/` — pytest suite
 - `tools/` — the desk: trade cards, ladders, labs, scanners, the desk agent
+- `signals/` — schema-validated readings of the desk and content domains this
+  repo cannot reach directly, tracked on purpose so a cloud session sees them
 - `static/` — single-file browser tools that open from `file://`, no build step
 - `pine/` — TradingView strategies as reviewable source; nothing imports them
 - `docs/` — manuals, field notes, decision log
@@ -153,7 +159,13 @@ Each of these has a full account in `docs/`; the one-liner is the rule.
   agree. **`S4U` is banned for every job** — it carries no credentials, so DPAPI
   secrets and OneDrive paths both fail unattended.
 - **The awareness layer stores observations, never state**, and refuses to
-  conclude. `docs/awareness.md`.
+  conclude. Two domains it cannot reach directly — the desk (owner's Windows
+  machine) and content (credentials live only in MCP connectors, not Python) —
+  are carried to it instead: `desk_signal.py emit` and `content_signal.py
+  capture` write schema-validated facts into `signals/`, the one data directory
+  here tracked on purpose. A missing or stale signal is reported as the bridge
+  going quiet, never as a calm domain. `docs/awareness.md`,
+  `docs/desk-content-adapters.md`.
 - **The trade journal is not in this repository.** It lives only at
   `C:\Users\Gexio\OneDrive\trade-journal\`. Ask for the file; do not reconstruct
   it from git history. It inlines `static/option-lab.js` and

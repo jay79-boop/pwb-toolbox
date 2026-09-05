@@ -171,6 +171,25 @@ top-level directories and points here for the detail.
   proposed as an action. Names its own blind spots, because an unwired domain
   reads exactly like a healthy one. `docs/awareness.md`; log in `awareness/`
   (gitignored). (`tests/test_awareness.py`)
+- `tools/desk_signal.py` — the desk bridge. The desk's feeds are on the owner's
+  Windows machine and a cloud session shares only GitHub, so `emit` runs there
+  (from `run_job.ps1`, after every desk agent run) and writes a redacted reading
+  into `signals/desk.json` for the push to carry. Counts, ages, streaks and a
+  three-state broker flag — **safe to publish because a schema permits nothing
+  else**: numbers, booleans, ISO dates and closed vocabularies, validated before
+  a byte is written, so there is no free-text field for a ticker, a price or a
+  balance to reach. Staleness is the NYSE calendar rather than a number of
+  hours, so a weekend needs no exception. `unknown` for the broker is not
+  `disconnected` and produces no observation at all.
+  `docs/desk-content-adapters.md`. (`tests/test_desk_signal.py`)
+- `tools/content_signal.py` — the content bridge, same shape and one difference.
+  Content's credentials are live (Blotato publishing, Windsor.ai analytics) but
+  they are **MCP connectors only a Claude session can call**, so the session is
+  the transport: `capture` takes what the session read, reduces it, and merges
+  it with the local `render/` facts. The two halves carry **separate
+  timestamps** and never vouch for each other — a fresh render half is not
+  evidence about the platform, or the reverse.
+  `docs/desk-content-adapters.md`. (`tests/test_content_signal.py`)
 
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)

@@ -170,6 +170,26 @@ function Publish-RunLog([string] $onBranch) {
 
   Push-Location $RepoRoot
   try {
+    # 0. Refresh the desk signal. The desk's feeds are on this machine and a
+    #    cloud session shares only GitHub, so this is the one moment they can
+    #    be carried across: read them here, and let the push below take them.
+    #    It emits counts and ages only -- tools/desk_signal.py enforces that by
+    #    schema, so nothing personal can ride along. Nothing in here may take
+    #    the run down; the run record is already written and matters more.
+    try {
+      & $python (Join-Path $RepoRoot 'tools\desk_signal.py') emit 2>&1 |
+        ForEach-Object { Write-Log ('  ' + $_) }
+      if ($LASTEXITCODE -ne 0) { Write-Log 'WARNING: desk signal not refreshed this run' }
+    } catch {
+      Write-Log ('WARNING: desk signal not refreshed this run: ' + $_.Exception.Message)
+    }
+    # Staged only once it exists. 'git add' of a pathspec matching nothing is a
+    # fatal error, and it would take the run record's own commit down with it --
+    # the one thing this function exists to guarantee.
+    if (Test-Path -LiteralPath (Join-Path $RepoRoot 'signals\desk.json')) {
+      $paths += 'signals/desk.json'
+    }
+
     # 1. Commit anything the run left behind in the log or the output
     #    directory. The agent commits its own work; this catches the record
     #    the launcher wrote for a run that crashed or never started. The paths
