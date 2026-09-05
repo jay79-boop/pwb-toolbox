@@ -259,6 +259,92 @@ def test_the_extra_directories_reach_the_invocation():
     assert "& $claude -p " not in src
 
 
+# --------------------------------------- resolving Claude Code by path --
+#
+# This is the one lookup in the file with no test before this section: every
+# other branch of run_job.ps1 is pinned, but which binary ends up in $claude
+# was not. That is the exact lookup CLAUDE.md's "sudden Claude Code
+# regression: suspect version churn first" trap depends on -- a native
+# install and a stale npm-global claude.cmd can both sit on the same machine,
+# and which one an unattended job runs is decided entirely by this ordering.
+
+
+def resolve_claude_block():
+    return (
+        read(LAUNCHER)
+        .split("# -- resolve Claude Code", 1)[1]
+        .split("# ToUniversalTime matters", 1)[0]
+    )
+
+
+def test_the_local_bin_search_tries_the_native_exe_before_the_npm_cmd():
+    block = resolve_claude_block()
+    candidates = block.split("foreach ($candidate in @(", 1)[1].split("))", 1)[0]
+    assert candidates.index("claude.exe") < candidates.index("claude.cmd"), (
+        "claude.exe (the native install) must be offered before claude.cmd "
+        "(the old npm global), or a machine carrying both silently runs the "
+        "stale one"
+    )
+
+
+def test_the_local_bin_search_is_scoped_to_home_not_the_repo():
+    block = resolve_claude_block()
+    candidates = block.split("foreach ($candidate in @(", 1)[1].split("))", 1)[0]
+    assert candidates.count("Join-Path $HOME '.local\\bin\\") == 2, (
+        "both candidates must be resolved under $HOME, not a path relative to "
+        "the current directory -- a scheduled task's working directory is not "
+        "guaranteed to be the repo root"
+    )
+
+
+def test_the_local_bin_search_uses_literal_path():
+    # Test-Path without -LiteralPath treats the argument as a wildcard, so a
+    # username containing '[' or ']' -- both legal in a Windows account name --
+    # would make an existing claude.exe invisible to a bare Test-Path.
+    block = resolve_claude_block()
+    for line in block.splitlines():
+        if "Test-Path" in line and "$candidate" in line:
+            assert "-LiteralPath" in line, line
+
+
+def test_claude_ps1_is_never_an_actual_candidate():
+    # The comment right above this block explains why: PowerShell's execution
+    # policy blocks a bare claude.ps1 invocation. That has to stay a comment
+    # and never become a real candidate string, or the fix reintroduces the
+    # exact failure it documents.
+    assert "claude.ps1" not in code_lines(LAUNCHER)
+
+
+def test_the_path_fallback_only_runs_after_the_local_bin_search_misses():
+    block = resolve_claude_block()
+    assert block.index("$claude = $null") < block.index("foreach ($candidate")
+    assert block.index("foreach ($candidate") < block.index("Get-Command claude")
+    guard = block.split("Get-Command claude", 1)[0].rsplit("if (", 1)[1]
+    assert "-not $claude" in guard, (
+        "the PATH fallback must be gated on the local-bin search having found "
+        "nothing, or it can override a native install with whatever 'claude' "
+        "means on PATH that session"
+    )
+
+
+def test_the_path_fallback_also_prefers_the_native_exe():
+    block = resolve_claude_block()
+    fallback = block.split("Get-Command claude", 1)[1]
+    assert fallback.startswith(".exe, claude.cmd"), (
+        "Get-Command's own argument order decides which match it returns "
+        "first -- it must still ask for claude.exe before claude.cmd"
+    )
+
+
+def test_a_missing_claude_names_both_things_it_looked_for():
+    src = read(LAUNCHER)
+    assert "looked for claude.exe then claude.cmd" in src, (
+        "the not-found message is the only account a cloud session gets of "
+        "why a job never started; it must name what was tried, not just that "
+        "resolution failed"
+    )
+
+
 # --------------------------------------------- evidence when a run fails --
 #
 # The launcher captures the agent's merged stdout/stderr and then, on a
@@ -1078,3 +1164,310 @@ def test_no_lookup_names_a_table_the_script_never_defines(path):
         "throws on a method call against $null, and under "
         "$ErrorActionPreference = 'Stop' that ends the run where it stands."
     )
+
+
+# ------------------------------------------ the record has to leave the machine --
+#
+# Between 2026-08-31 and 09-01 four run records and two notes were committed to
+# the OneDrive checkout's main and never pushed. GitHub's copy of runs.jsonl
+# stopped at 08-28, so for four days no cloud session could see a single run --
+# which is the one thing committing the log is for. The playbook said "commit";
+# nothing said "push". The push now lives in the launcher, after the agent
+# exits, so a run that crashes before its last line still reaches GitHub.
+#
+# Same caveat as everything above: CI is Linux and never executes this file, so
+# these read the source. They convict the previous launcher, which had no push
+# at all, and they convict the obvious careless versions of this change.
+
+
+def publish_function():
+    return read(LAUNCHER).split("function Publish-RunLog", 1)[1].split("\n}\n", 1)[0]
+
+
+def test_the_launcher_pushes_after_the_agent_exits():
+    body = code_lines(LAUNCHER)
+    assert "function Publish-RunLog" in body
+    assert re.search(r"git push \$remote \$onBranch", publish_function()), (
+        "the launcher must push; a commit that never leaves the machine is "
+        "invisible to every cloud session"
+    )
+
+
+def test_the_push_names_the_fork_and_never_a_bare_origin():
+    # 'origin' is upstream in the OneDrive checkout and the fork in the other:
+    # a bare origin push is wrong in one of them and fails by succeeding.
+    assert "$remote = 'jay'" in read(LAUNCHER)
+    assert "origin" not in code_lines(LAUNCHER), (
+        "run_job.ps1 names origin in code. Use the 'jay' remote by name; see "
+        "docs/local-checkout.md"
+    )
+
+
+def test_every_exit_path_publishes_first():
+    """The push covers the runs the agent never completed, or it covers nothing.
+
+    Three ways a run ends with a record to publish: the agent finished, the
+    agent exited non-zero and the launcher wrote the record, or Claude Code
+    was never found and the launcher wrote the record. Each has to publish
+    before it exits. The "not present on this branch" exit is deliberately not
+    one of them: that checkout has no desk agent to commit into.
+    """
+    src = read(LAUNCHER)
+
+    not_found = src.split("if (-not $claude) {", 1)[1].split("exit 1", 1)[0]
+    assert "Publish-RunLog $branch" in not_found, "claude-not-found exits unpublished"
+
+    failed = failure_branch()
+    assert "Publish-RunLog $branch" in failed, "the non-zero-exit path is unpublished"
+    assert failed.index("Record-Failure") < failed.index("Publish-RunLog"), (
+        "the failure record must be written before the publish, or the push "
+        "carries the previous run's record and not this one's"
+    )
+
+    tail = src.split("exit $code", 1)[1]
+    assert (
+        "Publish-RunLog $branch" in tail.split("exit 0", 1)[0]
+    ), "the success path exits without publishing"
+
+
+def test_the_launcher_commits_only_the_named_paths_and_never_add_a():
+    # dd6d1d6 committed the deletion of the log through a `git add -A`. The
+    # launcher commits what the agent left behind by naming the two paths that
+    # are its to commit, and nothing else in the tree.
+    body = publish_function()
+    assert "tools/desk_agent/runs.jsonl" in body and "tools/desk_agent/out" in body
+    code = "\n".join(ln for ln in body.splitlines() if not ln.strip().startswith("#"))
+    for bad in ("git add -A", "git add .", "git add --all", "git commit -a"):
+        assert bad not in code, f"{bad!r} would sweep another session's work in"
+    assert "git commit -q -m $message -- $paths" in code
+
+
+def test_a_missing_log_is_never_committed_as_a_deletion():
+    body = publish_function()
+    guard = body.split("$dirty =", 1)[0]
+    assert "runs.jsonl" in guard and "Refusing to commit its deletion" in guard, (
+        "'git add' of a tracked file that is gone stages its removal; the "
+        "launcher must refuse before it stages anything"
+    )
+
+
+def test_main_is_brought_up_to_date_before_the_push_and_a_conflict_is_aborted():
+    """A push from behind is refused, and main is behind after every merged PR.
+
+    Without the fetch-and-merge the push would fail on most days while looking
+    like it ran -- the fix failing by succeeding. And a merge that conflicts
+    must be aborted: an unattended task that leaves a half-merged tree for the
+    morning has made things worse, not better.
+    """
+    body = publish_function()
+    assert (
+        "if ($onBranch -eq 'main')" in body
+    ), "only main is merged; never a feature branch"
+    main_block = body.split("if ($onBranch -eq 'main')", 1)[1].split("# 3.", 1)[0]
+    assert "fetch $remote main" in main_block
+    assert "merge --no-edit ($remote + '/main')" in main_block
+    assert "merge --abort" in main_block
+    assert "-c gc.auto=0" in main_block, (
+        "a fetch that stops to ask about a OneDrive-locked object directory is "
+        "an unanswerable hang from a task with no stdin"
+    )
+    assert main_block.index("merge --abort") < main_block.index(
+        "return"
+    ), "after an aborted merge the function must stop, not push"
+
+
+def test_the_push_is_verified_by_asking_git_not_by_its_exit_code():
+    # register_desk_agent.ps1's header rule, applied here: the printed line is
+    # not evidence, the read-back is. The verification is the same command a
+    # cloud session or the next run uses, so the two can never disagree.
+    body = publish_function()
+    after_push = body.split("git push $remote $onBranch", 1)[1]
+    assert "runlog unpushed --remote $remote --branch $onBranch" in after_push
+    assert "NOT PUSHED" in after_push and "pushed:" in after_push
+
+
+def test_publishing_cannot_take_the_run_down():
+    # Native git writes progress to stderr, and with $ErrorActionPreference =
+    # 'Stop' a redirected stderr line is a terminating error. The record is
+    # already written by the time this runs; a push that throws must not
+    # convert a logged run into a crashed one.
+    body = publish_function()
+    assert "$ErrorActionPreference = 'Continue'" in body
+    assert "} catch {" in body and "could not publish the run log" in body
+
+
+def test_the_playbook_tells_the_agent_the_launcher_pushes():
+    """The agent has a `git push` grant, so the obvious edit is to tell it to push.
+
+    That covers only the runs the agent completes, which is why the push is in
+    the launcher instead -- and the playbook has to say so, or the next review
+    "fixes" the missing instruction and the two pushes race.
+    """
+    playbook = read(REPO / "tools" / "desk_agent" / "playbook.md")
+    assert (
+        "runlog unpushed" in playbook
+    ), "the playbook must tell each run how to check the previous record reached GitHub"
+    assert (
+        "run-log-not-pushed" in playbook
+    ), "and the blocker key to log when it did not"
+    clean = playbook.split("**Leave the tree clean.**", 1)[1].split("\n- ", 1)[0]
+    assert "push" in clean.lower() and "launcher" in clean.lower(), (
+        "the 'leave the tree clean' rule must say who pushes, or a review adds "
+        "an agent-side push and the two race"
+    )
+
+
+def test_the_run_log_merges_by_union():
+    """Two appends to a line-per-record log are not a conflict.
+
+    The scheduled jobs append on the owner's machine and the weekly review
+    appends in the cloud. With the default driver every such pair conflicts at
+    the end of the file, the launcher aborts the merge, and the record stays
+    unpushed -- the exact outcome the launcher's merge step exists to prevent.
+    Exercised against a scratch fork on 2026-09-02: conflict without this line,
+    a clean merge and push with it.
+    """
+    attrs = read(REPO / ".gitattributes")
+    assert re.search(
+        r"^tools/desk_agent/runs\.jsonl\s+merge=union\s*$", attrs, re.MULTILINE
+    ), "tools/desk_agent/runs.jsonl needs merge=union in .gitattributes"
+
+
+# ----------------------------------- what the jobs may actually run --------
+#
+# A fortnight of denials, and not one of them was a bug in the job.
+#
+# premarket and journal both stop at their FIRST step -- `python
+# tools/desk_levels.py ...` -- with `requires-approval`, and a headless
+# `claude -p` run has nobody to answer a prompt, so that is a denial and not a
+# pause. Ten runs between 2026-08-31 and 09-01 died there, each one correctly
+# reporting that it had not read a single level, while `runlog review` filed
+# both jobs under "never produced an action" -- reading the counts right and
+# the situation exactly wrong.
+#
+# Three consecutive run records diagnosed it precisely and all three refused to
+# fix it, which was the correct call: the guardrail forbids an agent widening
+# its own access, and reaching the command through an already-permitted one
+# would be that same violation wearing a hat.
+#
+# So the grant goes on the launcher. The check below is the part that lasts: it
+# does not assert the four entries exist, it asserts that EVERY command the job
+# files invoke is covered by something -- settings.json or the launcher, either
+# is fine. A new step added to a job file with no matching grant fails here
+# rather than silently on a Tuesday morning three weeks later.
+
+SETTINGS = REPO / ".claude" / "settings.json"
+
+# `python tools/x.py ...` or `python -m package.module ...`, at the start of a
+# line in a job file's numbered steps.
+JOB_COMMAND = re.compile(
+    r"^\s*(python3?\s+(?:-m\s+[A-Za-z_][\w.]*|tools/[\w/]+\.py))", re.MULTILINE
+)
+
+# A grant is written `Bash(<command prefix>:*)`.
+GRANT = re.compile(r"^Bash\((.+?):\*\)$")
+
+
+def settings_grants():
+    import json
+
+    data = json.loads(read(SETTINGS))
+    return list(data.get("permissions", {}).get("allow", []))
+
+
+def launcher_grants():
+    src = read(LAUNCHER)
+    # Split on the array's own closing line, not on ")" -- every grant string
+    # ends in ":*)" and a naive split stops inside the first one.
+    block = src.split("$jobTools = @(", 1)[1].split("\n)", 1)[0]
+    return re.findall(r"'([^']+)'", block)
+
+
+def granted_prefixes():
+    out = []
+    for entry in settings_grants() + launcher_grants():
+        found = GRANT.match(entry)
+        if found:
+            out.append(" ".join(found.group(1).split()))
+    return out
+
+
+def job_commands():
+    found = {}
+    for path in sorted(JOBS_DIR.glob("*.md")):
+        for match in JOB_COMMAND.finditer(read(path)):
+            found.setdefault(" ".join(match.group(1).split()), path.name)
+    return found
+
+
+def test_the_job_files_do_invoke_commands_worth_checking():
+    # Guard the guard. A regex that silently matches nothing would make every
+    # assertion below pass forever -- the exact shape of
+    # docs/decisions/2026-08-29-a-check-that-hardcodes-its-input-is-not-a-check.
+    commands = job_commands()
+    # Deduplicated, so this counts distinct commands rather than call sites:
+    # premarket invokes desk_levels twice and that is one command to grant.
+    assert len(commands) >= 2, commands
+    assert any("desk_levels.py" in c for c in commands), commands
+    assert any("runlog" in c for c in commands), commands
+
+
+def test_every_command_a_job_file_invokes_is_permitted():
+    prefixes = granted_prefixes()
+    ungranted = {
+        command: origin
+        for command, origin in job_commands().items()
+        if not any(command.startswith(p) for p in prefixes)
+    }
+    assert not ungranted, (
+        "these commands appear in a job file with no matching grant, so an "
+        "unattended run will stop at requires-approval with nobody to answer "
+        "it: " + repr(ungranted)
+    )
+
+
+def test_the_grant_is_carried_on_the_launch_command():
+    # It cannot live in settings.json: that allowlist is guarded against agent
+    # edits by design, and a grant there would reach every session in the
+    # checkout rather than only this unattended run.
+    src = read(LAUNCHER)
+    assert "$claudeArgs += @('--allowedTools') + $jobTools" in src
+    assert "& $claude @claudeArgs" in src
+    # Ordering: the grant has to be appended before the invocation reads it.
+    assert src.index("$jobTools = @(") < src.index("& $claude @claudeArgs")
+
+
+def test_the_grant_covers_both_interpreter_spellings():
+    # `python3` is how the existing runlog grants are written, and a machine
+    # that resolves only one of the two would otherwise be a silent denial.
+    grants = launcher_grants()
+    for script in ("tools/desk_levels.py", "tools/backtest_lab.py"):
+        assert f"Bash(python {script}:*)" in grants
+        assert f"Bash(python3 {script}:*)" in grants
+
+
+def test_the_repo_venv_is_put_ahead_of_the_agents_path():
+    # The launcher resolved the venv interpreter and then used it only for its
+    # own fallback record, so every python the AGENT ran was the system one.
+    # That cost the chart step a ModuleNotFoundError on matplotlib while the
+    # .venv beside it had the package installed.
+    src = read(LAUNCHER)
+    assert "$venvScripts = Join-Path $RepoRoot '.venv\\Scripts'" in src
+    assert "$env:PATH = $venvScripts + ';' + $env:PATH" in src
+    assert src.index("$env:PATH = $venvScripts") < src.index("& $claude @claudeArgs")
+
+
+def test_the_path_change_is_process_scoped_and_never_persisted():
+    # A launcher that writes the user's real PATH would leak one job's
+    # environment into every program they open afterwards.
+    src = read(LAUNCHER)
+    assert "SetEnvironmentVariable" not in src
+
+
+def test_the_venv_is_only_used_when_it_is_actually_there():
+    # The second checkout's .venv is near-empty, and a machine may have none.
+    # Prepending a directory that does not exist would be harmless but the
+    # guard is what keeps the failure honest if it ever stops being.
+    src = read(LAUNCHER)
+    guard = src.split("$venvScripts = Join-Path", 1)[1].split("$env:PATH =", 1)[0]
+    assert "Test-Path -LiteralPath $venvScripts" in guard

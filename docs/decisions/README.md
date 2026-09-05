@@ -13,6 +13,20 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-05 | [Doubling the hard stop, and a one-paste resume](2026-09-05-doubling-the-hard-stop-and-a-one-paste-resume.md) |
+| 2026-09-04 | [Naming the program does not move anyone out of the window](2026-09-04-naming-the-program-does-not-move-anyone-out-of-the-window.md) |
+| 2026-09-04 | [The drain confound was never installs vs. plan change](2026-09-04-the-drain-confound-was-never-installs-vs-plan-change.md) |
+| 2026-09-04 | [The floor is paid before the first word](2026-09-04-the-floor-is-paid-before-the-first-word.md) |
+| 2026-09-03 | [The cost of a turn is set before the turn begins](2026-09-03-the-cost-of-a-turn-is-set-before-the-turn-begins.md) |
+| 2026-09-03 | [The usage panel cannot see the sessions that drained the window](2026-09-03-the-usage-panel-cannot-see-the-sessions-that-drained-the-window.md) |
+| 2026-09-02 | [The grant goes on the launcher, not the guarded allowlist](2026-09-02-the-grant-goes-on-the-launcher-not-the-guarded-allowlist.md) |
+| 2026-09-02 | [The awareness layer stores observations, not state](2026-09-02-the-awareness-layer-stores-observations-not-state.md) |
+| 2026-09-02 | [Cosmos is not an install, and it does not direct anything](2026-09-02-cosmos-is-not-an-install-and-it-does-not-direct-anything.md) |
+| 2026-09-02 | [The NVIDIA catalog is GPU-shaped, and exactly one skill survived the filter](2026-09-02-the-nvidia-catalog-is-gpu-shaped-and-one-skill-survived.md) |
+| 2026-09-02 | [Analytics for a page that must work with the router unplugged](2026-09-02-analytics-for-a-page-that-must-work-with-the-router-unplugged.md) |
+| 2026-09-02 | [The log was committed and never pushed, and nothing noticed for four days](2026-09-02-the-log-was-committed-and-never-pushed-and-nothing-noticed-for-four-days.md) |
+| 2026-09-02 | [One paste, two sessions, and the ledger caught it thirty seconds late](2026-09-02-one-paste-two-sessions-and-the-ledger-caught-it-late.md) |
+| 2026-08-30 | [Two sessions fixed the same defect three minutes apart](2026-08-30-two-sessions-fixed-the-same-defect-three-minutes-apart.md) |
 | 2026-08-30 | [The password prompt asked for a credential that does not exist](2026-08-30-the-password-prompt-asked-for-a-credential-that-does-not-exist.md) |
 | 2026-08-30 | [Needing no desktop is not the same as not needing a sign-in](2026-08-30-needing-no-desktop-is-not-the-same-as-not-needing-a-sign-in.md) |
 | 2026-08-29 | [The jobs stopped needing a desktop, so the tasks stopped needing one](2026-08-29-the-jobs-stopped-needing-a-desktop-so-the-tasks-stopped-needing-one.md) |

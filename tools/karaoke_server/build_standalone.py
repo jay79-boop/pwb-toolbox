@@ -25,11 +25,19 @@ imports the built artifact and runs a night through it.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+try:
+    from .queue_server import VENDOR_FILES
+except ImportError:  # run as a script: python tools/karaoke_server/build_standalone.py
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.karaoke_server.queue_server import VENDOR_FILES
 
 PKG = Path(__file__).resolve().parent
 REPO_ROOT = PKG.parents[1]
 PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
+VENDOR = REPO_ROOT / "static" / "vendor"
 MODULES = ("rotation.py", "room.py", "queue_server.py")
 
 HEADER = '''"""karaoke-os: a random-but-fair karaoke queue for one room. One file.
@@ -43,19 +51,33 @@ It prints one address. Open /screen on that address on the big screen
 QR the screen shows and lands on the phone page: name, song, and a
 full-screen YOU'RE UP when the random draw lands on them.
 
-Standard library only. Singer memory is saved next to this file in
+Standard library only. Singer memory is saved next to this program in
 karaoke-profiles.json. Generated from the pwb-toolbox repo by
 tools/karaoke_server/build_standalone.py -- edit there, not here.
 """
 
 from __future__ import annotations
+
+import sys
 '''
 
-QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    main()\n'
+QUEUE_SERVER_TAIL = 'if __name__ == "__main__":\n    raise SystemExit(main())\n'
 
 FOOTER = """
 
 # ==== standalone launcher ============================================
+
+
+def _home_dir():
+    # Where this program lives -- the frozen exe's folder, or the .py's.
+    # NOT the working directory: a double-clicked exe run as administrator
+    # gets C:\\Windows\\System32, and one opened from inside a zip gets a
+    # temp dir that is later deleted, so singer memory would scatter or
+    # vanish. Under PyInstaller __file__ points into the extracted _MEI
+    # dir, which is also wrong -- sys.executable is the exe itself.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 def _standalone_main(argv=None):
@@ -91,12 +113,29 @@ def _standalone_main(argv=None):
         print("karaoke-os selfcheck: OK")
         return 0
 
+    profiles = args.profiles or os.environ.get("KARAOKE_PROFILES")
+    if not profiles:
+        profiles = str(_home_dir() / "karaoke-profiles.json")
+
+    timer = None
     if not args.no_browser:
-        threading.Timer(
-            1.5, webbrowser.open, [f"http://localhost:{args.port}/screen"]
-        ).start()
-    serve(args.host, args.port, args.profiles)
-    return 0
+        # Open the screen on the address PHONES will use, never localhost:
+        # the page builds its QR from location.origin, so a screen opened
+        # at localhost shows a QR that every phone in the room fails to
+        # reach. This is the whole product on the default double-click path.
+        host = args.host if args.host not in ("0.0.0.0", "") else None
+        reachable = host or lan_address() or "localhost"
+        timer = threading.Timer(
+            1.5, webbrowser.open, [f"http://{reachable}:{args.port}/screen"]
+        )
+        timer.start()
+    code = serve(args.host, args.port, profiles)
+    if code and timer is not None:
+        # serve() refused the port -- almost always the last karaoke window
+        # still open. Opening a browser now would land on THAT instance and
+        # make the "close the other window" message read as a lie.
+        timer.cancel()
+    return code
 
 
 if __name__ == "__main__":
@@ -134,6 +173,11 @@ def build() -> str:
     page = PAGE.read_text(encoding="utf-8")
     parts.append("\n\n# ==== the page, embedded ==============================\n\n")
     parts.append("EMBEDDED_PAGE = " + repr(page) + "\n")
+    vendor = {
+        name: (VENDOR / name).read_text(encoding="utf-8") for name in VENDOR_FILES
+    }
+    parts.append("\n# ==== scripts the page loads from the server, embedded ====\n\n")
+    parts.append("EMBEDDED_VENDOR = " + repr(vendor) + "\n")
     parts.append(FOOTER)
     return "".join(parts)
 

@@ -107,3 +107,62 @@ hand in the same commit that extracted `process-mapping` from it, six days after
 `uipro init`, and `uipro init` would never have restored it. That mislabel is
 not cosmetic: everything in `VENDORED` is exempt from the description budget, so
 a wrong entry spends always-loaded context that the test then reports as free.
+
+## `aiq-research`, and what `npx skills` leaves behind
+
+Installed on 2026-09-02 by request, from the public NVIDIA catalogue:
+
+```bash
+npx skills add NVIDIA/skills --skill aiq-research --copy
+```
+
+It is a thin stdlib-HTTP client for a **NVIDIA AI-Q Blueprint server**, by
+default at `http://localhost:8000`. Nothing in this repo runs one, so **expect
+it never to fire.** That is the state it was committed in, knowingly — not a
+bug to debug. If a backend never appears, this is the skill retirement rule
+firing on schedule: it is dead weight, and it should go.
+
+Three things about the install are deliberate:
+
+- **`--copy`, not the default symlink.** Without it the installer leaves
+  `.claude/skills/aiq-research` as a symlink into `.agents/`. Git stores that
+  faithfully, and Git for Windows without `core.symlinks` checks it out as a
+  *plain text file containing the target path* — so the skill would work in
+  every cloud session and silently not exist in the owner's local checkout,
+  which is the one that matters. `--copy` gives a real directory on both.
+- **`.agents/` is gitignored.** `--copy` writes the same 88K twice; the
+  `.claude/skills/` copy is the one every tool here reads. `skills-lock.json`
+  is committed, so `npx skills experimental_install` restores the mirror on any
+  machine that wants it.
+- **It is *not* in the `VENDORED` set**, though it would qualify — `npx skills
+  update` really would restore it. Exempting it would hide its description cost
+  and stop `tests/test_skills.py` reading it at all. Left in, an upstream update
+  that bloats the description or names a path we do not have turns CI red
+  *before* the new version is trusted, which is the signal worth having. The
+  cost of that choice is that a future `skills update` can redden CI on prose
+  nobody here wrote. Read the failure as a review prompt for the new upstream
+  version, not as something to patch locally — a local edit to the skill is
+  reverted by the next update without a word.
+
+## The second NVIDIA install, and the 349 that were refused
+
+Installed 2026-09-02, same route and same `--copy` reasoning as above:
+
+```bash
+npx skills add NVIDIA/skills --skill cuopt-numerical-optimization-formulation --copy
+```
+
+Concepts only — LP vs MILP vs QP, when duals and reduced costs exist, and the
+modelling patterns. No API, nothing to install, no network at fire time, and no
+GPU. Unlike `aiq-research` it is expected to fire: framing an allocation under
+constraints is what a ladder or a position-sizing question already is.
+
+**The refusal is the more useful half of that decision.**
+`portfolio-optimization` is the catalogue's obvious fit for this repo and was
+rejected: it hard-requires the cuOpt GPU solver, forbids any CPU fallback in
+its own words, and cuOpt has no hosted path — so on a machine with no GPU it
+would fire on portfolio questions and then decline to answer them. An
+`NVIDIA_API_KEY` does not substitute for a card.
+
+Reasoning, the sweep that produced it, and the four other near-misses:
+`docs/decisions/2026-09-02-the-nvidia-catalog-is-gpu-shaped-and-one-skill-survived.md`.

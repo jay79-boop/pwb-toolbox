@@ -34,6 +34,16 @@ they are two singletons and neither crosses a threshold. Every blocker
 therefore carries a slug, derived from the message when the caller does not
 supply one, and the counting is done on the slug. A count that only one method
 confirms is not a count.
+
+**Committed is not pushed.** The log is committed so that a cloud session can
+read it, and a cloud session reads GitHub, not the owner's disk. From
+2026-08-31 to 09-01 four run records were committed to the OneDrive checkout's
+``main`` and never left it; GitHub's copy stopped at 08-28 and nothing said so
+for four days. ``unpushed`` compares this file with the copy on the fork's
+``main`` and exits non-zero when this machine knows runs that GitHub does not::
+
+    python -m tools.desk_agent.runlog unpushed            # against jay/main
+    python -m tools.desk_agent.runlog unpushed --fetch    # refresh jay/main first
 """
 
 from __future__ import annotations
@@ -43,6 +53,7 @@ import dataclasses
 import json
 import pathlib
 import re
+import subprocess
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -377,6 +388,208 @@ def review(records: Sequence[RunRecord], min_count: int = 3) -> str:
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------------ pushed? --
+#
+# The whole reason the log is tracked is that a cloud session can read it, and
+# a cloud session reads the fork on GitHub. A record that is committed and never
+# pushed is therefore exactly as invisible there as one that was never written,
+# while looking, from the machine, like the job did everything asked of it.
+
+
+def git_output(args: Sequence[str], cwd: pathlib.Path | str | None = None) -> str:
+    """Run one git command and return its stdout. Raises LogError on failure.
+
+    The only function here that touches git, so a test can hand ``unpushed`` a
+    stand-in and never need a repository or a network.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+        )
+    except OSError as exc:  # git not on PATH
+        raise LogError(f"git could not be run: {exc}") from exc
+    if proc.returncode != 0:
+        message = (proc.stderr or proc.stdout).strip() or f"git {' '.join(args)} failed"
+        raise LogError(message)
+    return proc.stdout
+
+
+@dataclass
+class PushReport:
+    """What the fork's copy of the log knows, compared with this one."""
+
+    remote_ref: str
+    log_path: str
+    #: Commits on HEAD touching the log that the remote ref does not have.
+    commits_ahead: int = 0
+    #: Records in this file that the remote copy does not carry, oldest first.
+    unseen: list[RunRecord] = field(default_factory=list)
+    #: Lines in this file that the remote copy lacks -- includes any that would
+    #: not parse, so the two counts can differ.
+    unseen_lines: int = 0
+    #: Of those, lines that HEAD does not carry either: written, not committed.
+    uncommitted_lines: int = 0
+    #: Records the remote copy has that this file lacks: behind, not ahead.
+    remote_only_lines: int = 0
+    #: The remote ref could not be read at all -- no such remote, never fetched.
+    ref_missing: bool = False
+    error: str = ""
+
+    @property
+    def pushed(self) -> bool:
+        """True only when the remote copy carries every line here.
+
+        Deliberately not "commits_ahead == 0": a commit count says nothing
+        about a record that was appended and never committed at all.
+        """
+        return not self.ref_missing and self.unseen_lines == 0
+
+
+def _log_lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _parse_lines(lines: Iterable[str]) -> list[RunRecord]:
+    out: list[RunRecord] = []
+    for line in lines:
+        try:
+            out.append(RunRecord.from_dict(json.loads(line)))
+        except (json.JSONDecodeError, LogError, TypeError, AttributeError):
+            continue
+    return out
+
+
+def unpushed(
+    remote: str = "jay",
+    branch: str = "main",
+    path: pathlib.Path = DEFAULT_LOG,
+    run=None,
+    fetch: bool = False,
+) -> PushReport:
+    """Compare this file with the copy on ``remote/branch``.
+
+    ``remote/branch`` is the remote-tracking ref *as of the last fetch*, so by
+    default this answers "did the last push reach the ref git last saw", which
+    is the question the launcher asks straight after pushing. Pass ``fetch``
+    to ask GitHub first; that is the network call, and it is opt-in.
+
+    The remote is ``jay`` by name and not ``origin``: ``origin`` is upstream in
+    the OneDrive checkout and the fork in the other, so a bare ``origin`` would
+    compare against the wrong project in one of them and report it pushed.
+    """
+    # Resolved at call time so a test can replace ``git_output`` on the module.
+    run = run or git_output
+    path = pathlib.Path(path)
+    ref = f"{remote}/{branch}"
+    report = PushReport(remote_ref=ref, log_path=str(path))
+
+    if fetch:
+        try:
+            run(["fetch", remote, branch])
+        except LogError as exc:
+            report.error = f"fetch failed: {exc}"
+            # Carry on: the ref as last seen is still worth comparing against.
+
+    # git names a blob by its repository-relative posix path, whatever the
+    # platform spells the working path as.
+    if path.is_absolute():
+        try:
+            top = pathlib.Path(run(["rev-parse", "--show-toplevel"]).strip())
+            rel = path.resolve().relative_to(top.resolve()).as_posix()
+        except (LogError, ValueError) as exc:
+            report.ref_missing = True
+            report.error = f"{path} is not inside a git checkout: {exc}"
+            return report
+    else:
+        rel = path.as_posix()
+
+    try:
+        remote_text = run(["show", f"{ref}:{rel}"])
+    except LogError as exc:
+        message = str(exc)
+        if "does not exist in" in message or "exists on disk, but not in" in message:
+            # The ref is there and the log is not: everything here is unseen.
+            remote_text = ""
+        else:
+            report.ref_missing = True
+            report.error = message
+            return report
+
+    try:
+        head_text = run(["show", f"HEAD:{rel}"])
+    except LogError:
+        head_text = ""
+
+    try:
+        report.commits_ahead = int(
+            run(["rev-list", "--count", f"{ref}..HEAD", "--", rel]).strip() or 0
+        )
+    except (LogError, ValueError) as exc:
+        report.error = f"could not count commits: {exc}"
+
+    local = _log_lines(path.read_text(encoding="utf-8")) if path.exists() else []
+    remote_lines = set(_log_lines(remote_text))
+    head_lines = set(_log_lines(head_text))
+
+    unseen = [line for line in local if line not in remote_lines]
+    report.unseen_lines = len(unseen)
+    report.uncommitted_lines = sum(1 for line in unseen if line not in head_lines)
+    report.unseen = _parse_lines(unseen)
+    report.remote_only_lines = sum(1 for line in remote_lines if line not in set(local))
+    return report
+
+
+def render_push_report(report: PushReport) -> str:
+    lines = [f"Run log here vs {report.remote_ref}  ({report.log_path})"]
+    if report.ref_missing:
+        lines.append(f"  could not read {report.remote_ref}: {report.error}")
+        lines.append(
+            "  No such remote, or never fetched. From a clone whose fork remote is"
+            " 'origin' pass --remote origin; on the owner's machine the remote is"
+            " 'jay'."
+        )
+        return "\n".join(lines)
+
+    lines.append(
+        f"  commits touching the log that {report.remote_ref} lacks: "
+        f"{report.commits_ahead}"
+    )
+    lines.append(
+        f"  records here that {report.remote_ref} cannot see: {report.unseen_lines}"
+    )
+    if report.unseen:
+        oldest, newest = report.unseen[0], report.unseen[-1]
+        lines.append(f"    oldest: {oldest.finished}  {oldest.job} {oldest.outcome}")
+        if newest is not oldest:
+            lines.append(
+                f"    newest: {newest.finished}  {newest.job} {newest.outcome}"
+            )
+    if report.uncommitted_lines:
+        lines.append(f"    of which not yet committed: {report.uncommitted_lines}")
+    if report.remote_only_lines:
+        lines.append(
+            f"  records on {report.remote_ref} this file lacks: "
+            f"{report.remote_only_lines}  (behind, not ahead -- merge, do not worry)"
+        )
+    if report.error:
+        lines.append(f"  note: {report.error}")
+    lines.append(
+        f"  {report.remote_ref} is as git last fetched it; --fetch asks GitHub first."
+    )
+    if report.pushed:
+        lines.append(f"  pushed: {report.remote_ref} carries every record here.")
+    else:
+        lines.append(
+            "  NOT PUSHED. A cloud session reads GitHub and will not see these runs."
+        )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------- cli --
 
 
@@ -416,6 +629,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     rp.add_argument("--last", type=int, default=40)
     rp.add_argument("--min-count", type=int, default=3)
 
+    up = sub.add_parser("unpushed", help="did the committed log reach the fork?")
+    up.add_argument("--remote", default="jay", help="never a bare origin: see docs")
+    up.add_argument("--branch", default="main")
+    up.add_argument("--fetch", action="store_true", help="fetch the ref first")
+
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.command == "append":
@@ -432,6 +650,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         append_record(record, args.log)
         print(f"logged {record.job} {record.outcome} at {record.finished}")
         return 0
+
+    if args.command == "unpushed":
+        report = unpushed(
+            remote=args.remote, branch=args.branch, path=args.log, fetch=args.fetch
+        )
+        print(render_push_report(report))
+        # 0 pushed, 1 not pushed, 2 could not tell -- a wrapper must be able to
+        # separate "behind" from "no idea", or a missing remote reads as clean.
+        if report.ref_missing:
+            return 2
+        return 0 if report.pushed else 1
 
     records = read_records(args.log, job=getattr(args, "job", None), last=args.last)
 

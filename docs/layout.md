@@ -4,7 +4,7 @@ The full inventory of what lives where. `CLAUDE.md` keeps a short map of the
 top-level directories and points here for the detail.
 
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`, `options`, `journal`, `vision`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
@@ -17,7 +17,11 @@ top-level directories and points here for the detail.
   command runs the night: big screen with QR + playback, phones join by scan.
   `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
   `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
-  release. Protocol in `docs/karaoke-rotation.md`
+  release. `start_karaoke.ps1` + `install_shortcut.ps1` are the no-brainer path:
+  a Desktop icon that starts the night, opens the big screen itself, and turns
+  a busy port, a missing firewall rule and a missing Python into sentences
+  rather than tracebacks. Protocol in `docs/karaoke-rotation.md`, setup and the
+  four failures the launcher guards in `docs/karaoke-setup.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
@@ -139,6 +143,35 @@ top-level directories and points here for the detail.
   than a convention, and the flag refuses any non-paper port. Protocol
   in `docs/spec-desk.md`; ledger data in `spec_desk/` (gitignored — this
   fork is public). Rules engine is pure and tested (`tests/test_spec_desk.py`)
+- `tools/nvidia_vision.py` — sends an image and a question to a vision model on
+  NVIDIA's hosted API and returns the answer: a local file, an `http(s)` URL, or
+  a desk chart it renders itself through `desk_levels`. Exists because NVIDIA's
+  copy-paste snippet is wrong in four ways that each cost a failed request — the
+  key is a string literal that never expands, an inline image is capped at
+  180 KB, the shrink ladder has to stay on PNG or chart text smears, and a
+  stream is SSE with the model's reasoning on a separate delta key from its
+  answer. `docs/nvidia-vision.md` has all four, plus the two things about the
+  API that were not verifiable when it was written and are stated as open
+  rather than assumed. `models --filter kimi` lists the catalog, which is how
+  the first of those two gets settled without spending a completion. The client
+  itself is `pwb_toolbox/vision/`, in the shipped package so anything can import
+  it; only the command line lives here, because `chart` reaches for
+  `desk_levels` and the package does not depend on the desk. `pwb_toolbox/vision/telemetry.py`
+  reports each call to Amplitude Agent Analytics when `AMPLITUDE_AI_API_KEY`
+  is set, and says so once on stderr when it is not
+- `tools/awareness.py` — the situational awareness layer: what is happening
+  now, why, what is changing, what is likely next, what is connected, what
+  deserves attention, and what action is safest. Assembles evidence from the
+  run log, the scheduler table and git, and **stops there** — the answers are
+  read inside a Claude session, so the reasoner is already present and the tool
+  never editorialises. Stores observations, never state, which is how it
+  satisfies the rule that retired the live dashboard. Refuses four ways: no
+  history is "unanswerable" not "calm", nothing is projected without a named
+  rule, no graph edge is inferred, and nothing that moves money is ever
+  proposed as an action. Names its own blind spots, because an unwired domain
+  reads exactly like a healthy one. `docs/awareness.md`; log in `awareness/`
+  (gitignored). (`tests/test_awareness.py`)
+
 - `tools/desk_watch.py` — names every trading session the desk failed to
   report. Built after three consecutive morning scans (2026-08-25 to 08-27)
   left no record and nothing said so for four days: a scan that fails silently
@@ -274,6 +307,15 @@ top-level directories and points here for the detail.
   backs up whatever it touches, and is idempotent. `--check` reports without
   writing. Must run locally — a cloud container's `~/.claude` does not survive
   the session (`tests/test_install_spend_hook.py`)
+- `tools/install_global_instructions.py` — writes `docs/global-instructions.md`,
+  the owner's cross-project working rules, into the user-level `CLAUDE.md`
+  between two marker lines. Only that region is ever replaced, so the Action
+  Ledger rule and any hand-written lines survive a refresh; a lone marker is
+  left as ordinary text rather than guessed at. Idempotent, backs up the file
+  it touches, `--check` and `--diff` report without writing. The source stays
+  in this public fork without the owner's name or city, and a test holds it
+  there. Must run locally, for the same reason as the spend hook
+  (`tests/test_install_global_instructions.py`)
 - `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
   plain markdown. **`--vault` is optional**: Obsidian records every vault it has
   ever opened, with its absolute path, in `obsidian.json` (`%APPDATA%\obsidian`
@@ -383,6 +425,11 @@ top-level directories and points here for the detail.
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
   traps that otherwise get rediscovered every time),
+  `barehands-phone-camera.md` (running jaredrhod/barehands, the hand-tracked
+  glass board, on a machine with no webcam — the two independent reasons the
+  phone cannot just open the board itself, the virtual-camera route that does
+  work, and the Windows traps in that repo. Same reason as the entry above:
+  unrelated to the library, written down so it is not re-derived),
   `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
   and on which account — the CDP threat model, the two-login rule, and what was
   actually verified about the open-source bridge by reading its source),
@@ -404,3 +451,51 @@ top-level directories and points here for the detail.
   surface that can reach a card, ranked by worst case, and the five layers that
   bound them; the rules themselves are the `spend-safety` skill)
 
+
+## Commands
+
+What the owner actually types. This block was in `CLAUDE.md` until
+2026-09-04, when that file was cut to stop it costing ~8,200 tokens in
+every session. It is the canonical list now, and `tools/front_door.py`
+scans it from here.
+
+```bash
+pytest tests/ -v                  # full suite (~28s cold / ~15s warm)
+black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
+black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
+node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
+node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
+node static/process-grammar.test.js  # branch grammar (also run by pytest)
+node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
+node static/karaoke-qr.test.js    # the QR the screen draws (also run by pytest)
+pytest tests/test_skills.py -q    # skills: live paths, description budget
+
+python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
+python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
+python tools/spend_watch.py audit snapshot.json  # what is draining the window
+python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
+python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
+python tools/install_global_instructions.py --check  # are the owner rules in ~/.claude/CLAUDE.md current? (local only)
+python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
+python tools/night_lab.py plan            # queue tonight's stress jobs
+python tools/season_scan.py report        # seasonality: report + watchlist + json
+python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
+python -m tools.strategy_lab               # live run dashboard on :8771
+python tools/reversal_15m_sim.py bars.csv --post  # send that run to it
+python tools/fetch_bars.py BTC/USDT --exchange coinbase --days 365 --out a.csv  # bars with real volume
+python tools/engagement.py list           # readiness engagements and where each stands
+python tools/ai_company.py gates          # can any agent commit money unsupervised?
+python -m tools.desk_agent.runlog summary --last 20  # is the agent actually working
+python -m tools.desk_agent.runlog unpushed  # did its committed log actually reach GitHub?
+python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
+python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
+python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
+python tools/awareness.py brief --short    # the same, in six lines
+python tools/desk_watch.py check          # which sessions did the desk not report?
+python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
+python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
+python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
+python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
+python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
+python tools/karaoke_server/build_standalone.py  # one-file karaoke_os.py for any other computer
+```

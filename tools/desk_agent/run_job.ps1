@@ -14,6 +14,11 @@
   indistinguishable from a scheduler that never fired, which is the one thing
   the whole design is built to tell apart.
 
+  After the agent exits, however it exits, the launcher commits any record left
+  uncommitted and pushes the branch to the fork ('jay'), then verifies the push
+  with 'runlog unpushed'. A record that is committed and never pushed is
+  invisible to every cloud session, which is the one reader the log exists for.
+
 .PARAMETER Job
   Job name, matching a file under tools/desk_agent/jobs/.
 
@@ -89,9 +94,21 @@ try {
   $OutputEncoding           = New-Object Text.UTF8Encoding $false
 } catch { }
 
-# -- resolve python, for the fallback record -----------------------------------
+# -- resolve python, and put the repo venv ahead of the child's PATH -----------
+# Two uses, and the second is why this block is no longer only about the
+# fallback record. $python runs runlog from THIS script. The PATH line is for
+# the agent: claude and everything it spawns inherit this process's environment,
+# and without the venv on PATH a bare `python` in an agent tool call resolves to
+# the system install -- which is not the interpreter this repo's requirements
+# are installed into. On 2026-09-01 that surfaced as ModuleNotFoundError for
+# matplotlib inside desk_levels' chart path, on a machine whose .venv had it.
+# Scoped to this process: nothing here edits a persisted PATH.
 $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { 'python' }
+$venvScripts = Join-Path $RepoRoot '.venv\Scripts'
+if (Test-Path -LiteralPath $venvScripts) {
+  $env:PATH = $venvScripts + ';' + $env:PATH
+}
 
 function Get-OutputTail([string] $text, [int] $max = 600) {
   # What reaches the record has to be bounded, and it has to be one line.
@@ -120,6 +137,112 @@ function Record-Failure([string] $blocker, [string] $summary) {
       --summary $summary --blocker $blocker | Out-Null
   } catch {
     Write-Log ("could not write the failure record: " + $_.Exception.Message)
+  } finally {
+    Pop-Location
+  }
+}
+
+# -- publish the record --------------------------------------------------------
+# The log is committed so that a cloud session can read it, and a cloud session
+# reads GitHub, not this disk. A commit that never leaves the machine is exactly
+# as invisible there as a record that was never written. From 2026-08-31 to
+# 09-01 six commits -- four run records and two notes -- sat on the OneDrive
+# main while GitHub's copy of runs.jsonl stopped at 08-28: the playbook said
+# "commit" and nothing said "push", and nothing noticed for four days.
+#
+# This is the push. It lives in the launcher and not in the playbook on
+# purpose: it runs after the agent exits, whether the agent finished, crashed,
+# or never started, so the failure record Record-Failure writes reaches GitHub
+# too. An instruction to the agent covers only the runs the agent completes.
+#
+# The remote is 'jay' by name. 'origin' is upstream in the OneDrive checkout
+# and the fork in the other, so a bare origin push is wrong in one of them and
+# fails by succeeding. docs/local-checkout.md has the table.
+$remote = 'jay'
+
+function Publish-RunLog([string] $onBranch) {
+  # Native git writes progress to stderr, and under Stop that becomes a
+  # terminating error the moment stderr is redirected. Nothing in here may
+  # take the run down: the record is already written, and this only decides
+  # whether GitHub sees it.
+  $ErrorActionPreference = 'Continue'
+  $paths = @('tools/desk_agent/runs.jsonl', 'tools/desk_agent/out')
+
+  Push-Location $RepoRoot
+  try {
+    # 1. Commit anything the run left behind in the log or the output
+    #    directory. The agent commits its own work; this catches the record
+    #    the launcher wrote for a run that crashed or never started. The paths
+    #    are named and nothing else is staged -- never 'git add -A', which is
+    #    how commit dd6d1d6 once committed the deletion of the log.
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'tools\desk_agent\runs.jsonl'))) {
+      # 'git add' of a tracked file that is gone stages its deletion, and that
+      # is the dd6d1d6 accident with a scheduler behind it. Refuse, loudly.
+      Write-Log 'NOT COMMITTED: runs.jsonl is missing from the checkout. Refusing to commit its deletion.'
+      Write-Log '               Restore it: git checkout HEAD -- tools/desk_agent/runs.jsonl'
+      return
+    }
+    $dirty = (& git status --porcelain -- $paths 2>&1 | Out-String).Trim()
+    if ($dirty) {
+      & git add -- $paths 2>&1 | Out-Null
+      $message = 'desk agent: ' + $Job + ' run record, committed by the launcher'
+      & git commit -q -m $message -- $paths 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+      if ($LASTEXITCODE -ne 0) {
+        Write-Log 'WARNING: commit failed. The record is in the working tree only.'
+      } else {
+        Write-Log 'committed the run record (the agent had not)'
+      }
+    }
+
+    if (-not $onBranch -or $onBranch -eq 'HEAD' -or $onBranch -eq '(unknown)') {
+      Write-Log 'NOT PUSHED: detached HEAD or unknown branch. The record is committed here only.'
+      return
+    }
+    $url = (& git remote get-url $remote 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $url) {
+      Write-Log ("NOT PUSHED: no remote named '" + $remote + "' in this checkout. The record is committed here only.")
+      return
+    }
+
+    # 2. On main, take what GitHub has first. main moves there every time a
+    #    pull request merges, and a push from behind is refused as
+    #    non-fast-forward -- so without this step the push would fail on most
+    #    days while looking like it ran. It is the line the owner runs by hand
+    #    (docs/local-checkout.md). A conflict is aborted, never left half-merged
+    #    for the morning. gc.auto is forced off because a fetch that stops to
+    #    ask about a OneDrive-locked object directory is an unanswerable hang
+    #    from a task with no stdin.
+    if ($onBranch -eq 'main') {
+      & git -c gc.auto=0 fetch $remote main 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Write-Log ('WARNING: git fetch ' + $remote + ' main failed; pushing without it')
+      } else {
+        & git -c gc.auto=0 merge --no-edit ($remote + '/main') 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+        if ($LASTEXITCODE -ne 0) {
+          & git merge --abort 2>&1 | Out-Null
+          Write-Log ('NOT PUSHED: merging ' + $remote + '/main conflicted. Merge aborted, tree left as it was.')
+          Write-Log ('           By hand: git fetch ' + $remote + ' main; git merge --no-edit ' + $remote + '/main; git push ' + $remote + ' main')
+          return
+        }
+      }
+    }
+
+    # 3. Push, then verify by asking git rather than trusting the exit code.
+    #    The verification is the same command a cloud session or the next run
+    #    can use, and it exits 1 when this machine knows runs GitHub does not.
+    & git push $remote $onBranch 2>&1 | ForEach-Object { Write-Log ('  ' + $_) }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Log ('WARNING: git push ' + $remote + ' ' + $onBranch + ' failed')
+    }
+    & $python -m tools.desk_agent.runlog unpushed --remote $remote --branch $onBranch 2>&1 |
+      ForEach-Object { Write-Log ('  ' + $_) }
+    if ($LASTEXITCODE -eq 0) {
+      Write-Log ('pushed: ' + $remote + '/' + $onBranch + ' carries the run log')
+    } else {
+      Write-Log ('NOT PUSHED: ' + $remote + '/' + $onBranch + ' does not carry every record. See above.')
+    }
+  } catch {
+    Write-Log ('could not publish the run log: ' + $_.Exception.Message)
   } finally {
     Pop-Location
   }
@@ -170,6 +293,7 @@ if (-not $claude) {
   Write-Log 'Claude Code not found (looked for claude.exe then claude.cmd).'
   Record-Failure 'claude executable not found on PATH' `
                  'launcher could not resolve Claude Code, job never started'
+  Publish-RunLog $branch
   exit 1
 }
 Write-Log ("claude: " + $claude)
@@ -238,6 +362,40 @@ foreach ($dir in (@($jobDirs[$Job]) + $AddDir)) {
     Write-Log ("NOT added, path does not exist: " + $dir)
   }
 }
+
+# -- what this job is allowed to run -------------------------------------------
+# The grant lives here rather than in .claude/settings.json, for two reasons and
+# both are deliberate.
+#
+# That file's allowlist is guarded: a session cannot edit it, by design. An
+# agent able to widen its own permissions does not have permissions, and the
+# desk agent's own guardrail says the same thing in its own words -- three run
+# records in a row identified this exact fix and correctly refused to apply it.
+#
+# And a grant there would reach every session in this checkout, interactive ones
+# included, when what needs it is this unattended run and nothing else. Narrower
+# is the point, not a consolation.
+#
+# Why it is needed: premarket and journal both stopped at requires-approval on
+# their first step, ten runs between them, because python tools/desk_levels.py
+# is not permitted and a headless run has nobody to answer a prompt. Granted in
+# the path form because that is the form the job files invoke --
+# jobs/premarket.md lines 18-19 and jobs/journal.md line 28 -- and in both
+# interpreter spellings, matching how the runlog grants are written.
+#
+# --allowedTools ADDS to what settings.json already permits rather than
+# replacing it, so the runlog grants this job needs to write its own record are
+# untouched. tests/test_desk_agent_launcher.py checks every command the job
+# files invoke is covered by one of the two lists, so a new step in a job file
+# cannot quietly reintroduce the fortnight of denials this ended.
+$jobTools = @(
+  'Bash(python tools/desk_levels.py:*)',
+  'Bash(python3 tools/desk_levels.py:*)',
+  'Bash(python tools/backtest_lab.py:*)',
+  'Bash(python3 tools/backtest_lab.py:*)'
+)
+$claudeArgs += @('--allowedTools') + $jobTools
+Write-Log ("granted: " + ($jobTools -join ' '))
 
 # -- run -----------------------------------------------------------------------
 $promptLines = @(
@@ -349,8 +507,10 @@ if ($code -ne 0) {
              '; full log ' + (Split-Path $logFile -Leaf) + '.' + $detail)
 
   Record-Failure ('claude exited non-zero: ' + $code) $record
+  Publish-RunLog $branch
   exit $code
 }
 
+Publish-RunLog $branch
 Write-Log 'done'
 exit 0

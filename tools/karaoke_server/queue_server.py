@@ -9,7 +9,13 @@ scans the QR the screen shows and lands on the phone page. That is the
 whole setup.
 
 Threading server, so a lock serializes every touch of the room. Real time
-enters here and only here.
+enters here and only here -- and so do the two outbound requests the whole
+system makes, both from this module and never from the engine or the room:
+a pasted YouTube link is turned into a song title via YouTube's oEmbed
+endpoint, and a typed query is turned into a list of songs via the YouTube
+Data API. Both keep the venue with no uplink exactly as capable as it was:
+the link stays a link, and the phone still lets anyone paste one or type a
+title.
 """
 
 from __future__ import annotations
@@ -20,25 +26,287 @@ import os
 import socket
 import threading
 import time
+import urllib.request
+from html import escape, unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from .room import QueueRoom, RotationError
 
 MAX_BODY = 8 * 1024
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PAGE = REPO_ROOT / "static" / "karaoke-queue.html"
+
+# A pasted link is shown as the video's title, not the URL. The title comes
+# from YouTube's oEmbed endpoint, which needs no key and no login; the raw
+# link is kept when the answer is anything but a clean one.
+OEMBED_URL = (
+    "https://www.youtube.com/oembed?url="
+    "https://www.youtube.com/watch?v={video_id}&format=json"
+)
+OEMBED_TIMEOUT_S = 2.0
+OEMBED_MAX_BYTES = 64 * 1024
+
+
+def youtube_title(video_id: str, timeout: float = OEMBED_TIMEOUT_S) -> str | None:
+    """The video's title, or None for any failure: offline, slow, odd."""
+    try:
+        url = OEMBED_URL.format(video_id=quote(video_id, safe=""))
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read(OEMBED_MAX_BYTES).decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a venue with no uplink must not care why
+        return None
+    title = data.get("title") if isinstance(data, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        return None
+    return title.strip()
+
+
+def resolve_title(payload: dict, lookup, cache: dict) -> dict:
+    """Swap a link's raw title for the video's, when the lookup can say.
+
+    Only a ``link`` with a ``ref`` is looked up; one fetch per video id for
+    the life of the process, misses included, so a room with no internet
+    pays the timeout once per link rather than once per poll. The payload
+    is returned unchanged in every other case -- the room never learns a
+    lookup happened.
+    """
+    if payload.get("source") != "link":
+        return payload
+    ref = payload.get("ref")
+    if not isinstance(ref, str) or not ref:
+        return payload
+    if ref not in cache:
+        try:
+            title = lookup(ref)
+        except Exception:  # noqa: BLE001 -- same rule: the link is the fallback
+            title = None
+        cache[ref] = title if isinstance(title, str) and title.strip() else None
+    if cache[ref]:
+        payload = dict(payload, title=cache[ref])
+    return payload
+
+
+# ---- song search: type "sweet caroline", tap a result ----------------------
+#
+# The YouTube Data API v3, keyed, and the key is read from the process
+# environment exactly the way pwb_toolbox/vision/nvidia.py reads its own --
+# never hard-coded, never logged, never sent to the page. Search is an
+# ADDITION to the paste-a-link path, never a replacement: with no key, no
+# uplink, a captive portal, a quota refusal, a slow answer or nonsense JSON,
+# this layer answers "search is not available" and the phone falls back to
+# exactly what it could do before.
+SEARCH_ENV_KEY = "YOUTUBE_API_KEY"
+SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+# Shorter than a person's patience and shorter than a poll cycle is long:
+# a search that hangs must never hold up the join flow behind it.
+SEARCH_TIMEOUT_S = 3.0
+SEARCH_MAX_BYTES = 256 * 1024
+SEARCH_MAX_RESULTS = 8
+SEARCH_MAX_QUERY = 120
+
+# One sentence, plain, and the same one whatever went wrong: a singer at the
+# door does not care whether it was the quota, the router or the key.
+SEARCH_OFF_NOTE = (
+    "Search isn't available right now — paste a YouTube link "
+    "or just type the song title."
+)
+
+
+def search_key() -> str:
+    """The API key from the environment, or "" when there is none to use.
+
+    An unexpanded ``$YOUTUBE_API_KEY`` counts as none: that is the exact
+    failure NVIDIA's published snippet ships with, and a placeholder sent
+    as a key buys a 400 rather than an honest "search is off".
+    """
+    key = (os.environ.get(SEARCH_ENV_KEY) or "").strip()
+    if not key or key.startswith("$"):
+        return ""
+    return key
+
+
+def search_available() -> bool:
+    """Is there a key at all? Decided once, at build time, for the page."""
+    return bool(search_key())
+
+
+def youtube_search(query: str, timeout: float = SEARCH_TIMEOUT_S, api_key=None):
+    """Songs for a query, or None when the search could not be run.
+
+    ``None`` and ``[]`` are different answers on purpose: ``[]`` is "we
+    asked and nothing matched", ``None`` is "we could not ask" -- no key,
+    no uplink, quota spent, a captive portal's login page, a non-200, or
+    JSON that is not what the API promised. Only ``None`` sends the phone
+    back to the paste-a-link sentence.
+    """
+    key = api_key if api_key is not None else search_key()
+    key = (key or "").strip()
+    if not key:
+        return None
+    query = (query or "").strip()
+    if not query:
+        return []
+    params = urlencode(
+        {
+            "part": "snippet",
+            "type": "video",
+            "videoEmbeddable": "true",
+            "maxResults": SEARCH_MAX_RESULTS,
+            "q": query[:SEARCH_MAX_QUERY],
+            "key": key,
+        }
+    )
+    try:
+        with urllib.request.urlopen(
+            SEARCH_URL + "?" + params, timeout=timeout
+        ) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read(SEARCH_MAX_BYTES).decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a venue with no uplink must not care why
+        return None
+    return _search_items(data)
+
+
+def _search_items(data) -> list | None:
+    """The API's answer as rows the page can render, or None if it is not one.
+
+    Titles come back HTML-escaped (``Don&#39;t Stop Believin&#39;``), so they
+    are unescaped here rather than in the page: the page sets them with
+    ``textContent`` and would otherwise show the entities.
+    """
+    if not isinstance(data, dict):
+        return None
+    items = data.get("items")
+    if not isinstance(items, list):
+        return None
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ident = item.get("id")
+        ref = ident.get("videoId") if isinstance(ident, dict) else None
+        snippet = item.get("snippet") if isinstance(item.get("snippet"), dict) else {}
+        title = snippet.get("title")
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        if not isinstance(title, str) or not title.strip():
+            continue
+        channel = snippet.get("channelTitle")
+        out.append(
+            {
+                "ref": ref.strip(),
+                "title": unescape(title.strip()),
+                "channel": (
+                    unescape(channel.strip()) if isinstance(channel, str) else ""
+                ),
+            }
+        )
+    return out[:SEARCH_MAX_RESULTS]
+
+
+def search_cache_key(query: str) -> str:
+    """One cache slot per query, whitespace and case ignored."""
+    return " ".join((query or "").split()).lower()[:SEARCH_MAX_QUERY]
+
+
+def resolve_search(query: str, lookup, cache: dict):
+    """Results for a query, remembered for the life of the process.
+
+    Same shape as :func:`resolve_title`, and for a harder reason. The free
+    tier of the Data API allows 10,000 quota units a day and a search costs
+    100 of them: one hundred searches, for the whole day, for the whole
+    venue. A room of twenty people all typing "sweet caroline" must spend
+    one of those, not twenty -- so misses and failures are cached too, and
+    a query answered once is never asked again tonight.
+
+    The trade is stated rather than hidden: a search that failed because
+    the router was rebooting stays failed for that exact query until the
+    program is restarted. Restarting is one double-click, and burning the
+    day's quota on retries is the worse failure.
+    """
+    key = search_cache_key(query)
+    if not key:
+        return []
+    if key not in cache:
+        try:
+            found = lookup(query.strip())
+        except Exception:  # noqa: BLE001 -- same rule: search is never fatal
+            found = None
+        cache[key] = found if isinstance(found, list) else None
+    return cache[key]
+
+
+def _repo_page() -> Path | None:
+    """The page in the repo checkout, or None when there isn't one.
+
+    This module is concatenated verbatim into the standalone karaoke_os.py,
+    which can legitimately sit at C:\\karaoke\\ or a USB-stick root. A bare
+    ``parents[2]`` raises IndexError there -- at import, before any
+    friendly message or the embedded fallback could run.
+    """
+    here = Path(__file__).resolve()
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "static" / "karaoke-queue.html"
+
+
+PAGE = _repo_page()
 
 # The standalone build (tools/karaoke_server/build_standalone.py) rebinds
 # this to the page's full text, so the single file needs no static/ dir.
 EMBEDDED_PAGE = None
 
+# Scripts the page loads from this server rather than from a CDN. On a
+# captive portal a CDN <script> "loads" a login page instead of the library;
+# served from here, the file is on the same LAN as the phone that asked.
+# Only these names are served: the route is not a directory listing.
+VENDOR_FILES = ("amplitude-unified.umd.js",)
+
+
+def _repo_vendor() -> Path | None:
+    here = Path(__file__).resolve()
+    if len(here.parents) < 3:
+        return None
+    return here.parents[2] / "static" / "vendor"
+
+
+VENDOR = _repo_vendor()
+
+# The standalone build rebinds this to {name: text} for every VENDOR_FILES
+# entry, the same way it rebinds EMBEDDED_PAGE.
+EMBEDDED_VENDOR: dict = {}
+
+
+def vendor_name(path: str) -> str | None:
+    """The vendored file a GET path asks for, or None if it is not one."""
+    prefix = "/vendor/"
+    if not path.startswith(prefix):
+        return None
+    name = path[len(prefix) :]
+    return name if name in VENDOR_FILES else None
+
+
+def vendor_source(name: str) -> str | None:
+    if name not in VENDOR_FILES:
+        return None
+    if name in EMBEDDED_VENDOR:
+        return EMBEDDED_VENDOR[name]
+    if VENDOR is not None and (VENDOR / name).exists():
+        return (VENDOR / name).read_text(encoding="utf-8")
+    return None
+
 
 def page_source() -> str | None:
-    if PAGE.exists():
+    # embedded first: the standalone must never consult a disk path that
+    # belongs to whatever happens to sit three levels above it
+    if EMBEDDED_PAGE is not None:
+        return EMBEDDED_PAGE
+    if PAGE is not None and PAGE.exists():
         return PAGE.read_text(encoding="utf-8")
-    return EMBEDDED_PAGE
+    return None
 
 
 HEAD = (
@@ -56,13 +324,46 @@ POSTS = {
     "/api/back": "back",
     "/api/leave": "leave",
     "/api/retime": "retime",
+    # the host desk on the big screen
+    "/api/host/add": "host_add",
+    "/api/host/here": "host_here",
+    "/api/host/skip": "host_skip",
+    "/api/host/end": "host_end",
+    "/api/host/remove": "host_remove",
 }
 
+# the two routes that can carry a pasted link
+TITLED = ("song", "host_add")
 
-def page_html(role: str, source: str | None = None) -> str:
-    """The queue page as a document, told its role and where the API is."""
+
+def page_html(
+    role: str,
+    source: str | None = None,
+    join_url: str | None = None,
+    search: bool = False,
+) -> str:
+    """The queue page as a document, told its role, the API, and the join URL.
+
+    The join URL is the one the screen turns into a QR code. It comes from
+    here rather than from the browser's ``location.origin`` because only
+    this process knows which address phones can actually reach: a screen
+    opened at localhost would otherwise print a QR every phone in the room
+    fails to resolve, which is the entire product silently broken.
+
+    ``search`` states whether this process has a YouTube key at all. It is
+    a meta tag rather than something the page probes for, so a phone with
+    no search never renders a search box that could only fail -- the point
+    of the whole degradation rule is that a keyless venue looks exactly
+    like the venue did before search existed, not like a broken one.
+    """
     html = source if source is not None else page_source()
     head = HEAD.format(role=role)
+    if join_url:
+        head += '<meta name="karaoke-join" content="%s">\n' % escape(
+            join_url, quote=True
+        )
+    if search:
+        head += '<meta name="karaoke-search" content="on">\n'
     marker = "</style>"
     cut = html.find(marker)
     if cut == -1:
@@ -77,6 +378,13 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "KaraokeQueue/1.0"
     room: QueueRoom = None
     lock: threading.Lock = None
+    join_url: str | None = None
+    # injectable so the suite never reaches YouTube; build() rebinds all four
+    title_lookup = staticmethod(youtube_title)
+    title_cache: dict = {}
+    search_lookup = staticmethod(youtube_search)
+    search_cache: dict = {}
+    search_enabled: bool = False
 
     def log_message(self, fmt, *args):
         if os.environ.get("KARAOKE_QUIET"):
@@ -89,6 +397,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _script(self, status, text):
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=86400")
         self.end_headers()
         self.wfile.write(body)
 
@@ -108,7 +425,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._html(404, "<h1>karaoke-queue.html not found</h1>")
                 return
             role = "screen" if route.path == "/screen" else "phone"
-            self._html(200, page_html(role))
+            self._html(
+                200,
+                page_html(role, join_url=self.join_url, search=self.search_enabled),
+            )
+        elif route.path == "/api/search":
+            # Never behind the room lock: search touches no room state, and a
+            # three-second uplink must not stall every phone's poll. Always
+            # 200 -- "we could not ask" is an answer the page renders, not an
+            # error it has to recover from.
+            query = parse_qs(route.query).get("q", [""])[0]
+            found = resolve_search(query, self.search_lookup, self.search_cache)
+            if found is None:
+                self._json(200, {"ok": False, "results": [], "note": SEARCH_OFF_NOTE})
+            else:
+                self._json(200, {"ok": True, "results": found})
         elif route.path == "/api/state":
             query = parse_qs(route.query)
             singer_id = query.get("singer_id", [None])[0]
@@ -119,6 +450,12 @@ class Handler(BaseHTTPRequestHandler):
             with self.lock:
                 state = self.room.state(time.time(), singer_id, since)
             self._json(200, state)
+        elif vendor_name(route.path):
+            source = vendor_source(vendor_name(route.path))
+            if source is None:
+                self._json(404, {"error": "not found"})
+            else:
+                self._script(200, source)
         elif route.path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
@@ -146,6 +483,9 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             self._json(400, {"error": "body must be a JSON object"})
             return
+        if method in TITLED:
+            # outside the lock: a slow uplink must not stall every poll
+            payload = resolve_title(payload, self.title_lookup, self.title_cache)
         try:
             with self.lock:
                 out = getattr(self.room, method)(payload, time.time())
@@ -155,17 +495,48 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, out)
 
 
-def build(profiles_path=None):
-    """A handler class bound to one room -- handy for tests."""
+def build(
+    profiles_path=None,
+    join_url=None,
+    title_lookup=None,
+    search_lookup=None,
+    search_enabled=None,
+):
+    """A handler class bound to one room -- handy for tests.
+
+    ``title_lookup`` replaces the YouTube oEmbed fetch and ``search_lookup``
+    the Data API search; the suite passes fakes so no test ever reaches the
+    network. ``search_enabled`` defaults to "is there a key in the
+    environment", which is what decides whether the phone shows a search box
+    at all.
+    """
     return type(
         "BoundHandler",
         (Handler,),
-        {"room": QueueRoom(profiles_path), "lock": threading.Lock()},
+        {
+            "room": QueueRoom(profiles_path),
+            "lock": threading.Lock(),
+            "join_url": join_url,
+            "title_lookup": staticmethod(title_lookup or youtube_title),
+            "title_cache": {},
+            "search_lookup": staticmethod(search_lookup or youtube_search),
+            "search_cache": {},
+            "search_enabled": (
+                search_available() if search_enabled is None else bool(search_enabled)
+            ),
+        },
     )
 
 
-def lan_address() -> str | None:
-    """The address phones on the same Wi-Fi can actually reach."""
+def _default_route_address() -> str | None:
+    """Whichever interface the OS would send internet traffic out of.
+
+    Alone this is the wrong question, and it answered wrongly on the
+    owner's machine: a VPN was up, so the route to the internet ran
+    through a tunnel at 10.5.0.2 and the QR published an address no
+    phone in the room could resolve. Kept as one candidate among
+    several, never as the answer.
+    """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("192.0.2.1", 80))  # no packets sent; routing only
@@ -174,21 +545,177 @@ def lan_address() -> str | None:
         return None
 
 
+def _host_addresses() -> list[str]:
+    """Every IPv4 this machine answers to, as far as name resolution knows."""
+    found = []
+    for family, _, _, _, sockaddr in _getaddrinfo_safe():
+        if family == socket.AF_INET and sockaddr[0] not in found:
+            found.append(sockaddr[0])
+    return found
+
+
+def _getaddrinfo_safe():
+    try:
+        return socket.getaddrinfo(socket.gethostname(), None)
+    except (OSError, UnicodeError):
+        return []
+
+
+def address_rank(address: str) -> int:
+    """Lower sorts first. How likely is this the Wi-Fi phones are on?
+
+    A venue or a house hands out 192.168.x.x almost without exception,
+    so that wins. 172.16-31 is the next most likely private range. A
+    10.x address is real too, but it is also what every VPN client and
+    container bridge helps itself to, so it sorts last of the private
+    ranges -- the case that actually bit.
+    """
+    parts = address.split(".")
+    try:
+        octets = [int(p) for p in parts]
+    except ValueError:
+        return 90
+    if len(octets) != 4:
+        return 90
+    if octets[0] == 127:
+        return 99  # loopback: reaches nothing but this machine
+    if octets[0] == 169 and octets[1] == 254:
+        return 98  # link-local: the adapter never got an address
+    if octets[0] == 192 and octets[1] == 168:
+        return 0
+    if octets[0] == 172 and 16 <= octets[1] <= 31:
+        return 1
+    if octets[0] == 10:
+        return 2
+    return 50  # a public address: unusual here, but it is reachable
+
+
+def lan_addresses() -> list[str]:
+    """Every address a phone might reach this machine on, best guess first.
+
+    Ranked rather than chosen, because no rule gets this right on every
+    machine: the list is printed so a wrong guess costs the owner one
+    glance instead of a support round trip.
+    """
+    found = []
+    for address in [_default_route_address()] + _host_addresses():
+        if address and address not in found:
+            found.append(address)
+    return sorted(found, key=lambda a: (address_rank(a), a))
+
+
+def lan_address() -> str | None:
+    """The single best guess at the address phones can reach."""
+    ranked = lan_addresses()
+    return ranked[0] if ranked else None
+
+
+# The inbound rule the launcher (start_karaoke.ps1) looks for and, when it is
+# running elevated, offers to create. Named rather than matched by port so a
+# non-coder can find it again in Windows Defender Firewall, and so the check
+# and the fix can never drift: both sides import these two from here.
+FIREWALL_RULE_NAME = "Karaoke Queue"
+
+
+def firewall_command(port: int = 8772) -> str:
+    """The exact one-line PowerShell that lets phones reach this machine.
+
+    Printed, never run from here. A server process that silently reconfigured
+    the host firewall would be a worse thing to ship than a room that cannot
+    join, and elevation belongs to whoever opened the window.
+    """
+    return (
+        "New-NetFirewallRule -DisplayName '%s' -Direction Inbound "
+        "-Action Allow -Protocol TCP -LocalPort %d -Profile Any"
+        % (FIREWALL_RULE_NAME, port)
+    )
+
+
+def search_status_line() -> str:
+    """Which of the two phones the operator is about to hand out.
+
+    States the fact, never the key. Off is a supported way to run the night,
+    not a warning: the phone still takes a pasted link or a typed title, and
+    that is the whole of what it could do before search existed.
+    """
+    if search_available():
+        return (
+            "Song search: ON — phones can type a song name and tap a result. "
+            "(Free tier: about 100 searches a day, shared by the room.)"
+        )
+    return (
+        "Song search: off — phones paste a YouTube link or type the song title, "
+        "exactly as before. Set %s in the environment to turn search on."
+        % SEARCH_ENV_KEY
+    )
+
+
+def port_in_use_message(port: int) -> str:
+    """What a busy port means to the person who double-clicked the icon.
+
+    Not "OSError: [WinError 10048]". The cause is almost always the last
+    karaoke window still open behind this one, and that is a sentence, not a
+    stack trace. 2026-09-02: one of the four things that went wrong in a
+    single sitting.
+    """
+    return (
+        "Karaoke is already running -- close the other karaoke window first.\n"
+        "(Something on this machine is already using port %d. If you are sure "
+        "karaoke is not open, restart the computer or start it on another "
+        "port with --port %d.)" % (port, port + 1)
+    )
+
+
 def serve(host="0.0.0.0", port=8772, profiles_path=None):
     profiles_path = profiles_path or os.environ.get(
         "KARAOKE_PROFILES", "karaoke-profiles.json"
     )
-    httpd = ThreadingHTTPServer((host, port), build(profiles_path))
-    lan = lan_address()
-    shown = lan or ("localhost" if host in ("0.0.0.0", "") else host)
+    bound = host not in ("0.0.0.0", "")
+    ranked = lan_addresses()
+    shown = host if bound else (ranked[0] if ranked else "localhost")
+    try:
+        httpd = ThreadingHTTPServer(
+            (host, port), build(profiles_path, f"http://{shown}:{port}/")
+        )
+    except OSError:
+        # Almost always EADDRINUSE, and there is nothing useful to tell apart:
+        # every way this fails means "this program cannot have that port", and
+        # the reply that helps is the same one.
+        print(port_in_use_message(port))
+        return 1
     print(f"Karaoke queue on http://{shown}:{port}  (singer memory in {profiles_path})")
     print(f"Big screen: open http://{shown}:{port}/screen and scan the QR to join.")
+    # Never the key itself, only whether there is one. The operator needs to
+    # know which of the two phones they are about to hand out.
+    print(search_status_line())
+    others = [a for a in ranked if a != shown]
+    if others and not bound:
+        # The guess is a guess. A machine with a VPN up, a container
+        # bridge, or two network cards has several, and only one of them
+        # is the Wi-Fi the phones are on -- so print them all rather than
+        # make anyone go and ask the operating system.
+        print("")
+        print("If phones cannot reach that address, this machine also answers to:")
+        for address in others:
+            print(f"    http://{address}:{port}/screen")
+        print(
+            f"Pick the one starting 192.168 if there is one, then restart with "
+            f"--host <that address> so the QR publishes it."
+        )
+        print("")
+    print(
+        "If phones cannot connect: allow this app through the firewall for "
+        "BOTH private and public networks (venue Wi-Fi usually counts as public)."
+    )
+    print("Run this once, in a PowerShell window opened as administrator:")
+    print("    " + firewall_command(port))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
         httpd.server_close()
+    return 0
 
 
 def main(argv=None):
@@ -196,9 +723,21 @@ def main(argv=None):
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8772)
     parser.add_argument("--profiles", default=None, help="singer memory JSON path")
+    parser.add_argument(
+        "--print-address",
+        action="store_true",
+        help="print the address phones should use, then exit",
+    )
     args = parser.parse_args(argv)
-    serve(args.host, args.port, args.profiles)
+    if args.print_address:
+        # The launcher asks this rather than ranking addresses itself. Two
+        # implementations of "which address can phones reach" is how the VPN
+        # bug of 2026-09-02 comes back on a path no test covers.
+        bound = args.host not in ("0.0.0.0", "")
+        print(args.host if bound else (lan_address() or "localhost"))
+        return 0
+    return serve(args.host, args.port, args.profiles)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

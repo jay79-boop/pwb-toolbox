@@ -76,3 +76,19 @@ watch-state.example.bak
 # an accidental sync followed by `git add -A` cannot publish it.
 docs/journal/
 dist/
+
+# `npx skills` staging copy. The installed skill is committed under
+# .claude/skills/; this mirror is restorable with `npx skills experimental_install`.
+.agents/
+
+# situational awareness observation log (tools/awareness.py). Machine-local
+# history, regenerable by re-running `record`, and it would collide on every
+# branch if tracked. Only the README explaining that is kept -- and it must be
+# ignored, or the tool observes its own output as uncommitted work.
+awareness/*
+!awareness/README.md
+
+# singer memory written by the karaoke queue server. The launcher puts it
+# under %LOCALAPPDATA%, but 'python -m tools.karaoke_server.queue_server'
+# defaults to the working directory, which is usually this checkout.
+karaoke-profiles.json

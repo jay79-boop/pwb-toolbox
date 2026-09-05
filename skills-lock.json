@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "aiq-research": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/aiq-research/SKILL.md",
+      "computedHash": "fd2e99f928f13fc462d1eb9e22145804448c1695088dfdb1ce3d5e7c2493e918"
+    },
+    "cuopt-numerical-optimization-formulation": {
+      "source": "NVIDIA/skills",
+      "sourceType": "github",
+      "skillPath": "skills/cuopt-numerical-optimization-formulation/SKILL.md",
+      "computedHash": "b482f87d66c2b9d513bedcd76356d2c4f46cfb39ed0566570f59eef309a4d84d"
+    }
+  }
+}

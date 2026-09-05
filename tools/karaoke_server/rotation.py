@@ -28,7 +28,10 @@ to the room: more people present means a longer walk, and the observed
 walk-up times (remembered per singer, across nights) feed both the lead and
 each singer's grace timer. Miss your call ``max_no_shows`` times and you are
 timed out (state AWAY) until you tell the desk you are back; stay away long
-enough and the rotation concludes you left.
+enough and the rotation concludes you left. The one exception is a *solo*
+call: when the draw had exactly one singer in it there is nobody to move
+on to, so the call carries no deadline at all -- it waits, and turns into
+a timed call the moment a second singer becomes eligible.
 
 Pure core, dirty edge: no clock, no socket, no file. Time is a float passed
 into every method, randomness is an injected ``random.Random``, and singer
@@ -134,6 +137,9 @@ class Call:
     misses_at_call: int
     by: str  # "ceiling" or "lottery"
     appeared_at: float | None = None
+    # the draw had one singer in it: nobody to move on to, so no deadline
+    # (math.inf) until a second singer becomes eligible
+    solo: bool = False
 
 
 @dataclass
@@ -179,6 +185,9 @@ class Rotation:
         self.singers: dict[str, Singer] = {}
         self.stage: Stage | None = None
         self.call: Call | None = None
+        # set by skip_call and consumed by the very next draw, so the desk
+        # never gets the singer it just skipped handed straight back
+        self.skipped_id: str | None = None
         # the room is never silent: house music is assumed already playing
         # when the night opens, and these events only mark the transitions
         self.house_on: bool = True
@@ -364,6 +373,16 @@ class Rotation:
 
     def _draw(self, now: float, deadline_floor: float) -> Event:
         pool = self._pool()
+        if self.skipped_id is not None:
+            # the desk skipped someone a moment ago: handing the mic
+            # straight back to them reads as a broken button, however
+            # honest the lottery was. They stay in the pool for every
+            # later draw -- and if they are the only one left, the room
+            # has nobody else to call.
+            rest = [s for s in pool if s.id != self.skipped_id]
+            if rest:
+                pool = rest
+            self.skipped_id = None
         over = [s for s in pool if s.misses >= self.ceiling(len(pool))]
         if over:
             over.sort(key=lambda s: (-s.misses, s.songs_sung, s.joined_at, s.id))
@@ -382,12 +401,16 @@ class Rotation:
         waited = (
             now - chosen.eligible_since if chosen.eligible_since is not None else 0.0
         )
+        solo = len(pool) == 1
         self.call = Call(
             chosen.id,
             made_at=now,
-            deadline=max(now + self._grace_s(chosen), deadline_floor),
+            deadline=(
+                math.inf if solo else max(now + self._grace_s(chosen), deadline_floor)
+            ),
             misses_at_call=chosen.misses,
             by=by,
+            solo=solo,
         )
         chosen.state = ON_DECK
         chosen.misses = 0
@@ -401,7 +424,9 @@ class Rotation:
                 "waited_s": round(waited, 1),
                 "misses_at_call": self.call.misses_at_call,
                 "pool": len(pool),
-                "deadline": self.call.deadline,
+                # None rather than inf: the detail travels as JSON
+                "deadline": None if solo else self.call.deadline,
+                "solo": solo,
                 "title": chosen.song.title,
             },
         )
@@ -444,6 +469,15 @@ class Rotation:
                 singer.state = LEFT
                 return [Event(PRUNED, now, singer.id)]
         call = self.call
+        if call and call.solo and call.appeared_at is None and self._pool():
+            # a second singer is now in the draw: the same singer stays
+            # called, but from here the clock runs like any other call
+            call.solo = False
+            call.deadline = now + self._grace_s(self._singer(call.singer_id))
+            if self.stage:
+                call.deadline = max(
+                    call.deadline, self.stage.ends_at + self.cfg.end_slack_s
+                )
         if call and call.appeared_at is None and now >= call.deadline:
             return [self._no_show(now)]
         if self.stage and now >= self.stage.ends_at:
@@ -477,6 +511,26 @@ class Rotation:
         singer.state = WAITING
         self._refresh_eligible(singer, now)
         return Event(NO_SHOW, now, singer.id)
+
+    def skip_call(self, now: float) -> Event:
+        """The desk moves on: the open call is a no-show as of now.
+
+        Same consequence as the clock running out -- a strike, the climb
+        restarted, the draw runs again on the next tick -- so a host cannot
+        skip someone more gently or more harshly than the rotation would.
+        The one difference is who the next draw may choose: the skipped
+        singer sits out that one draw whenever anyone else is eligible,
+        because a button labelled "draw again" that returns the same name
+        reads as broken. Measured before the rule existed: in a room of
+        two it did exactly that 32% of the time.
+        """
+        call = self.call
+        if call is None:
+            raise RotationError("nobody is being called")
+        if call.appeared_at is not None:
+            raise RotationError("that singer is already at the stage")
+        self.skipped_id = call.singer_id
+        return self._no_show(now)
 
     def _finish_song(self, at: float) -> list[Event]:
         stage = self.stage
@@ -526,7 +580,13 @@ class Rotation:
         """When tick() next has something to do; None means nothing pending."""
         times: list[float] = []
         if self.call and self.call.appeared_at is None:
-            times.append(self.call.deadline)
+            if self.call.solo:
+                # no deadline; the conversion to a timed call happens on
+                # whichever tick follows the next singer queueing
+                if self._pool():
+                    times.append(now)
+            else:
+                times.append(self.call.deadline)
         if self.stage:
             times.append(self.stage.ends_at)
             if self.call is None and self._pool():

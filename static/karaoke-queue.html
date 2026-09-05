@@ -74,27 +74,90 @@ button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .badge.warn{background:var(--warn-bg);color:var(--warn)}
 .badge.bad{background:var(--bad-bg);color:var(--bad)}
 .bignum{font-family:"JetBrains Mono",ui-monospace,monospace;font-weight:700;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+/* ---- phone: song search ----
+   An addition to the paste-a-link box below it, never a replacement: with
+   no key the server sends no karaoke-search meta, #searchWrap stays hidden,
+   and the card is exactly the card it was before search existed. */
+#searchWrap{display:flex;flex-direction:column;gap:10px}
+.searchRow{display:flex;gap:8px}
+.searchRow input{flex:1 1 auto;min-width:0}
+.searchRow button{flex:0 0 auto}
+#searchResults{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow-y:auto}
+button.result{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;padding:12px 14px;font-weight:400;background:var(--card);border:1px solid var(--rule)}
+button.result:hover{background:var(--live-bg);border-color:var(--live-edge)}
+button.result .rTitle{font-weight:700;color:var(--ink);line-height:1.3}
+button.result .rChan{font-size:13px;color:var(--ink-3)}
+#searchNote{font-size:14px;color:var(--ink-2);background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:9px 12px;margin:0}
+.orRule{display:flex;align-items:center;gap:10px;margin:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.orRule::before,.orRule::after{content:"";flex:1 1 auto;height:1px;background:var(--rule)}
 /* ---- the phone call-up takeover ---- */
 #youreUp{position:fixed;inset:0;background:var(--call);color:#ffffff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px;z-index:10}
 #youreUp h1{font-size:clamp(44px,14vw,96px);color:#ffffff}
 #youreUp .bignum{font-size:64px;color:#ffffff}
 #youreUp button{background:#ffffff;border-color:#ffffff;color:var(--call);font-size:22px;padding:18px 28px}
 #youreUp p{color:#fdece5;font-size:18px;margin:0}
-/* ---- the big screen ---- */
-body[data-role=screen]{background:var(--page)}
-body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start;padding-top:28px}
+/* ---- the big screen ----
+   This is a TV, read by strangers from across the room, so the screen role
+   scales its own type up rather than inheriting the phone's. Everything a
+   newcomer needs -- the address, the three steps, who is up, what happens
+   if they miss it, how many are waiting -- is sized to be read standing at
+   the bar, not leaning on the monitor. */
+body[data-role=screen]{background:var(--page);font-size:18px}
+body[data-role=screen] main{max-width:1180px;display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;padding-top:28px}
+body[data-role=screen] .note{font-size:17px}
+body[data-role=screen] .eyebrow{font-size:13px}
+body[data-role=screen] label{font-size:16px}
 #stageCard{grid-column:1;min-height:380px;justify-content:center;text-align:center;gap:18px}
 #stageCard h1{font-size:clamp(40px,6vw,84px)}
 #stageCard .song{font-size:clamp(20px,3vw,34px);color:var(--ink-2);font-family:"Newsreader",Georgia,serif}
+#stageCard .badge{align-self:center;font-size:18px;padding:6px 16px}
+/* what happens if the called singer never turns up -- stated on the screen
+   rather than only on their phone, because the room is what makes them run */
+#stageMiss{font-size:clamp(15px,1.7vw,22px);font-weight:600;color:var(--call);margin:0}
+#stageWait{font-size:clamp(16px,1.8vw,24px);color:var(--ink-2);margin:0;border-top:1px solid var(--rule);padding-top:14px}
+#stageWait .mono{font-weight:700;color:var(--ink)}
 #sideCol{grid-column:2;display:flex;flex-direction:column;gap:16px}
 #qrBox{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
-#qr{width:200px;height:200px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
-#qr img,#qr canvas{max-width:100%}
-#joinUrl{font-size:13px;word-break:break-all;color:var(--ink-2)}
+#qrBox h2{font-size:26px}
+#qr{width:100%;box-sizing:border-box;min-height:120px;background:#ffffff;padding:8px;border:1px solid var(--rule);border-radius:8px;display:flex;align-items:center;justify-content:center}
+#qr canvas{display:block;image-rendering:pixelated}
+#joinUrl{font-size:clamp(19px,2.1vw,28px);font-weight:700;word-break:break-all;color:var(--ink);font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;line-height:1.25;margin:0}
+/* the scheme gets its own line so a break can never land inside the IP: an
+   address split as "192.168.1.5" / "0:8797" is one somebody will mistype */
+#joinUrl .scheme{display:block;font-size:.55em;font-weight:500;color:var(--ink-3)}
+#joinSteps{margin:0;padding:0 0 0 24px;text-align:left;display:flex;flex-direction:column;gap:8px;font-size:17px;color:var(--ink-2)}
+#joinSteps b{color:var(--ink)}
+/* neutral on purpose: blue/red/grey are the stage-state system (singing /
+   called / waiting) and a signpost is not a stage state */
+#noPhone{font-size:17px;font-weight:700;color:var(--ink);background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:9px 12px;margin:0;width:100%}
+#qrWarn{font-size:14px;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad);border-radius:6px;padding:6px 8px;margin:0}
 #playerWrap{grid-column:1 / -1;border-radius:12px;overflow:hidden;border:1px solid var(--rule);background:#000000;aspect-ratio:16/9;max-height:420px}
 #playerWrap iframe,#playerWrap #player{width:100%;height:100%;border:0}
 #ticker{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px}
-#ticker div{font-size:14px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:4px 2px}
+#ticker div{font-size:17px;color:var(--ink-2);border-bottom:1px solid var(--rule-2);padding:5px 2px}
+/* ---- the host desk: a corner button, a panel only the screen role wires ---- */
+#hostBtn{position:fixed;right:16px;bottom:16px;z-index:5;font-size:13px;font-weight:600;padding:8px 14px;background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
+#hostBtn[aria-expanded=true]{background:var(--sunken);color:var(--ink)}
+#hostPanel{gap:10px}
+#hostPanel .row{display:flex;gap:8px;flex-wrap:wrap}
+#hostPanel .row button{flex:1}
+#hostSkipBtn{background:var(--call-bg);border-color:var(--call-edge);color:var(--call)}
+#hostEndBtn{background:var(--live-bg);border-color:var(--live-edge);color:var(--live)}
+/* who is waiting, and the button that takes one of them off the list.
+   A-Z, never a running order: the panel may show WHO is waiting and must
+   never show WHO IS NEXT -- see docs/karaoke-rotation.md. */
+#hostWaiting{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--rule);padding-top:12px}
+#hostWaitingList{display:flex;flex-direction:column;gap:6px;max-height:38vh;overflow-y:auto}
+.wRow{display:flex;align-items:center;gap:8px;background:var(--sunken);border:1px solid var(--rule);border-radius:8px;padding:7px 8px 7px 12px}
+.wRow .wName{flex:1 1 auto;min-width:0;font-weight:600;font-size:16px;overflow-wrap:anywhere}
+.wRow button{flex:0 0 auto;padding:6px 12px;font-size:13px;background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
+.wRow button:hover{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+#hostNote,#walkupNote{font-size:13px;color:var(--good);background:var(--good-bg);border-radius:8px;padding:8px 12px;margin:0}
+/* ---- the walk-up desk: sign-up and arrival, both in plain sight ---- */
+#walkupCard{gap:10px}
+#walkupCard h2{font-size:23px}
+#stageHereBtn{align-self:center;max-width:100%}
+#stageHereErr{align-self:center}
 @media (max-width:760px){
   body[data-role=screen] main{grid-template-columns:1fr}
   #sideCol,#stageCard,#playerWrap,#ticker{grid-column:1}
@@ -133,6 +196,20 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       <p class="note">Your usual?</p>
       <div class="chips" id="usualChips"></div>
     </div>
+    <!-- search: shown only when the server said it has a key, via the
+         karaoke-search meta it injects. With no key this block never
+         appears and the paste/type box below is the whole card, which is
+         exactly what it was before search existed. -->
+    <div id="searchWrap" hidden>
+      <label for="searchIn">Search for it</label>
+      <div class="searchRow">
+        <input type="text" id="searchIn" autocomplete="off" placeholder="sweet caroline">
+        <button class="primary" id="searchBtn">Search</button>
+      </div>
+      <div id="searchResults" hidden></div>
+      <p id="searchNote" hidden></p>
+      <p class="orRule">or</p>
+    </div>
     <label for="songIn">Paste a YouTube link, or just type the song</label>
     <input type="url" id="songIn" autocomplete="off" placeholder="https://youtube.com/watch?v=… or Sweet Caroline">
     <button class="primary" id="songBtn">Queue it</button>
@@ -169,7 +246,8 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     <p id="upSong"></p>
     <div class="bignum" id="upCount">60</div>
     <button id="hereBtn">I'M AT THE STAGE</button>
-    <p>miss the count and the draw moves on</p>
+    <p id="upMiss">miss the count and the draw moves on</p>
+    <p id="upSolo" hidden>Only you in the draw so far — tap when you're ready</p>
   </div>
 
   <!-- ============ SCREEN ============ -->
@@ -178,19 +256,91 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     <h1 id="stageName">Warming up…</h1>
     <p class="song" id="stageSong">Scan the QR to get in the draw</p>
     <div class="bignum" id="stageClock" hidden>0:00</div>
+    <!-- arrival, confirmable by the room: /api/here needs a singer_id only
+         a phone holds, so a walk-up signed in at this screen could be
+         called and never answer. Here on the stage card rather than in the
+         host panel because the singer it exists for has no phone, and a
+         panel behind a button is no use to someone walking up. -->
+    <button class="urgent" id="stageHereBtn" hidden><span id="stageHereName"></span> is at the stage — start the song</button>
+    <p class="err" id="stageHereErr" hidden></p>
+    <!-- what happens if the called singer never appears. On the phone this
+         is #upMiss; the room needs it too, because a stranger watching a
+         countdown with no explanation has no idea it is a countdown for
+         somebody, or that nothing is broken when it runs out. -->
+    <p id="stageMiss" hidden></p>
+    <p id="stageWait"><span class="mono" id="screenCount">0</span> waiting<span id="stageWaitTail"> — the draw is random, so anyone could be next</span></p>
   </section>
   <aside id="sideCol" hidden>
+    <!-- the door. A room of strangers has to be able to work the whole
+         thing out from this box alone: scan or type the address, what the
+         two steps after that are, and where to go if they have no phone. -->
     <div class="card" id="qrBox">
       <span class="eyebrow">Join the draw</span>
+      <h2>Sing with us</h2>
       <div id="qr"></div>
-      <p id="joinUrl" class="mono"></p>
-      <p class="note"><span class="mono" id="screenCount">0</span> in the draw</p>
+      <p id="joinUrl"></p>
+      <p id="qrWarn" hidden>⚠ This screen was opened at localhost, so the QR
+        only works on this computer. Restart and open the address the program
+        prints instead.</p>
+      <ol id="joinSteps">
+        <li><b>Scan the code</b>, or type that address into your phone</li>
+        <li><b>Your name, then your song</b> — search it, paste a link, or just type it</li>
+        <li><b>Keep your phone out.</b> It goes full-screen when the draw picks you</li>
+      </ol>
+      <p id="noPhone">No phone? Sign up right here ↓</p>
     </div>
+    <!-- walk-up sign-up. Not hidden and not behind a button: it lives in
+         #sideCol, which only the screen role ever shows, so the phone role
+         gets it never and the screen gets it always. The QR above stays the
+         first thing anyone sees -- this is the way in for whoever has no
+         phone, or no wish to scan one. -->
+    <section class="card" id="walkupCard">
+      <span class="eyebrow">No phone? No problem</span>
+      <h2>Sign up right here</h2>
+      <p class="note">Your name, and your song if you've picked one. You go
+        in the same random draw as everybody else.</p>
+      <label for="walkupName">Your name</label>
+      <input type="text" id="walkupName" maxlength="24" autocomplete="off" placeholder="Ada">
+      <label for="walkupSong">Your song — or leave it, and choose later</label>
+      <input type="text" id="walkupSong" autocomplete="off" placeholder="Sweet Caroline, or a YouTube link">
+      <button class="primary" id="walkupBtn">Put me in the draw</button>
+      <p class="err" id="walkupErr" hidden></p>
+      <p id="walkupNote" hidden></p>
+    </section>
+    <!-- the host desk: markup is inert until the screen role wires it -->
+    <section class="card" id="hostPanel" hidden>
+      <span class="eyebrow">Host desk</span>
+      <label for="hostName">Add a singer</label>
+      <input type="text" id="hostName" maxlength="24" autocomplete="off" placeholder="Name">
+      <input type="text" id="hostSong" autocomplete="off" placeholder="Song or YouTube link (optional)">
+      <button class="primary" id="hostAddBtn">Add</button>
+      <div class="row">
+        <button id="hostSkipBtn" hidden>⏭ Skip the call — draw again</button>
+        <button id="hostEndBtn" hidden>⏹ End the song</button>
+      </div>
+      <!-- who is waiting, and a way to take one of them off the list when
+           they have gone home. A-Z and labelled as A-Z: this is not, and
+           must never become, the running order. -->
+      <div id="hostWaiting">
+        <label id="hostWaitingHead">Waiting</label>
+        <p class="note" id="hostWaitingNone" hidden>Nobody in the draw yet.</p>
+        <div id="hostWaitingList"></div>
+      </div>
+      <p class="err" id="hostErr" hidden></p>
+      <p id="hostNote" hidden></p>
+    </section>
   </aside>
+  <button id="hostBtn" type="button" aria-controls="hostPanel" aria-expanded="false" hidden>Host</button>
   <div id="playerWrap" hidden><div id="player"></div></div>
   <div id="ticker" hidden></div>
 </main>
 
+<!-- Amplitude browser SDK: @amplitude/unified 1.1.32, its own UMD build,
+     vendored at static/vendor/ and served by the queue server itself.
+     Never a CDN: on a captive portal a CDN <script> "loads" a login page
+     (see the QR note below). When this file does not load, analytics is
+     off and the join path is untouched. -->
+<script src="vendor/amplitude-unified.umd.js"></script>
 <script>
 (function () {
   "use strict";
@@ -202,6 +352,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   var qs = new URLSearchParams(location.search);
   var API = meta("karaoke-queue");
   var ROLE = qs.get("role") || meta("karaoke-role") || "phone";
+  // The server states whether it has a YouTube key. No meta means no key
+  // means no search box at all -- a phone that shows a search that can only
+  // fail is worse than the phone we already had, which pastes links fine.
+  var SEARCH = meta("karaoke-search") === "on" || qs.get("search") === "1";
   var DEMO = qs.get("demo") === "1";
   document.body.dataset.role = ROLE;
 
@@ -209,6 +363,22 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
   var show = function (id, on) { $(id).hidden = !on; };
 
   if (!API && !DEMO) { show("noServer", true); return; }
+
+  /* ---- analytics ----
+     Initialised once per page load, only when the vendored SDK actually
+     loaded. Every call is guarded so a router with no uplink costs nothing. */
+  // Amplitude ingestion key — public by design; move to an env var when you set up environments.
+  var AMPLITUDE_KEY = "1d5abce26419d85fd651e8276c0a6a59";
+  var analytics = null;
+  if (typeof amplitude !== "undefined" && amplitude && typeof amplitude.initAll === "function") {
+    try {
+      var booted = amplitude.initAll(AMPLITUDE_KEY, {"analytics":{"autocapture":true},"sessionReplay":{"sampleRate":1}});
+      if (booted && typeof booted.catch === "function") { booted.catch(function () {}); }
+      analytics = amplitude;
+    } catch (e) { analytics = null; }
+  } else {
+    console.warn("Amplitude SDK missing — analytics disabled");
+  }
 
   /* ---- shared state ---- */
   var singerId = null, lastSeq = 0, state = null, polling = null;
@@ -227,10 +397,12 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
 
   var DEMO_STATE = {
     singing: {singer_id: "s1", name: "Ada", title: "Twinkle, Twinkle, Little Star", source: "title", ref: null, ends_in_s: 93},
-    called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41},
+    called: {singer_id: "s2", name: "Grace", title: "Nine to Five", appeared: false, deadline_in_s: 41, solo: false},
     house_on: false, waiting: ["Elmore", "Grace", "Jay", "Lin"], waiting_count: 4, seq: 7,
+    waiting_list: [{singer_id: "s4", name: "Elmore"}, {singer_id: "s2", name: "Grace"},
+                   {singer_id: "s3", name: "Jay"}, {singer_id: "s5", name: "Lin"}],
     events: [{seq: 7, kind: "call", name: "Grace", detail: {}}],
-    you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, on_stage: false, needs_song: false}
+    you: {state: "waiting", name: "Jay", song: "Sweet Caroline", songs_sung: 1, called: false, solo: false, on_stage: false, needs_song: false}
   };
 
   function poll() {
@@ -257,25 +429,103 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     phoneCards.forEach(function (id) { show(id, id === card); });
   }
 
-  function submitSong() {
-    var raw = $("songIn").value.trim();
-    if (!raw) return;
-    var vid = youtubeId(raw);
-    var payload = {singer_id: singerId, source: vid ? "link" : "title"};
-    if (vid) { payload.ref = vid; payload.title = raw; }
-    else { payload.title = raw; }
+  // One way into the queue, whether the title was typed, pasted, tapped off
+  // a "your usual?" chip, or tapped off a search result. A ref means the
+  // screen can play it; no ref is a bare title, which the engine has always
+  // accepted and a venue with its own karaoke rig runs on.
+  function queueSong(title, ref) {
+    if (!title) return;
+    var payload = {singer_id: singerId, source: ref ? "link" : "title", title: title};
+    if (ref) payload.ref = ref;
     post("/song", payload, function () {
-      show("songErr", false); $("songIn").value = ""; poll();
+      show("songErr", false);
+      $("songIn").value = "";
+      clearResults();
+      poll();
     }, function (err) { $("songErr").textContent = err; show("songErr", true); });
   }
 
+  function submitSong() {
+    var raw = $("songIn").value.trim();
+    if (!raw) return;
+    queueSong(raw, youtubeId(raw));
+  }
+
+  // ==== song search ======================================================
+  // Type "sweet caroline", tap a row. Every failure -- no key, no uplink,
+  // the day's quota spent, a slow answer, nonsense back -- lands in one
+  // plain sentence under the box, and the paste-a-link path underneath is
+  // untouched and still visible. The server answers 200 with ok:false for
+  // all of them, so there is one path here, not five.
+  var SEARCH_FALLBACK =
+    "Search isn't available right now — paste a YouTube link or just type the song title.";
+
+  function clearResults() {
+    $("searchIn").value = "";
+    $("searchResults").textContent = "";
+    show("searchResults", false);
+    show("searchNote", false);
+  }
+
+  function saySearch(text) {
+    $("searchResults").textContent = "";
+    show("searchResults", false);
+    $("searchNote").textContent = text;
+    show("searchNote", true);
+  }
+
+  function showResults(body) {
+    if (!body || body.ok !== true) { saySearch((body && body.note) || SEARCH_FALLBACK); return; }
+    var rows = body.results || [];
+    if (!rows.length) {
+      saySearch("Nothing found — try fewer words, or paste a link below.");
+      return;
+    }
+    show("searchNote", false);
+    var box = $("searchResults");
+    box.textContent = "";
+    rows.forEach(function (row) {
+      var pick = document.createElement("button");
+      pick.type = "button"; pick.className = "result";
+      var title = document.createElement("span");
+      title.className = "rTitle"; title.textContent = row.title;
+      var channel = document.createElement("span");
+      channel.className = "rChan"; channel.textContent = row.channel || "";
+      pick.appendChild(title); pick.appendChild(channel);
+      pick.onclick = function () { queueSong(row.title, row.ref); };
+      box.appendChild(pick);
+    });
+    show("searchResults", true);
+  }
+
+  function runSearch() {
+    var query = $("searchIn").value.trim();
+    if (!query) return;
+    $("searchBtn").disabled = true;
+    saySearch("Searching…");
+    fetch(API + "/search?q=" + encodeURIComponent(query))
+      .then(function (r) { return r.json(); })
+      .then(showResults)
+      .catch(function () { saySearch(SEARCH_FALLBACK); })
+      .then(function () { $("searchBtn").disabled = false; });
+  }
+  // ==== end song search ==================================================
+
   if (ROLE === "phone") {
     phoneShow(singerId ? null : "joinCard");
+    if (SEARCH) {
+      show("searchWrap", true);
+      $("searchBtn").onclick = runSearch;
+      $("searchIn").onkeydown = function (e) { if (e.key === "Enter") runSearch(); };
+    }
     $("joinBtn").onclick = function () {
       post("/join", {name: $("nameIn").value.trim()}, function (body) {
         singerId = body.singer_id;
         try { localStorage.setItem("kq-singer", singerId); } catch (e) {}
         show("joinErr", false);
+        if (analytics) {
+          try { amplitude.track('Joined Queue', { prompt_version: 'BA400.4' }); } catch (e) {} // helps improve this setup flow — safe to remove once you've verified the event lands
+        }
         if (body.past_songs && body.past_songs.length) {
           $("usualChips").innerHTML = "";
           body.past_songs.slice(0, 5).forEach(function (title) {
@@ -311,9 +561,12 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       show("youreUp", true);
       $("upName").textContent = "YOU'RE UP, " + you.name.toUpperCase();
       $("upSong").textContent = state.called ? state.called.title : "";
-      $("upCount").textContent = fmtClock(state.called ? state.called.deadline_in_s : 0);
+      // a solo call: nobody else in the draw, so no clock and no threat
+      var solo = !!(state.called && state.called.solo);
+      show("upCount", !solo); show("upMiss", !solo); show("upSolo", solo);
+      $("upCount").textContent = fmtClock(state.called ? state.called.deadline_in_s || 0 : 0);
       if (state.called && state.called.appeared) {
-        $("upCount").textContent = "✔"; }
+        $("upCount").textContent = "✔"; show("upCount", true); show("upSolo", false); }
       return;
     }
     if (you.on_stage) { phoneShow("stagePhoneCard"); return; }
@@ -380,16 +633,262 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     });
   }
 
+  // ==== qr, drawn here ==================================================
+  // A pub's Wi-Fi has no reason to reach the internet, and a captive
+  // portal is worse than no internet: the CDN <script> "loads", is a login
+  // page rather than the library, and the QR call throws. The QR is how
+  // every singer gets in, so it cannot depend on a network at all.
+  //
+  // Byte mode, error correction M, versions 1-6 (up to 106 bytes; a LAN
+  // URL is about 26). Stopping at 6 is deliberate: versions 1-6 carry no
+  // version-information block and at most one alignment pattern.
+  var QR_M = {            // version: [total codewords, EC per block, blocks]
+    1: [26, 10, 1], 2: [44, 16, 1], 3: [70, 26, 1],
+    4: [100, 18, 2], 5: [134, 24, 2], 6: [172, 16, 4]
+  };
+  var QR_EXP = new Array(512), QR_LOG = new Array(256);
+  (function () {
+    for (var i = 0, x = 1; i < 255; i++) {
+      QR_EXP[i] = x; QR_LOG[x] = i;
+      x <<= 1; if (x & 0x100) x ^= 0x11d;
+    }
+    for (i = 255; i < 512; i++) QR_EXP[i] = QR_EXP[i - 255];
+  })();
+  function qrMul(a, b) { return a && b ? QR_EXP[QR_LOG[a] + QR_LOG[b]] : 0; }
+
+  function qrEcc(data, n) {
+    var gen = [1], i, j;
+    for (i = 0; i < n; i++) {
+      var next = new Array(gen.length + 1);
+      for (j = 0; j < next.length; j++) next[j] = 0;
+      for (j = 0; j < gen.length; j++) {
+        next[j] ^= gen[j];
+        next[j + 1] ^= qrMul(gen[j], QR_EXP[i]);
+      }
+      gen = next;
+    }
+    var rem = data.slice();
+    for (i = 0; i < n; i++) rem.push(0);
+    for (i = 0; i < data.length; i++) {
+      var lead = rem[i];
+      if (!lead) continue;
+      for (j = 0; j < gen.length; j++) rem[i + j] ^= qrMul(gen[j], lead);
+    }
+    return rem.slice(data.length);
+  }
+
+  function qrCodewords(bytes, version) {
+    var spec = QR_M[version], blocks = spec[2], ecLen = spec[1];
+    var words = spec[0] - ecLen * blocks, bits = [], i, j;
+    function put(val, len) { for (var k = len - 1; k >= 0; k--) bits.push((val >> k) & 1); }
+    put(4, 4);                       // byte mode
+    put(bytes.length, 8);            // count indicator: 8 bits for versions 1-9
+    for (i = 0; i < bytes.length; i++) put(bytes[i], 8);
+    put(0, Math.min(4, words * 8 - bits.length));
+    while (bits.length % 8) bits.push(0);
+    for (i = 0; bits.length < words * 8; i++) put(i % 2 ? 0x11 : 0xec, 8);
+    var flat = [];
+    for (i = 0; i < bits.length; i += 8) {
+      var b = 0;
+      for (j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      flat.push(b);
+    }
+    var per = words / blocks, data = [], ec = [];
+    for (i = 0; i < blocks; i++) {
+      data.push(flat.slice(i * per, (i + 1) * per));
+      ec.push(qrEcc(data[i], ecLen));
+    }
+    var out = [];
+    for (j = 0; j < per; j++) for (i = 0; i < blocks; i++) out.push(data[i][j]);
+    for (j = 0; j < ecLen; j++) for (i = 0; i < blocks; i++) out.push(ec[i][j]);
+    return out;
+  }
+
+  var QR_MASKS = [
+    function (r, c) { return (r + c) % 2 === 0; },
+    function (r) { return r % 2 === 0; },
+    function (r, c) { return c % 3 === 0; },
+    function (r, c) { return (r + c) % 3 === 0; },
+    function (r, c) { return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; },
+    function (r, c) { return (r * c) % 2 + (r * c) % 3 === 0; },
+    function (r, c) { return ((r * c) % 2 + (r * c) % 3) % 2 === 0; },
+    function (r, c) { return ((r + c) % 2 + (r * c) % 3) % 2 === 0; }
+  ];
+
+  function qrPenalty(m) {
+    var size = m.length, score = 0, r, c, i, run, dark = 0;
+    for (r = 0; r < size; r++) {
+      for (c = 0; c < size; c++) if (m[r][c]) dark++;
+      for (i = 0; i < 2; i++) {          // 0: rows, 1: columns
+        run = 1;
+        for (c = 1; c < size; c++) {
+          var a = i ? m[c][r] : m[r][c], b = i ? m[c - 1][r] : m[r][c - 1];
+          if (a === b) { run++; if (run === 5) score += 3; else if (run > 5) score++; }
+          else run = 1;
+        }
+      }
+    }
+    for (r = 0; r < size - 1; r++)
+      for (c = 0; c < size - 1; c++) {
+        var v = m[r][c];
+        if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) score += 3;
+      }
+    var pat1 = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], pat2 = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+    for (r = 0; r < size; r++)
+      for (c = 0; c + 10 < size; c++)
+        for (i = 0; i < 2; i++) {
+          var okA = true, okB = true;
+          for (var k = 0; k < 11; k++) {
+            var cell = i ? m[c + k][r] : m[r][c + k];
+            if (cell !== pat1[k]) okA = false;
+            if (cell !== pat2[k]) okB = false;
+          }
+          if (okA) score += 40;
+          if (okB) score += 40;
+        }
+    score += Math.floor(Math.abs(dark * 100 / (size * size) - 50) / 5) * 10;
+    return score;
+  }
+
+  function qrDraw(bytes, version, mask) {
+    var size = version * 4 + 17, m = [], fixed = [], r, c, i;
+    for (r = 0; r < size; r++) {
+      m.push(new Array(size)); fixed.push(new Array(size));
+      for (c = 0; c < size; c++) { m[r][c] = 0; fixed[r][c] = false; }
+    }
+    function set(row, col, val) {
+      if (row < 0 || col < 0 || row >= size || col >= size) return;
+      m[row][col] = val; fixed[row][col] = true;
+    }
+    function finder(row, col) {
+      for (var a = -1; a <= 7; a++) for (var b = -1; b <= 7; b++) {
+        var on = (a >= 0 && a <= 6 && (b === 0 || b === 6)) ||
+                 (b >= 0 && b <= 6 && (a === 0 || a === 6)) ||
+                 (a >= 2 && a <= 4 && b >= 2 && b <= 4);
+        set(row + a, col + b, on ? 1 : 0);
+      }
+    }
+    finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+    for (i = 8; i < size - 8; i++) { set(6, i, i % 2 ? 0 : 1); set(i, 6, i % 2 ? 0 : 1); }
+    if (version >= 2) {
+      var a = version * 4 + 10;
+      for (r = -2; r <= 2; r++) for (c = -2; c <= 2; c++)
+        set(a + r, a + c, Math.max(Math.abs(r), Math.abs(c)) === 1 ? 0 : 1);
+    }
+    set(size - 8, 8, 1);                                  // the dark module
+    for (i = 0; i < 9; i++) { set(8, i, m[8][i]); set(i, 8, m[i][8]); }
+    for (i = 0; i < 8; i++) { set(8, size - 1 - i, 0); set(size - 1 - i, 8, m[size - 1 - i][8]); }
+
+    var data = qrCodewords(bytes, version), idx = 0, dir = -1, row = size - 1;
+    for (var col = size - 1; col > 0; col -= 2) {
+      if (col === 6) col--;
+      for (;;) {
+        for (i = 0; i < 2; i++) {
+          var cc = col - i;
+          if (fixed[row][cc]) continue;
+          var bit = 0;
+          if (idx < data.length * 8) bit = (data[idx >> 3] >> (7 - (idx & 7))) & 1;
+          idx++;
+          m[row][cc] = bit ^ (QR_MASKS[mask](row, cc) ? 1 : 0);
+        }
+        row += dir;
+        if (row < 0 || row >= size) { row -= dir; dir = -dir; break; }
+      }
+    }
+    var fmt = (0 << 3) | mask, bch = fmt << 10;           // 0 = error correction M
+    for (i = 14; i >= 10; i--) if (bch & (1 << i)) bch ^= 0x537 << (i - 10);
+    var bits = ((fmt << 10) | bch) ^ 0x5412;
+    for (i = 0; i < 15; i++) {
+      var b = (bits >> i) & 1;
+      if (i < 6) m[i][8] = b;                     // down beside the top-left eye
+      else if (i < 8) m[i + 1][8] = b;
+      else m[size - 15 + i][8] = b;
+      if (i < 8) m[8][size - 1 - i] = b;          // and the second copy, along row 8
+      else if (i === 8) m[8][15 - i] = b;
+      else m[8][14 - i] = b;
+    }
+    return m;
+  }
+
+  function qrEncode(text, forceMask) {
+    var bytes = Array.prototype.slice.call(new TextEncoder().encode(text));
+    var version = 0;
+    for (var v = 1; v <= 6; v++) {
+      var spec = QR_M[v];
+      if (bytes.length <= spec[0] - spec[1] * spec[2] - 2) { version = v; break; }
+    }
+    if (!version) return null;                    // longer than any LAN URL
+    if (forceMask !== undefined && forceMask !== null)
+      return qrDraw(bytes, version, forceMask);
+    var best = null, bestScore = Infinity;
+    for (var mask = 0; mask < 8; mask++) {
+      var m = qrDraw(bytes, version, mask), s = qrPenalty(m);
+      if (s < bestScore) { bestScore = s; best = m; }
+    }
+    return best;
+  }
+  // ==== end qr ==========================================================
+
+  function joinAddress() {
+    // The server states the address phones can reach, because only it knows
+    // one. location.origin is the fallback and is wrong exactly when it
+    // matters -- a screen opened at localhost would publish a QR that every
+    // phone in the room resolves to itself.
+    var meta = document.querySelector('meta[name="karaoke-join"]');
+    if (meta && meta.content) return meta.content;
+    if (location.protocol === "http:" || location.protocol === "https:")
+      return location.origin + "/";
+    return null;                        // opened from a file:// path
+  }
+
+  function setJoinAddress(url) {
+    // Scheme on its own line, host:port big underneath. Somebody across the
+    // room is going to type the second half into a phone, and a line break
+    // landing inside "192.168.1.50" hands them an address that resolves to
+    // somewhere else entirely.
+    var box = $("joinUrl");
+    box.textContent = "";
+    var cut = url.indexOf("://");
+    if (cut === -1) { box.textContent = url; return; }
+    var scheme = document.createElement("span");
+    scheme.className = "scheme";
+    scheme.textContent = url.slice(0, cut + 3);
+    var host = document.createElement("span");
+    host.textContent = url.slice(cut + 3).replace(/\/+$/, "");
+    box.appendChild(scheme);
+    box.appendChild(host);
+  }
+
   var qrDrawn = false;
   function drawQR() {
-    if (qrDrawn) return; qrDrawn = true;
-    var url = location.origin + "/";
-    $("joinUrl").textContent = url;
-    var tag = document.createElement("script");
-    tag.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
-    tag.onload = function () { new QRCode($("qr"), {text: url, width: 184, height: 184}); };
-    tag.onerror = function () { $("qr").textContent = "→ " + url; };
-    document.head.appendChild(tag);
+    if (qrDrawn) return;
+    var url = joinAddress();
+    if (!url) {
+      $("joinUrl").textContent = "Run the karaoke program, then open the address it prints.";
+      return;
+    }
+    qrDrawn = true;
+    setJoinAddress(url);
+    show("qrWarn", /^https?:\/\/(localhost|127\.|\[?::1\]?)/i.test(url));
+    var m = qrEncode(url);
+    if (!m) return;                     // longer than any address we serve
+    var box = $("qr"), size = m.length, quiet = 4;
+    var avail = box.clientWidth - 18;
+    if (!(avail > 60)) avail = 200;
+    var scale = Math.max(3, Math.floor(avail / (size + quiet * 2)));
+    var px = (size + quiet * 2) * scale;
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = px;
+    cv.setAttribute("role", "img");
+    cv.setAttribute("aria-label", "QR code to join at " + url);
+    var g = cv.getContext("2d");
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, px, px);
+    g.fillStyle = "#000000";
+    for (var r = 0; r < size; r++)
+      for (var c = 0; c < size; c++)
+        if (m[r][c]) g.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+    box.textContent = "";
+    box.appendChild(cv);
   }
 
   var NARRATE = {
@@ -402,10 +901,170 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
     house_off: function () { return "♪ house music down"; }
   };
 
+  // ==== host desk ========================================================
+  // Wired only when ROLE is "screen": the phone role never calls wireHost,
+  // so the panel and its button stay hidden markup there. A click, not a
+  // hover, opens it -- a TV remote or a mouse both manage a click.
+  var hostRender = null;
+  function wireHost() {
+    var open = false;
+    show("hostBtn", true);
+    $("hostBtn").onclick = function () {
+      open = !open;
+      show("hostPanel", open);
+      $("hostBtn").setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) $("hostName").focus();
+    };
+    function say(note) {
+      $("hostNote").textContent = note; show("hostNote", !!note);
+    }
+    function oops(err) {
+      $("hostErr").textContent = err; show("hostErr", true); show("hostNote", false);
+    }
+    function ok(note) {
+      show("hostErr", false); say(note); poll();
+    }
+    $("hostAddBtn").onclick = function () {
+      var name = $("hostName").value.trim();
+      var raw = $("hostSong").value.trim();
+      if (!name) { oops("a name is needed"); return; }
+      // the same parse the phone does in submitSong: a link is a link
+      var vid = youtubeId(raw);
+      var payload = {name: name, source: vid ? "link" : "title"};
+      if (raw) { payload.title = raw; }
+      if (vid) { payload.ref = vid; }
+      post("/host/add", payload, function (body) {
+        $("hostName").value = ""; $("hostSong").value = "";
+        ok("✔ added " + body.name + (body.title ? " — " + body.title : " (no song yet)"));
+        $("hostName").focus();
+      }, oops);
+    };
+    $("hostSkipBtn").onclick = function () {
+      post("/host/skip", {}, function () { ok("⏭ skipped — drawing again"); }, oops);
+    };
+    $("hostEndBtn").onclick = function () {
+      post("/host/end", {}, function () { ok("⏹ song ended"); }, oops);
+    };
+    // Who is waiting, and a Remove for the one who went home. The list is
+    // state.waiting_list: the same people as the public waiting list, in the
+    // same alphabetical order, carrying the id Remove needs. It is A-Z and
+    // says so, because WHO is waiting is public and WHO IS NEXT is the whole
+    // product -- this panel must never become a running order.
+    var listedIds = null;
+    function drawWaiting() {
+      var rows = state.waiting_list || [];
+      $("hostWaitingHead").textContent =
+        "Waiting — " + rows.length + " in the draw (A–Z, not the running order)";
+      show("hostWaitingNone", rows.length === 0);
+      var signature = rows.map(function (r) { return r.singer_id; }).join(",");
+      if (signature === listedIds) return;   // no rebuild under the host's finger
+      listedIds = signature;
+      var box = $("hostWaitingList");
+      box.textContent = "";
+      rows.forEach(function (row) {
+        var line = document.createElement("div");
+        line.className = "wRow";
+        var who = document.createElement("span");
+        who.className = "wName"; who.textContent = row.name;
+        var drop = document.createElement("button");
+        drop.type = "button"; drop.textContent = "Remove";
+        drop.setAttribute("aria-label", "Remove " + row.name + " from the draw");
+        drop.onclick = function () {
+          post("/host/remove", {singer_id: row.singer_id}, function (body) {
+            listedIds = null;               // rebuild on the next poll
+            ok("✔ removed " + body.name);
+          }, oops);
+        };
+        line.appendChild(who); line.appendChild(drop);
+        box.appendChild(line);
+      });
+    }
+    return function () {
+      // the buttons exist only while they apply
+      show("hostSkipBtn", !!(state.called && !state.called.appeared));
+      show("hostEndBtn", !!state.singing);
+      drawWaiting();
+    };
+  }
+  if (ROLE === "screen") hostRender = wireHost();
+  // ==== end host desk ====================================================
+
+  // ==== walk-up desk =====================================================
+  // Two controls for the person standing at the big screen with no phone.
+  // Both are in plain sight, and that is the point: behind the Host button
+  // they would read as staff tools, which is the thing being fixed.
+  //
+  // Sign-up sits in the side column under the QR. The QR keeps its place
+  // and stays the better route for anyone holding a phone; this is the
+  // way in for everyone else, and it posts to the same /host/add route.
+  //
+  // Arrival ("they're here") sits on the stage card -- see the markup
+  // comment there. A walk-up has no phone carrying their singer_id, so
+  // /api/here can never be sent for them; without a control the room can
+  // reach, the draw calls them, nobody can answer, and the clock strikes
+  // them out. Sign-up without this is not half a feature, it is a broken
+  // one, so the two ship together.
+  //
+  // Same gate as the host desk: wired only when ROLE is "screen".
+  var walkupRender = null;
+  function wireWalkup() {
+    function oops(err) {
+      $("walkupErr").textContent = err; show("walkupErr", true);
+      show("walkupNote", false);
+    }
+    $("walkupBtn").onclick = function () {
+      var name = $("walkupName").value.trim();
+      var raw = $("walkupSong").value.trim();
+      if (!name) { oops("pop your name in first"); return; }
+      // the same parse the phone does in submitSong: a link is a link
+      var vid = youtubeId(raw);
+      var payload = {name: name, source: vid ? "link" : "title"};
+      if (raw) { payload.title = raw; }
+      if (vid) { payload.ref = vid; }
+      post("/host/add", payload, function (body) {
+        $("walkupName").value = ""; $("walkupSong").value = "";
+        show("walkupErr", false);
+        $("walkupNote").textContent = "You're in, " + body.name +
+          " — we'll call you." + (body.title ? "" : " Tell the desk your song when you've picked one.");
+        show("walkupNote", true);
+        $("walkupName").focus();
+        poll();
+      }, oops);
+    };
+    $("stageHereBtn").onclick = function () {
+      post("/host/here", {}, function () {
+        show("stageHereErr", false); poll();
+      }, function (err) {
+        $("stageHereErr").textContent = err; show("stageHereErr", true);
+      });
+    };
+    return function () {
+      // only while somebody is called and has not yet reached the stage
+      var walking = !!(state.called && !state.called.appeared);
+      if (walking) $("stageHereName").textContent = state.called.name;
+      else show("stageHereErr", false);
+      show("stageHereBtn", walking);
+    };
+  }
+  if (ROLE === "screen") walkupRender = wireWalkup();
+  // ==== end walk-up desk =================================================
+
   function renderScreen() {
     show("stageCard", true); show("sideCol", true); show("ticker", true);
+    if (hostRender) hostRender();
+    if (walkupRender) walkupRender();
     drawQR();
     $("screenCount").textContent = state.waiting_count;
+    $("stageWaitTail").textContent = state.waiting_count
+      ? " — the draw is random, so anyone could be next"
+      : " — scan the code and be the first";
+    // the miss rule, shown only while it is actually hanging over somebody:
+    // a timed call nobody has answered yet
+    var pending = !!(state.called && !state.called.appeared && !state.called.solo);
+    $("stageMiss").textContent = pending && !state.singing
+      ? "Not at the mic when that hits zero? We draw somebody else — you stay in for the next one."
+      : "";
+    show("stageMiss", pending && !state.singing);
     var badge = $("stageBadge");
     if (state.singing) {
       badge.className = "badge live"; badge.textContent = "🎤 now singing";
@@ -417,7 +1076,10 @@ body[data-role=screen] main{max-width:1100px;display:grid;grid-template-columns:
       badge.className = "badge call"; badge.textContent = "🎲 the draw has spoken";
       $("stageName").textContent = state.called.name + " — you're up!";
       $("stageSong").textContent = state.called.appeared
-        ? "at the stage ✔" : "get to the stage — " + fmtClock(state.called.deadline_in_s);
+        ? "at the stage ✔"
+        : state.called.solo
+          ? "get to the stage whenever you're ready"
+          : "get to the stage — " + fmtClock(state.called.deadline_in_s);
       show("stageClock", false);
     } else {
       badge.className = "badge wait"; badge.textContent = "♪ house music — the draw continues";
