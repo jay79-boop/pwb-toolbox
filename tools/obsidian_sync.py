@@ -34,6 +34,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -451,10 +452,14 @@ def convert_note(
     note_dir = note_rel_path.parent
 
     def _relative(target_rel: Path) -> str:
-        rel_str = os.path.relpath(
+        # posixpath, not os.path: a markdown link separator is "/" on every
+        # platform, and os.path.relpath returns "..\Setups\SPY.md" on Windows.
+        # PurePosixPath does not rescue that -- it reads the backslashes as
+        # ordinary characters inside one component, so as_posix() hands the
+        # backslashed string straight back and the link is broken silently.
+        return posixpath.relpath(
             target_rel.as_posix(), start=note_dir.as_posix() or "."
         )
-        return PurePosixPath(rel_str).as_posix()
 
     def _replace(match: re.Match) -> str:
         target = match.group("target").strip()

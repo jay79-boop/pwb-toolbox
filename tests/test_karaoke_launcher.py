@@ -370,7 +370,21 @@ def test_singer_memory_lands_outside_the_checkout(launcher):
 
 
 def test_the_profiles_file_is_not_in_the_repository():
-    assert not (REPO / "karaoke-profiles.json").exists()
+    """Not *tracked* -- not "not on disk".
+
+    `python -m tools.karaoke_server.queue_server` defaults its profiles file to
+    the working directory, which .gitignore's own comment says "is usually this
+    checkout". So the file being present is the expected state on any machine
+    that has run the server, and asserting it is absent could only ever pass on
+    a machine that never used the thing. What must stay true is that git does
+    not carry it.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "karaoke-profiles.json"],
+        cwd=REPO,
+        capture_output=True,
+    )
+    assert tracked.returncode != 0, "karaoke-profiles.json is tracked by git"
     assert "karaoke-profiles.json" in read(REPO / ".gitignore")
 
 

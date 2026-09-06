@@ -41,7 +41,22 @@ INPUT="$(cat 2>/dev/null || true)"
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 [ -f "$ROOT/.claude/.hard-stop-off" ] && exit 0
 
-PY="$(command -v python3 || command -v python || true)"
+# A name on PATH is not an interpreter. Windows ships App Execution Alias stubs
+# at .../WindowsApps/python3.exe that print "Python was not found" and exit 49.
+# `command -v python3` finds one first, every python call below then fails into
+# its `|| true`, TOTAL comes back empty, and this hook exits 0 on every call --
+# silently dead while looking installed. Found 2026-09-06 on the owner's own
+# machine, where the hard stop had never once been able to fire. A stop that
+# cannot fire is worse than no stop, because it is trusted. So prove each
+# candidate actually runs before using it.
+PY=""
+for _cand in python3 python py; do
+  _path="$(command -v "$_cand" 2>/dev/null || true)"
+  [ -n "$_path" ] || continue
+  "$_path" -c '' >/dev/null 2>&1 || continue
+  PY="$_path"
+  break
+done
 [ -n "$PY" ] || exit 0
 
 # --- read transcript path + tool name from the hook payload -----------------

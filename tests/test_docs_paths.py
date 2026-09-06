@@ -83,15 +83,45 @@ def is_generated(path):
     case this has to answer. So ask about both forms.
     """
     candidates = [str(path)] if str(path).endswith("/") else [str(path), f"{path}/"]
-    return any(
-        subprocess.run(
-            ["git", "check-ignore", "-q", "--no-index", candidate],
-            cwd=ROOT,
-            capture_output=True,
-        ).returncode
-        == 0
-        for candidate in candidates
+    return any(_ignore_rule(candidate) for candidate in candidates)
+
+
+def _ignore_rule(candidate):
+    """The .gitignore rule that ignores `candidate`, or None.
+
+    Uses ``-v`` and insists the reported pattern is non-empty, rather than
+    trusting the exit code. With ``--no-index``, git 2.55 reports ANY path
+    ending in "/" as ignored, matched against a *blank line* in .gitignore:
+
+        $ git check-ignore -v --no-index "tools/made-up-qqq.py/"
+        .gitignore:90:	tools/made-up-qqq.py/
+
+    The pattern field between the last colon and the tab is empty -- there is
+    no rule, only a blank line the directory query matched. Because is_generated
+    always asks about a trailing-slash form, that made it answer True for every
+    path on earth, which silently switched off the entire broken-path check this
+    file exists to run. An empty pattern is not a rule, so require a real one.
+    """
+    proc = subprocess.run(
+        ["git", "check-ignore", "-v", "--no-index", candidate],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
+    if proc.returncode != 0:
+        return None
+    line = proc.stdout.splitlines()[0] if proc.stdout else ""
+    source_and_pattern, tab, _path = line.partition("\t")
+    if not tab:
+        return None
+    # "<source>:<linenum>:<pattern>", split from the RIGHT. Splitting from the
+    # left twice looks equivalent and is not: git reports .git/info/exclude by
+    # absolute path, so on Windows the source carries its own "C:" and the left
+    # split hands back "1:**/the-pattern" -- still truthy here, but wrong, and
+    # one gitignore file named by absolute path away from being wrong in the
+    # direction that matters.
+    pattern = source_and_pattern.rsplit(":", 1)[-1]
+    return pattern or None
 
 
 # Repo-shaped tokens that are correct prose about something not in this tree
@@ -109,10 +139,12 @@ NOT_IN_THIS_TREE = {
         "A Claude Code convention docs/working-directories.md explains --add-dir "
         "against, not a directory this repository has."
     ),
-    ".claude/settings.local.json": (
-        "Machine-local and gitignored. docs/local-checkout.md says outright that "
-        "this is Claude Code behaviour, not a fact about this repository."
-    ),
+    # ".claude/settings.local.json" was here until 2026-09-06. It is gitignored,
+    # so is_generated already exempts it -- and Claude Code writes it into any
+    # checkout it is used in, so the entry asserted "absent" about a file that is
+    # present on every machine that has actually worked in this repo. That is the
+    # docs/journal case exactly: derived from .gitignore, it stays right in both
+    # states without anyone editing a list.
     ".claude/skills/build-puzzle-process/": (
         "Retired 2026-08-29. The decision record and docs/skills.md describe the "
         "removal, and a record of a deletion has to be able to name what it "
