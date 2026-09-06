@@ -490,6 +490,57 @@ def trades_as_records(trades: list[Trade], symbol: str) -> list[dict]:
     return records
 
 
+def trades_as_csv_rows(trades: list[Trade]) -> list[dict]:
+    """One row per closed trade, in the order a person reads a trade blotter.
+
+    Separate from `trades_as_records`: that shape is tuned for the night
+    lab's arithmetic (net exit, ISO timestamps as strings) and is not
+    something a person would want to scan. This one keeps day/time and
+    price fields human-legible and adds `points`/`r_multiple` pre-computed,
+    so opening the CSV in a spreadsheet needs no formulas to follow along.
+    """
+    rows = []
+    for t in trades:
+        rows.append(
+            {
+                "day": t.day.isoformat(),
+                "direction": "long" if t.direction > 0 else "short",
+                "setup_time": t.setup_ts.strftime("%H:%M"),
+                "entry_time": t.entry_ts.strftime("%H:%M") if t.entry_ts else "",
+                "entry": round(t.entry, 4),
+                "target": round(t.target, 4),
+                "stop": round(t.stop, 4),
+                "exit_time": t.exit_ts.strftime("%H:%M"),
+                "exit": round(t.exit, 4),
+                "points": round(t.points, 4),
+                "r_multiple": round(t.r_multiple, 3),
+                "reason": t.reason,
+            }
+        )
+    return rows
+
+
+def write_trades_csv(trades: list[Trade], path: str) -> None:
+    fieldnames = [
+        "day",
+        "direction",
+        "setup_time",
+        "entry_time",
+        "entry",
+        "target",
+        "stop",
+        "exit_time",
+        "exit",
+        "points",
+        "r_multiple",
+        "reason",
+    ]
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(trades_as_csv_rows(trades))
+
+
 def fetch_bars(symbol: str, days: int, out_path: str) -> int:
     """Fetch 15-minute bars from Yahoo into the CSV shape `read_csv` reads.
 
@@ -714,6 +765,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="write closed trades as JSON for the night lab (see night_lab.py plan --sim)",
     )
     ap.add_argument(
+        "--trades-csv",
+        metavar="PATH",
+        help="write closed trades as a spreadsheet (CSV) to eyeball in Excel",
+    )
+    ap.add_argument(
         "--cost-bps",
         type=float,
         default=1.0,
@@ -776,6 +832,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(f"{len(trades)} closed trade(s) -> {args.trades_out}")
+
+    if args.trades_csv:
+        trades = [r.trade for r in results if r.trade]
+        write_trades_csv(trades, args.trades_csv)
+        print(f"{len(trades)} closed trade(s) -> {args.trades_csv}")
 
     width = max(len(k) for k in stats)
     for key, value in stats.items():

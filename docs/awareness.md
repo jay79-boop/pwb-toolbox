@@ -74,23 +74,35 @@ Three, chosen by the owner on 2026-09-02, and no others:
 A thresholds trigger was offered and **declined**. None of these three needs a
 number picked out of the air, and false alarms are how alerting dies.
 
-## The first slice
+## The first slice, and the two that followed
 
-The fleet and this repository, wired end to end. It was chosen because it is
-the only domain whose live sources a cloud session can reach *and verify*; the
-desk feeds live on the owner's Windows machine and content needs credentials
-that are not connected. Building where it could not be tested would have made
-the owner the test harness.
+The fleet and this repository were wired first. That was chosen because it is
+the only domain whose live sources a cloud session can reach *and verify*, and
+building where it could not be tested would have made the owner the test
+harness.
 
-The observation schema is domain-agnostic. `desk`, `business` and `content`
-adapters drop in beside `observe_jobs` without touching the assembly.
+`desk` and `content` followed on 2026-09-02, and the promise held — both dropped
+in beside `observe_jobs` and the assembly did not change. Neither is *read* from
+this process. The desk's feeds are on the owner's Windows machine and content's
+credentials turned out to be live but held in **MCP connectors, which only a
+Claude session can call** — so both are *carried* here as redacted signals
+committed to git, by whoever can reach them. `docs/desk-content-adapters.md` has
+the protocol, the schema that makes publishing them safe, and what each refuses;
+the reasoning is in
+[the decision entry](decisions/2026-09-02-a-blind-domain-is-carried-not-reached.md).
 
-Three sources today:
+Five sources today:
 
 - `observe_jobs` — failure streaks and live blockers, from `runs.jsonl`
 - `observe_schedule` — jobs that should have reported and have not, from the
   `$jobs` table in `register_desk_agent.ps1` (parsed, never copied)
 - `observe_git` — uncommitted work, and commits that never reached GitHub
+- `observe_desk` — reports, the paper book, the journal export gap and the
+  broker, from `signals/desk.json`
+- `observe_content` — the market-close render and the publishing and analytics
+  connectors, from `signals/content.json`, in two independently stamped halves
+
+`business` is still unwired, and is still named out loud on every run.
 
 ## Four false alarms it produced on its first run
 
@@ -122,6 +134,9 @@ python tools/awareness.py brief --short   # catch-up form, six lines at most
 python tools/awareness.py brief --json
 python tools/awareness.py record          # append this moment to the log
 python tools/awareness.py sources         # what it sees, and what it cannot
+
+python tools/desk_signal.py emit          # on the machine: refresh signals/desk.json
+python tools/content_signal.py capture --platform-json -   # from a session with the connectors
 ```
 
 `brief` exits 1 when something carries `act` severity and a trigger, so a

@@ -259,6 +259,92 @@ def test_the_extra_directories_reach_the_invocation():
     assert "& $claude -p " not in src
 
 
+# --------------------------------------- resolving Claude Code by path --
+#
+# This is the one lookup in the file with no test before this section: every
+# other branch of run_job.ps1 is pinned, but which binary ends up in $claude
+# was not. That is the exact lookup CLAUDE.md's "sudden Claude Code
+# regression: suspect version churn first" trap depends on -- a native
+# install and a stale npm-global claude.cmd can both sit on the same machine,
+# and which one an unattended job runs is decided entirely by this ordering.
+
+
+def resolve_claude_block():
+    return (
+        read(LAUNCHER)
+        .split("# -- resolve Claude Code", 1)[1]
+        .split("# ToUniversalTime matters", 1)[0]
+    )
+
+
+def test_the_local_bin_search_tries_the_native_exe_before_the_npm_cmd():
+    block = resolve_claude_block()
+    candidates = block.split("foreach ($candidate in @(", 1)[1].split("))", 1)[0]
+    assert candidates.index("claude.exe") < candidates.index("claude.cmd"), (
+        "claude.exe (the native install) must be offered before claude.cmd "
+        "(the old npm global), or a machine carrying both silently runs the "
+        "stale one"
+    )
+
+
+def test_the_local_bin_search_is_scoped_to_home_not_the_repo():
+    block = resolve_claude_block()
+    candidates = block.split("foreach ($candidate in @(", 1)[1].split("))", 1)[0]
+    assert candidates.count("Join-Path $HOME '.local\\bin\\") == 2, (
+        "both candidates must be resolved under $HOME, not a path relative to "
+        "the current directory -- a scheduled task's working directory is not "
+        "guaranteed to be the repo root"
+    )
+
+
+def test_the_local_bin_search_uses_literal_path():
+    # Test-Path without -LiteralPath treats the argument as a wildcard, so a
+    # username containing '[' or ']' -- both legal in a Windows account name --
+    # would make an existing claude.exe invisible to a bare Test-Path.
+    block = resolve_claude_block()
+    for line in block.splitlines():
+        if "Test-Path" in line and "$candidate" in line:
+            assert "-LiteralPath" in line, line
+
+
+def test_claude_ps1_is_never_an_actual_candidate():
+    # The comment right above this block explains why: PowerShell's execution
+    # policy blocks a bare claude.ps1 invocation. That has to stay a comment
+    # and never become a real candidate string, or the fix reintroduces the
+    # exact failure it documents.
+    assert "claude.ps1" not in code_lines(LAUNCHER)
+
+
+def test_the_path_fallback_only_runs_after_the_local_bin_search_misses():
+    block = resolve_claude_block()
+    assert block.index("$claude = $null") < block.index("foreach ($candidate")
+    assert block.index("foreach ($candidate") < block.index("Get-Command claude")
+    guard = block.split("Get-Command claude", 1)[0].rsplit("if (", 1)[1]
+    assert "-not $claude" in guard, (
+        "the PATH fallback must be gated on the local-bin search having found "
+        "nothing, or it can override a native install with whatever 'claude' "
+        "means on PATH that session"
+    )
+
+
+def test_the_path_fallback_also_prefers_the_native_exe():
+    block = resolve_claude_block()
+    fallback = block.split("Get-Command claude", 1)[1]
+    assert fallback.startswith(".exe, claude.cmd"), (
+        "Get-Command's own argument order decides which match it returns "
+        "first -- it must still ask for claude.exe before claude.cmd"
+    )
+
+
+def test_a_missing_claude_names_both_things_it_looked_for():
+    src = read(LAUNCHER)
+    assert "looked for claude.exe then claude.cmd" in src, (
+        "the not-found message is the only account a cloud session gets of "
+        "why a job never started; it must name what was tried, not just that "
+        "resolution failed"
+    )
+
+
 # --------------------------------------------- evidence when a run fails --
 #
 # The launcher captures the agent's merged stdout/stderr and then, on a
@@ -1385,3 +1471,45 @@ def test_the_venv_is_only_used_when_it_is_actually_there():
     src = read(LAUNCHER)
     guard = src.split("$venvScripts = Join-Path", 1)[1].split("$env:PATH =", 1)[0]
     assert "Test-Path -LiteralPath $venvScripts" in guard
+
+
+# ------------------------------------------------- the desk signal it carries --
+#
+# The launcher is the one process that runs on the machine, on a schedule, with
+# a push at the end of it -- so it is where the desk signal has to be refreshed
+# if a cloud session is ever to see the desk at all. Two things about that are
+# easy to get wrong and both were, on the way in.
+
+
+def test_the_launcher_refreshes_the_desk_signal_before_it_commits():
+    body = read(LAUNCHER)
+    emit = body.index("desk_signal.py'")
+    commit = body.index("git commit -q -m $message")
+    assert emit < commit, "the signal is emitted after the commit that should carry it"
+
+
+def test_the_desk_signal_is_staged_only_when_it_exists():
+    """`git add` of a pathspec matching nothing is fatal, and the commit it would
+    take down is the run record's -- the one thing the launcher guarantees.
+
+    So the signal joins `$paths` behind a `Test-Path`, and never as a literal in
+    the initial list. A first run on a machine that has never emitted one must
+    still commit its record.
+    """
+    body = read(LAUNCHER)
+    initial = body.split("$paths = @(", 1)[1].split(")", 1)[0]
+    assert "signals/desk.json" not in initial
+    guarded = re.search(
+        r"if \(Test-Path -LiteralPath \(Join-Path \$RepoRoot 'signals\\desk\.json'\)\) \{\s*"
+        r"\$paths \+= 'signals/desk\.json'",
+        body,
+    )
+    assert guarded, "signals/desk.json must be appended behind a Test-Path guard"
+
+
+def test_a_failed_signal_emit_cannot_take_the_run_down():
+    """The run record matters more than the signal. Warn, never throw."""
+    body = read(LAUNCHER)
+    block = body.split("desk_signal.py'", 1)[1].split("# 1. Commit", 1)[0]
+    assert "catch {" in block
+    assert "WARNING: desk signal not refreshed this run" in block

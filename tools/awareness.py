@@ -34,11 +34,15 @@ Usage::
     python tools/awareness.py record         # append this moment to the log
     python tools/awareness.py sources        # what it can see, and what it cannot
 
-The first domain wired is the agent fleet and this repository -- chosen because
-it is the only one whose live sources a cloud session can reach and verify end
-to end. The observation schema is domain-agnostic on purpose; ``desk``,
-``business`` and ``content`` adapters drop in beside ``observe_jobs`` without
-changing the assembly.
+The first domain wired was the agent fleet and this repository -- chosen because
+it was the only one whose live sources a cloud session could reach and verify end
+to end. ``desk`` and ``content`` followed, and neither is read from this process:
+the desk's feeds are on the owner's machine and content's credentials are MCP
+connectors only a session can call, so both arrive as redacted signals committed
+to git by whoever *can* reach them. See ``tools/desk_signal.py`` and
+``tools/content_signal.py``. The promise held -- both adapters dropped in beside
+``observe_jobs`` and the assembly did not change. ``business`` is still unwired
+and is still named out loud as a blind spot.
 """
 
 from __future__ import annotations
@@ -52,6 +56,10 @@ import subprocess
 import sys
 from dataclasses import dataclass, field, asdict
 from typing import Iterable, Sequence
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+from tools import content_signal, desk_signal  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOG_DIR = REPO_ROOT / "awareness"
@@ -626,6 +634,456 @@ def observe_git(facts: GitFacts, now: dt.datetime) -> list[Observation]:
 
 
 # ---------------------------------------------------------------------------
+# The desk and content adapters
+#
+# Both domains live somewhere this process is not: the desk's feeds are on the
+# owner's Windows machine, and content's credentials are in MCP connectors that
+# only a Claude session can call. Neither is reached from here -- each is carried
+# here, as a redacted signal committed to git, by whoever *can* reach it. See
+# `tools/desk_signal.py` and `tools/content_signal.py` for the emitters and for
+# the schema that makes publishing them to a public fork safe.
+#
+# These two functions are the whole of the wiring, which is what the original
+# design promised: an adapter drops in beside `observe_jobs` and the assembly
+# does not change.
+# ---------------------------------------------------------------------------
+
+
+def observe_desk(signal, now: dt.datetime) -> list[Observation]:
+    """The desk, as its bridge last reported it.
+
+    **The bridge is observed before the desk is.** A signal that stopped being
+    written reads exactly like a desk with nothing wrong, and that confusion is
+    the entire reason this layer exists -- so a stale bridge is reported as the
+    thing that stopped, and the desk facts underneath it are still reported but
+    are no longer evidence about today.
+
+    Staleness is the trading calendar, never a number of hours: a signal is stale
+    once a full session has elapsed without one being written. A weekend is not a
+    failure and does not need an exception, because it is not a session.
+    """
+    if signal is None:
+        return []
+
+    observations: list[Observation] = []
+    hours, missed = desk_signal.signal_age(signal, now)
+    at = signal.taken or now.isoformat()
+
+    if desk_signal.reads_nothing(signal):
+        # Fresh and empty. The stamp says the emitter ran; every field says it
+        # found nothing, which on a machine that has a desk means it was pointed
+        # at the wrong one. Reported as the emitter stopping, because reading a
+        # current stamp as a healthy desk is the mistake this layer exists for.
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:bridge",
+                summary=(
+                    "the desk signal was written but read nothing -- the emitter "
+                    "is running somewhere the desk is not"
+                ),
+                at=at,
+                severity="act",
+                trigger="stopped",
+                evidence="signals/desk.json, every field empty",
+                detail=(
+                    "check the paths `desk_signal.py emit` was given: the reports "
+                    "directory, the trade-journal folder, the paper book"
+                ),
+                metrics=(("signal_age_hours", float(hours or 0.0)),),
+            )
+        )
+    elif missed:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:bridge",
+                summary=(
+                    f"the desk signal has not been written for {missed} trading "
+                    "session(s) -- what follows describes then, not now"
+                ),
+                at=at,
+                severity="act",
+                trigger="stopped",
+                evidence="signals/desk.json stamp vs the NYSE calendar",
+                detail="run `python tools/desk_signal.py emit` on the machine, and push it",
+                metrics=(
+                    ("sessions_since_signal", float(missed)),
+                    ("signal_age_hours", float(hours or 0.0)),
+                ),
+            )
+        )
+    else:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:bridge",
+                summary="the desk signal is current",
+                at=at,
+                severity="info",
+                evidence="signals/desk.json stamp vs the NYSE calendar",
+                metrics=(("signal_age_hours", float(hours or 0.0)),),
+            )
+        )
+
+    missing = signal.sessions_missing
+    if missing:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:reports",
+                summary=(
+                    f"{missing} of the last {signal.sessions_checked} trading "
+                    "session(s) left no desk report"
+                ),
+                at=at,
+                severity="act",
+                trigger="stopped",
+                evidence="tools/desk_watch.py audit, carried in the signal",
+                detail=(
+                    f"longest unbroken run: {signal.worst_missing_run}; "
+                    f"last report {signal.last_report_day or 'never'}"
+                ),
+                depends_on=("desk:bridge",),
+                metrics=(
+                    ("sessions_missing", float(missing)),
+                    ("worst_missing_run", float(signal.worst_missing_run or 0)),
+                ),
+            )
+        )
+    elif signal.sessions_empty:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:reports",
+                summary=f"{signal.sessions_empty} desk report(s) exist but are empty",
+                at=at,
+                severity="watch",
+                evidence="tools/desk_watch.py audit, carried in the signal",
+                depends_on=("desk:bridge",),
+                metrics=(("sessions_empty", float(signal.sessions_empty)),),
+            )
+        )
+    elif signal.sessions_checked:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:reports",
+                summary=(
+                    f"every one of the last {signal.sessions_checked} trading "
+                    "session(s) left a desk report"
+                ),
+                at=at,
+                severity="info",
+                evidence="tools/desk_watch.py audit, carried in the signal",
+                depends_on=("desk:bridge",),
+            )
+        )
+
+    # The paper book, against the same calendar. `last_bar` is the last session
+    # it ingested, so sessions elapsed since is exactly how far behind it is.
+    if signal.paper_book_last_bar:
+        try:
+            bar_day = dt.date.fromisoformat(signal.paper_book_last_bar)
+        except ValueError:
+            bar_day = None
+        if bar_day is not None:
+            behind = desk_signal.sessions_missed(bar_day, now.date())
+            if behind:
+                observations.append(
+                    Observation(
+                        domain="desk",
+                        entity="desk:paper-book",
+                        summary=f"the paper book has not ingested {behind} session(s)",
+                        at=at,
+                        severity="watch",
+                        evidence="paper-book last_bar vs the NYSE calendar",
+                        depends_on=("desk:bridge",),
+                        metrics=(("sessions_behind", float(behind)),),
+                    )
+                )
+
+    # The 2026-09-01 finding, as a rule rather than a threshold: closed trades
+    # exist in a machine-readable register, and there is no export by which they
+    # can reach the journal. Nothing automatic clears that -- it is a decision.
+    closed = signal.paper_book_closed
+    if closed and signal.journal_export_present is False:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:journal-gap",
+                summary=(
+                    f"{closed} closed paper trade(s) have no export route into "
+                    "the journal, which is browser-only"
+                ),
+                at=at,
+                severity="act",
+                trigger="blocking",
+                evidence="paper-book closed count, and no exported register beside it",
+                detail=(
+                    "either the journal grows an export, or the desk keeps its own "
+                    "record -- a person picks, and nothing moves until they do"
+                ),
+                depends_on=("desk:paper-book",),
+                metrics=(("closed_unexported", float(closed)),),
+            )
+        )
+
+    # The journal's own age is reported and never judged. It is a document the
+    # owner writes when they have something to write, so no elapsed-time rule
+    # could tell a quiet fortnight from a broken one -- and inventing one is how
+    # a channel earns its first false alarm.
+    if signal.journal_age_hours is not None:
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:journal",
+                summary=(
+                    "the trade journal was last written "
+                    f"{signal.journal_age_hours / 24:.0f} day(s) ago"
+                ),
+                at=at,
+                severity="info",
+                evidence="trade-journal.html mtime (the file itself is never read)",
+                metrics=(("journal_age_hours", float(signal.journal_age_hours)),),
+            )
+        )
+
+    if signal.broker == "disconnected":
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:broker",
+                summary="the broker heartbeat has been stale for a full session",
+                at=at,
+                severity="act",
+                trigger="stopped",
+                evidence="IB heartbeat mtime vs the NYSE calendar",
+                depends_on=("desk:bridge",),
+            )
+        )
+    elif signal.broker == "connected":
+        observations.append(
+            Observation(
+                domain="desk",
+                entity="desk:broker",
+                summary="the broker heartbeat is current",
+                at=at,
+                severity="info",
+                evidence="IB heartbeat mtime vs the NYSE calendar",
+                depends_on=("desk:bridge",),
+            )
+        )
+    # `unknown` produces no observation at all. It is a blind spot, and
+    # `collect` reports it as one -- saying nothing about the broker is honest,
+    # saying it is fine because nobody looked is not.
+
+    return observations
+
+
+def observe_content(signal, now: dt.datetime) -> list[Observation]:
+    """The content pipeline, in the two halves it is actually captured in.
+
+    The halves are never merged into one verdict. The render half is machine
+    facts, the platform half is an MCP read, and each is only as current as its
+    own stamp -- so a fresh capture of one is never allowed to vouch for the
+    other.
+    """
+    if signal is None:
+        return []
+
+    observations: list[Observation] = []
+    at = signal.taken or now.isoformat()
+
+    if signal.render_seen:
+        stale = 0
+        if signal.render_age_hours is not None:
+            made = now - dt.timedelta(hours=signal.render_age_hours)
+            stale = desk_signal.sessions_missed(made.date(), now.date())
+        if signal.render_segments == 0 or stale:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:render",
+                    summary=(
+                        "no market-close render produced for "
+                        f"{max(stale, 1)} session(s)"
+                    ),
+                    at=at,
+                    severity="act",
+                    trigger="stopped",
+                    evidence="render/ segment count and newest mtime",
+                    detail="nothing to post, one step before the platform notices",
+                    metrics=(("sessions_without_render", float(max(stale, 1))),),
+                )
+            )
+        else:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:render",
+                    summary=f"{signal.render_segments} render segment(s) for this session",
+                    at=at,
+                    severity="info",
+                    evidence="render/ segment count and newest mtime",
+                    metrics=(("render_segments", float(signal.render_segments)),),
+                )
+            )
+
+    if signal.platform_seen:
+        # The half's own stamp, on the same calendar rule the desk bridge uses.
+        # A capture from a fortnight ago reporting no posts is a fact about a
+        # fortnight ago, and reading it as today is the mistake this layer is
+        # for. Said once, in front of the facts it qualifies.
+        try:
+            captured = dt.datetime.fromisoformat(
+                signal.platform_taken.replace("Z", "+00:00")
+            )
+        except ValueError:
+            captured = None
+        if captured is not None:
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=dt.timezone.utc)
+            behind = desk_signal.sessions_missed(captured.date(), now.date())
+            if behind:
+                observations.append(
+                    Observation(
+                        domain="content",
+                        entity="content:capture",
+                        summary=(
+                            f"the platform half was last captured {behind} session(s) "
+                            "ago -- what follows describes then, not now"
+                        ),
+                        at=at,
+                        severity="act",
+                        trigger="stopped",
+                        evidence="signals/content.json platform_taken vs the NYSE calendar",
+                        detail=(
+                            "a session holding the connectors must run "
+                            "`content_signal.py capture --platform-json -`"
+                        ),
+                        metrics=(("sessions_since_capture", float(behind)),),
+                    )
+                )
+
+        # Said before anything else in this half, because it qualifies all of
+        # it: a post count and a follower count that describe different channels
+        # are two true numbers and one false picture. Nothing automatic can fix
+        # it -- reconnecting an account is an OAuth flow in a browser -- so it
+        # is `blocking` rather than `stopped`.
+        if signal.channel_match == "different":
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:channel",
+                    summary=(
+                        "publishing and analytics are pointed at different "
+                        "channels -- posts go one way, numbers come back about "
+                        "the other"
+                    ),
+                    at=at,
+                    severity="act",
+                    trigger="blocking",
+                    evidence="the capturing session compared both connectors' accounts",
+                    detail=(
+                        "reconnect the publishing side to the measured channel; "
+                        "until then every figure below describes one or the other, "
+                        "never both"
+                    ),
+                    depends_on=("content:publish", "content:analytics"),
+                )
+            )
+
+        if signal.publish_subscription == "inactive":
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:publish",
+                    summary="the publishing subscription is not active -- nothing can post",
+                    at=at,
+                    severity="act",
+                    trigger="stopped",
+                    evidence="Blotato subscription status, captured by a session",
+                    depends_on=("content:render",),
+                )
+            )
+        elif signal.publish_accounts == 0:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:publish",
+                    summary="no publishing account is connected -- nothing can post",
+                    at=at,
+                    severity="act",
+                    trigger="stopped",
+                    evidence="Blotato connected-account count",
+                    depends_on=("content:render",),
+                )
+            )
+        elif signal.publish_posts_7d == 0 and (signal.render_segments or 0) > 0:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:publish",
+                    summary="renders exist and nothing was posted in the captured window",
+                    at=at,
+                    severity="act",
+                    trigger="stopped",
+                    evidence="Blotato post count for the window the capture asked for",
+                    detail="made but not posted -- the pipeline stops at the last step",
+                    depends_on=("content:render",),
+                )
+            )
+        elif signal.publish_posts_7d is not None:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:publish",
+                    summary=(
+                        f"{signal.publish_posts_7d} post(s) in the captured window "
+                        f"across {signal.publish_accounts} account(s)"
+                    ),
+                    at=at,
+                    severity="info",
+                    evidence="Blotato post count for the window the capture asked for",
+                    depends_on=("content:render",),
+                    metrics=(("posts_in_window", float(signal.publish_posts_7d)),),
+                )
+            )
+
+        # An unpaid analytics plan is carried because a lapsed trial does not
+        # announce itself: the reads simply stop, and a channel nobody watched
+        # looks identical to a channel with nothing happening.
+        if signal.analytics_plan == "trial":
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:analytics",
+                    summary=(
+                        "the analytics connector is on an unpaid trial -- it will "
+                        "go quiet rather than fail loudly when it lapses"
+                    ),
+                    at=at,
+                    severity="watch",
+                    evidence="Windsor.ai is_paid, captured by a session",
+                )
+            )
+        elif signal.analytics_accounts == 0:
+            observations.append(
+                Observation(
+                    domain="content",
+                    entity="content:analytics",
+                    summary="the analytics connector has no account connected",
+                    at=at,
+                    severity="watch",
+                    evidence="Windsor.ai connected-account count",
+                )
+            )
+
+    return observations
+
+
+# ---------------------------------------------------------------------------
 # Assembly -- the four derived answers
 # ---------------------------------------------------------------------------
 
@@ -812,6 +1270,27 @@ def safest_actions(observations: Sequence[Observation]) -> list[Action]:
                     step="push the branch",
                     safe=True,
                     why="reversible, moves no money, and the work is invisible until it lands",
+                )
+            )
+        elif obs.entity == "desk:bridge":
+            out.append(
+                Action(
+                    entity=obs.entity,
+                    step="re-run `python tools/desk_signal.py emit` on the machine, and push it",
+                    safe=True,
+                    why=(
+                        "the bridge stopped, not necessarily the desk -- until it is "
+                        "written again nothing here describes today"
+                    ),
+                )
+            )
+        elif obs.entity.startswith("content:"):
+            out.append(
+                Action(
+                    entity=obs.entity,
+                    step="re-capture the content signal and compare it with this one",
+                    safe=True,
+                    why="a read of the connectors; posts nothing and changes nothing",
                 )
             )
         elif obs.trigger == "stopped":
@@ -1072,14 +1551,52 @@ def collect(
     if not facts.branch:
         blind.append("git (not a checkout, or git is unavailable)")
 
+    # The desk and content signals. Neither domain is reached from this process
+    # -- both are carried here by whoever can reach them (a local job for the
+    # desk, a session holding the connectors for content), which is why the
+    # thing checked first is whether the bridge was written at all.
+    desk = desk_signal.load_signal(root / "signals" / "desk.json")
+    if desk is None:
+        blind.append(
+            "the desk (no signals/desk.json -- run `python tools/desk_signal.py "
+            "emit` on the machine and push it)"
+        )
+    elif desk.broker == "unknown":
+        # Tri-state on purpose: nobody looked is not the same as unplugged.
+        blind.append(
+            "the broker connection (no heartbeat file; unknown, not disconnected)"
+        )
+
+    content = content_signal.load_signal(root / "signals" / "content.json")
+    if content is None:
+        blind.append("content (no signals/content.json -- nothing has captured it yet)")
+    else:
+        if not content.render_seen:
+            blind.append(
+                "the market-close render (render/ is on the machine and gitignored)"
+            )
+        if content.platform_seen and content.channel_match == "unknown":
+            blind.append(
+                "whether publishing and analytics point at the same channel "
+                "(the capture did not say; it is never guessed from handles)"
+            )
+        if not content.platform_seen:
+            blind.append(
+                "content publishing and analytics (the Blotato and Windsor.ai "
+                "credentials are live, but they are MCP connectors -- a session "
+                "holding them must run `content_signal.py capture --platform-json -`)"
+            )
+
     # Named rather than left implicit: a domain the owner asked for and this
     # slice does not yet cover reads exactly like a domain with nothing wrong.
-    blind.append("the desk, the businesses and content -- adapters not built yet")
+    blind.append("the businesses -- adapter not built yet")
 
     observations = [
         *observe_jobs(records, now, jobs),
         *observe_schedule(jobs, records, now),
         *observe_git(facts, now),
+        *observe_desk(desk, now),
+        *observe_content(content, now),
     ]
     return observations, jobs, blind
 

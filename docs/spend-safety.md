@@ -187,7 +187,17 @@ concurrent sessions investigating the window consumed about half of it.
 
 `.claude/hooks/session-size.sh` runs it on every prompt and stays silent below
 10M cache reads. It speaks once per tier (10M / 25M / 50M) and then not again
-until the tier changes.
+until the tier changes. `.claude/hooks/session-hard-stop.sh` is the actual
+block, at 30M by default (`PWB_HARD_STOP_TOKENS`, doubled from 15M on
+2026-09-05 — the owner is tuning this number by feel and expects to move it
+again) — so under defaults the 25M tier is the last warning with tools still
+working, and its advice says so: commit, push, and write a `RESUME:` line in
+the commit message or PR description stating what is done and the next
+concrete step, before the block lands. That line is what lets a fresh session
+start from one paste instead of a re-explanation — write it whichever ending
+is coming, since the account's five-hour window can end a session with no
+warning from this repo's own hooks at all. See
+`docs/decisions/2026-09-05-doubling-the-hard-stop-and-a-one-paste-resume.md`.
 
 Read cache reads, not output, when judging a session's weight. In the measured
 window they ran 183:1 against output — 96.9% of every token moved was context

@@ -19,6 +19,7 @@ from tools.spend_watch import (
     find_concurrency,
     find_duplicate_triggers,
     find_fat_sessions,
+    find_heavy_context,
     find_persistent_triggers,
     find_rate,
     find_self_rearming,
@@ -36,19 +37,39 @@ from tools.spend_watch import (
 
 RESET = 1787594400  # 2026-08-24 18:00 UTC
 
+# A time inside the window RESET closes. The context checks ignore it, but
+# the shared fixture requires one.
+NOW = "2026-08-24T15:00:00Z"
 
-def session(sid, *, updated, cost=1.0, reads=0, resets=RESET, title=None, limit=None):
+
+def session(
+    sid,
+    *,
+    updated,
+    cost=1.0,
+    reads=0,
+    resets=RESET,
+    title=None,
+    limit=None,
+    used=None,
+    cap=None,
+):
     info = {"resetsAt": resets}
     if limit:
         info["rateLimitType"] = limit
+    meta = {
+        "rate_limit_info": info,
+        "usage": {"cost_usd": cost, "cache_read_tokens": reads},
+    }
+    # Omitted entirely unless asked for: over half the sessions in a real
+    # snapshot carry no context_usage at all, and those must stay silent.
+    if used is not None or cap is not None:
+        meta["context_usage"] = {"used_tokens": used or 0, "max_tokens": cap or 0}
     return {
         "id": sid,
         "title": title or sid,
         "updated_at": updated,
-        "external_metadata": {
-            "rate_limit_info": info,
-            "usage": {"cost_usd": cost, "cache_read_tokens": reads},
-        },
+        "external_metadata": meta,
     }
 
 
@@ -148,6 +169,62 @@ def test_small_session_not_flagged():
         find_fat_sessions([session("s1", updated="2026-08-24T15:00:00Z", reads=5_000)])
         == []
     )
+
+
+# --- heavy context --------------------------------------------------------
+#
+# The pair matters: find_fat_sessions looks backwards at what a session has
+# already spent, this one looks forward at what its next turn will cost. A
+# session can trip either without the other, and the last two tests pin that.
+
+
+def test_heavy_context_flagged_near_the_cap():
+    findings = find_heavy_context(
+        [session("s1", updated=NOW, used=737_498, cap=1_000_000)]
+    )
+    assert findings and findings[0].code == "heavy-context"
+    assert findings[0].severity == "high"
+    assert "737K" in findings[0].title and "1,000K" in findings[0].title
+
+
+def test_heavy_context_is_medium_between_half_and_seventy_percent():
+    findings = find_heavy_context(
+        [session("s1", updated=NOW, used=600_000, cap=1_000_000)]
+    )
+    assert findings and findings[0].severity == "medium"
+
+
+def test_roomy_context_not_flagged():
+    assert (
+        find_heavy_context([session("s1", updated=NOW, used=120_000, cap=1_000_000)])
+        == []
+    )
+
+
+def test_missing_context_usage_is_silent():
+    """Most sessions in a real snapshot report no context at all."""
+
+    assert find_heavy_context([session("s1", updated=NOW)]) == []
+
+
+def test_zero_cap_is_silent_rather_than_dividing_by_zero():
+    assert find_heavy_context([session("s1", updated=NOW, used=500_000, cap=0)]) == []
+
+
+def test_a_costly_session_with_a_small_context_is_not_called_heavy():
+    """Spent a lot, but its next turn is cheap -- that is fat, not heavy."""
+
+    s = session("s1", updated=NOW, reads=68_000_000, used=40_000, cap=1_000_000)
+    assert find_heavy_context([s]) == []
+    assert find_fat_sessions([s])
+
+
+def test_a_fresh_session_with_a_huge_context_is_not_yet_fat():
+    """Barely spent, but every further turn will cost near the maximum."""
+
+    s = session("s1", updated=NOW, reads=100_000, used=900_000, cap=1_000_000)
+    assert find_fat_sessions([s]) == []
+    assert find_heavy_context([s])
 
 
 # --- concurrency ----------------------------------------------------------

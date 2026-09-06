@@ -1,0 +1,16 @@
+{
+  "analytics_accounts": 1,
+  "analytics_connectors": 1,
+  "analytics_plan": "trial",
+  "channel_match": "different",
+  "platform_taken": "2026-09-03T01:43:55.600136+00:00",
+  "publish_accounts": 1,
+  "publish_last_post_days": null,
+  "publish_posts_7d": 0,
+  "publish_subscription": "active",
+  "render_age_hours": null,
+  "render_has_description": null,
+  "render_segments": null,
+  "render_taken": "",
+  "taken": "2026-09-03T01:43:55.600136+00:00"
+}
