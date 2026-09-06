@@ -477,9 +477,12 @@ def test_the_layer_names_what_it_cannot_see(capsys):
     aw.main(["sources"])
     out = capsys.readouterr().out
     assert "BLIND" in out
-    # A domain the owner asked for and this slice does not cover reads exactly
-    # like a domain with nothing wrong, unless it says so.
-    assert "the businesses -- adapter not built yet" in out
+    # Every domain the owner asked for now has an adapter, so the thing that
+    # must still be named out loud is a wired domain whose *source* is missing:
+    # a checkout with no `signals/desk.json` and no `engagements/` sees neither,
+    # and either one reads exactly like nothing being wrong unless it says so.
+    assert "the desk (no signals/desk.json" in out
+    assert "any engagement (nothing under engagements/" in out
 
 
 def test_a_domain_with_a_bridge_and_no_signal_is_blind_rather_than_quiet(tmp_path):
@@ -493,3 +496,356 @@ def test_a_domain_with_a_bridge_and_no_signal_is_blind_rather_than_quiet(tmp_pat
     _, _, blind = aw.collect(tmp_path, NOW)
     assert any("no signals/desk.json" in item for item in blind)
     assert any("no signals/content.json" in item for item in blind)
+
+
+# ---------------------------------------------------------------------------
+# Business: the engagement gates
+#
+# The pair that matters most here is the last one. Every other test asserts
+# what this adapter *says*; `test_the_adapter_names_the_same_gate_engagement_
+# actually_refuses_on` asserts it against `engagement.advance` itself, so a
+# phase added to PHASES cannot leave the adapter describing a gate that no
+# longer exists while every test still passes.
+# ---------------------------------------------------------------------------
+
+
+def build_engagement(root, name, stop_before, opened=dt.date(2026, 8, 20)):
+    """A real engagement folder, advanced through the real gates to a phase.
+
+    Uses ``engagement.advance`` rather than hand-writing the state file, so the
+    fixture cannot drift into a shape the tracker would never produce.
+    """
+    from tools import engagement as eng
+
+    data = eng.new_engagement(root, name, today=opened)
+    slug = data["slug"]
+    for phase in eng.PHASES:
+        if phase.key == stop_before:
+            break
+        if phase.deliverable:
+            (root / slug / phase.deliverable).write_text(
+                f"what actually happened in {phase.key}", encoding="utf-8"
+            )
+        if phase.key == "present":
+            (root / slug / eng.DECK_FILENAME).write_text("<html>", encoding="utf-8")
+        eng.advance(
+            root,
+            slug,
+            approved_by="A Stakeholder" if phase.key == "approval" else None,
+            today=opened,
+        )
+    return slug
+
+
+def engagements_root(tmp_path):
+    folder = tmp_path / "engagements"
+    folder.mkdir()
+    return folder
+
+
+def only(observations, entity):
+    matches = [o for o in observations if o.entity == entity]
+    assert len(matches) == 1, [o.entity for o in observations]
+    return matches[0]
+
+
+def test_an_engagement_waiting_on_approval_is_convicted_as_blocking(tmp_path):
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Elm Landscaping", "approval")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "act"
+    assert obs.trigger == "blocking"
+    assert "approve" in obs.summary
+
+
+def test_an_engagement_with_a_clear_gate_is_never_an_interruption(tmp_path):
+    """The acquit half. A phase whose gate would pass is work in progress, and
+    a layer that flagged it would flag every engagement on every run."""
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Cedar Dental", "audit")
+    (root / slug / "01-audit.md").write_text("a real audit", encoding="utf-8")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "info"
+    assert obs.trigger == ""
+    assert aw.attention([obs]) == []
+
+
+def test_a_deliverable_that_is_still_the_seeded_reference_is_convicted(tmp_path):
+    """The sneaky one: the file exists and is not empty, so every listing and
+    every "is it written?" check reads as done. Only the marker separates it
+    from a real deliverable, and ``advance`` refuses on exactly that."""
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Bolt Roofing", "audit")
+    (root / slug / "01-audit.md").write_text(
+        "# Audit\nUNEDITED REFERENCE\nsome generic business\n", encoding="utf-8"
+    )
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "watch"
+    assert "unedited reference" in obs.summary
+
+
+def test_an_edited_deliverable_is_acquitted(tmp_path):
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Bolt Roofing", "audit")
+    (root / slug / "01-audit.md").write_text(
+        "# Audit\nBolt Roofing runs two vans and a shared inbox.\n", encoding="utf-8"
+    )
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "info"
+
+
+def test_unwritten_work_is_watch_and_never_carries_a_trigger(tmp_path):
+    """A deliverable nobody has written is real, and it is *work*, not an
+    undecided *decision*. Only approval is blocking, and this is the test that
+    stops the trigger spreading to everything that looks stuck."""
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Acme Plumbing", "audit")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "watch"
+    assert obs.trigger == ""
+
+
+def test_a_deck_that_was_never_built_blocks_the_presentation(tmp_path):
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Dune Logistics", "present")
+    (root / slug / "08-feedback.md").write_text("they liked it", encoding="utf-8")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "watch"
+    assert "deck" in obs.summary
+
+
+def test_a_finished_engagement_is_reported_once_and_gates_nothing(tmp_path):
+    root = engagements_root(tmp_path)
+    slug = build_engagement(root, "Fir Dental", stop_before="")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), f"engagement:{slug}")
+    assert obs.severity == "info"
+    assert "completed all twelve phases" in obs.summary
+
+
+def test_the_adapter_names_the_same_gate_engagement_actually_refuses_on(tmp_path):
+    """The adapter is a *prediction* of what ``advance`` would say. This is the
+    test that holds it to that, in both directions: four planted states where
+    the real gate must refuse, and one where it must pass."""
+    from tools import engagement as eng
+
+    root = engagements_root(tmp_path)
+    cases = {}
+
+    cases["missing"] = (build_engagement(root, "Acme Plumbing", "audit"), False)
+
+    seeded = build_engagement(root, "Bolt Roofing", "audit")
+    (root / seeded / "01-audit.md").write_text("UNEDITED REFERENCE\n", encoding="utf-8")
+    cases["seeded"] = (seeded, False)
+
+    clear = build_engagement(root, "Cedar Dental", "audit")
+    (root / clear / "01-audit.md").write_text("a real audit", encoding="utf-8")
+    cases["clear"] = (clear, True)
+
+    deck = build_engagement(root, "Dune Logistics", "present")
+    (root / deck / "08-feedback.md").write_text("feedback", encoding="utf-8")
+    cases["deck"] = (deck, False)
+
+    cases["approver"] = (build_engagement(root, "Elm Landscaping", "approval"), False)
+
+    facts = {f.slug: f for f in aw.read_engagements(tmp_path)[0]}
+    for label, (slug, should_pass) in cases.items():
+        predicted_clear = facts[slug].gate == aw.GATE_CLEAR
+        try:
+            eng.advance(root, slug, today=dt.date(2026, 9, 2))
+            really_passed = True
+        except eng.EngagementError:
+            really_passed = False
+        assert predicted_clear == really_passed == should_pass, label
+
+
+# ---------------------------------------------------------------------------
+# Business: the money gates in the company blueprint
+# ---------------------------------------------------------------------------
+
+
+def gate_finding(code, process="proc-job", step=7, title="Place the supplier order"):
+    return {
+        "process": process,
+        "step": step,
+        "title": title,
+        "code": code,
+        "message": f"{code} message",
+    }
+
+
+def test_an_ungated_ai_commit_is_convicted_as_money():
+    obs = aw.observe_business([], [gate_finding("ungated_ai_commit")], NOW)
+    finding = only(obs, "gate:proc-job:7")
+    assert finding.severity == "act"
+    assert finding.trigger == "money"
+    assert finding.depends_on == ("blueprint:one-person-ai-company",)
+
+
+def test_a_warning_gate_is_counted_and_never_raised():
+    """The acquit half. A partial gate is a threshold to confirm, and
+    automation issuing an invoice is the architecture working. Raising either
+    would put a permanent interruption on a permanent fact."""
+    obs = aw.observe_business(
+        [],
+        [gate_finding("partial_gate"), gate_finding("automation_commits", step=20)],
+        NOW,
+    )
+    assert aw.attention(obs) == []
+    summary = only(obs, "blueprint:one-person-ai-company")
+    assert "0 ungated" in summary.summary
+    assert "2 flagged" in summary.summary
+
+
+def test_a_step_that_only_touches_a_money_tool_is_never_reported():
+    """``unmarked_touch`` is ai_company's "list to confirm, not a verdict", and
+    the committed blueprint produces nine of them. Nine permanent info lines is
+    how a brief stops being read."""
+    obs = aw.observe_business([], [gate_finding("unmarked_touch")] * 9, NOW)
+    assert [o.entity for o in obs] == ["blueprint:one-person-ai-company"]
+    assert "0 ungated AI commit step(s) and 0 flagged" in obs[0].summary
+
+
+def test_the_committed_blueprint_convicts_nothing_as_money():
+    """Against the real document, not a fixture. If this ever fails, either the
+    blueprint grew an ungated commit or the gate broke -- both worth stopping
+    for."""
+    gates, blind = aw.read_blueprint_gates(aw.REPO_ROOT)
+    assert blind == []
+    assert gates, "the blueprint parsed to no findings at all"
+    assert aw.attention(aw.observe_business([], gates, NOW)) == []
+
+
+def test_money_from_the_business_domain_is_never_a_safe_action():
+    obs = aw.observe_business([], [gate_finding("ungated_ai_commit")], NOW)
+    action = aw.safest_actions(obs)[0]
+    assert action.safe is False
+    assert "money" in action.why
+
+
+def test_the_blueprint_edge_is_declared_and_engagements_are_never_linked(tmp_path):
+    """No edge is inferred. Two engagements stuck in the same way share
+    nothing, and the only business edge points at the document the finding was
+    read out of."""
+    root = engagements_root(tmp_path)
+    build_engagement(root, "Acme Plumbing", "audit")
+    build_engagement(root, "Bolt Roofing", "audit")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    graph = aw.connections(
+        aw.observe_business(facts, [gate_finding("ungated_ai_commit")], NOW)
+    )
+    assert graph["engagement:acme-plumbing"] == []
+    assert graph["engagement:bolt-roofing"] == []
+    assert graph["gate:proc-job:7"] == ["blueprint:one-person-ai-company"]
+
+
+# ---------------------------------------------------------------------------
+# Business: what it refuses to turn into a verdict
+# ---------------------------------------------------------------------------
+
+
+def test_how_long_it_has_been_stuck_is_a_metric_and_never_a_trigger(tmp_path):
+    """The owner declined a thresholds trigger. A count of days is evidence for
+    the session reading the brief, and nothing here promotes it."""
+    root = engagements_root(tmp_path)
+    build_engagement(root, "Acme Plumbing", "audit", opened=dt.date(2026, 1, 1))
+    facts, _ = aw.read_engagements(tmp_path)
+
+    obs = only(aw.observe_business(facts, [], NOW), "engagement:acme-plumbing")
+    assert dict(obs.metrics)["days_at_this_phase"] > 200
+    assert obs.trigger == ""
+    assert obs.severity == "watch"
+
+
+def test_the_day_count_never_reaches_the_summary_so_nothing_changes_at_midnight(
+    tmp_path,
+):
+    """`changes` diffs summaries. A day count in the summary would report every
+    open engagement as changed every single day, and a delta that always fires
+    carries no information at all."""
+    root = engagements_root(tmp_path)
+    build_engagement(root, "Acme Plumbing", "audit")
+    facts, _ = aw.read_engagements(tmp_path)
+
+    today = aw.observe_business(facts, [], NOW)
+    next_week = aw.observe_business(facts, [], NOW + dt.timedelta(days=7))
+    delta, no_history = aw.changes(next_week, today)
+    assert (delta, no_history) == ([], False)
+
+
+def test_an_empty_engagements_folder_is_a_blind_spot_not_silence(tmp_path):
+    """A domain with no data reads exactly like a domain with nothing wrong.
+    ``engagements/`` is gitignored, so this is the normal case in the cloud."""
+    engagements_root(tmp_path)
+    facts, blind = aw.read_engagements(tmp_path)
+    assert facts == []
+    assert any("engagement" in note for note in blind)
+
+
+def test_a_missing_engagements_folder_is_named_rather_than_assumed(tmp_path):
+    facts, blind = aw.read_engagements(tmp_path)
+    assert facts == []
+    assert blind and "does not exist" in blind[0]
+
+
+# ---------------------------------------------------------------------------
+# Business: end to end
+# ---------------------------------------------------------------------------
+
+
+def test_the_business_domain_reaches_the_brief(capsys):
+    """The whole point of a domain-agnostic schema: the adapter dropped in and
+    the assembly did not change. This asserts it arrived."""
+    assert aw.main(["brief", "--json", "--log", "/nonexistent/log.jsonl"]) in (0, 1)
+    payload = json.loads(capsys.readouterr().out)
+    domains = {o["domain"] for o in payload["now"]}
+    assert "business" in domains
+    assert not any("businesses" in note for note in payload["blind"])
+
+
+def test_the_businesses_are_no_longer_named_as_an_unwired_domain(capsys):
+    """The line this adapter exists to delete. Every other domain that got
+    wired removed its own; leaving it would tell the owner on every run that
+    something is unwatched when it is not."""
+    aw.main(["sources"])
+    out = capsys.readouterr().out
+    assert "the businesses -- adapter not built yet" not in out
+    assert "blueprint:one-person-ai-company" in out
+
+
+def test_the_cli_runs_as_a_script_without_pythonpath():
+    """The business adapter imports ``tools.engagement`` and ``tools.ai_company``,
+    which run as a script are not importable without the sys.path bootstrap:
+    Python puts ``tools/`` on sys.path, not the repository root. Every test here
+    imports ``tools.awareness`` as a module, which pytest makes importable
+    regardless, so only a subprocess with PYTHONPATH stripped and a cwd outside
+    the repository convicts."""
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    proc = subprocess.run(
+        [sys.executable, str(aw.REPO_ROOT / "tools" / "awareness.py"), "sources"],
+        cwd=str(aw.REPO_ROOT.parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "blueprint:one-person-ai-company" in proc.stdout

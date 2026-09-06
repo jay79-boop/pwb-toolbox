@@ -13,6 +13,7 @@ point of the directory; a single shared list is what used to collide.
 
 | Date | Decision |
 | --- | --- |
+| 2026-09-06 | [The business adapter fires two triggers, and declines a threshold](2026-09-06-the-business-adapter-fires-two-triggers-and-declines-a-threshold.md) |
 | 2026-09-05 | [Doubling the hard stop, and a one-paste resume](2026-09-05-doubling-the-hard-stop-and-a-one-paste-resume.md) |
 | 2026-09-04 | [Naming the program does not move anyone out of the window](2026-09-04-naming-the-program-does-not-move-anyone-out-of-the-window.md) |
 | 2026-09-04 | [The drain confound was never installs vs. plan change](2026-09-04-the-drain-confound-was-never-installs-vs-plan-change.md) |

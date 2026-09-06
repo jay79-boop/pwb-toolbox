@@ -179,4 +179,14 @@ was written, so a wrapper can react without parsing the text.
 
 ## What is still blind
 
-`business`. There is no adapter, and `collect` says so by name on every run.
+Nothing, by domain. `business` was wired on 2026-09-06 and is the one adapter
+that reads its sources directly rather than through a bridge — an engagement is
+JSON and markdown in the checkout and the company blueprint is committed, so
+neither needs carrying. See the business section of `docs/awareness.md`.
+
+What remains blind is a *source*, not a domain, and each says so by name:
+`signals/desk.json` never written, the market-close render, and — the one that
+matters here — `engagements/`, which is gitignored, so a **cloud** session sees
+the blueprint and no engagement at all. If that ever needs fixing, the answer is
+this document's own pattern: an emitter and a redacted signal. What may safely
+leave a client's folder is the owner's decision and was not guessed at.

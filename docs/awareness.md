@@ -101,8 +101,79 @@ Five sources today:
   broker, from `signals/desk.json`
 - `observe_content` — the market-close render and the publishing and analytics
   connectors, from `signals/content.json`, in two independently stamped halves
+- `observe_business` — where each readiness engagement is stuck, and what in the
+  company blueprint commits money
 
-`business` is still unwired, and is still named out loud on every run.
+`business` landed on 2026-09-06 and closed the last unwired domain.
+
+## The business domain, and why it is read rather than carried
+
+`observe_business` reads two sources that fail independently:
+
+- **the engagements** — for each folder under `engagements/`, the refusal
+  `tools/engagement.py`'s `advance` would give if it were called right now.
+- **the company blueprint** — the money gates `tools/ai_company.py` convicts in
+  `docs/blueprint-one-person-ai-company.json`.
+
+`desk` and `content` are *carried* here as signals because neither can be
+reached from this process. Business is different: an engagement is JSON and
+markdown in the checkout and the blueprint is committed, so both are read
+directly. **The limit is worth stating rather than glossing:** `engagements/` is
+gitignored — this fork is public and a client's process map is nobody's business
+but theirs — so a **cloud session sees the blueprint and no engagement at all**,
+and names that in its blind spots rather than reporting calm. A local session
+sees everything. If cloud visibility is ever wanted here, the answer is the same
+emitter pattern `desk_signal` and `content_signal` already use — but what may
+safely leave a client's folder is the owner's call, not an implementation
+detail, so it was not guessed at.
+
+### Two triggers fire, and only two
+
+An engagement parked on `approval` is a named person's decision with the
+implementation plan and go-live behind it: that is `blocking`, stated exactly.
+An AI step reaching a payment or contract tool with no person step in front of
+it is `money`. Everything else the gates catch — a deliverable not written, a
+deck not built — is `watch` with **no trigger at all**, because it is unwritten
+*work* rather than an undecided *decision*, and a trigger that spreads to
+everything that looks stuck is a trigger nobody reads. `stopped` fires nowhere
+in this domain: nothing here runs unattended, and borrowing the fleet's word for
+a situation it does not describe is how a vocabulary rots.
+
+### What it refuses
+
+- **No threshold, again.** How long an engagement has sat at its current phase
+  is carried as the metric `days_at_this_phase` and never as a verdict. The
+  owner declined a thresholds trigger when this layer was commissioned; the
+  count is evidence for the session already reading the brief.
+- **The day count stays out of the summary.** `changes` diffs summaries, so a
+  number that ticks over at midnight would report every open engagement as
+  changed every single day — and a delta that always fires carries no
+  information. Pinned by
+  `test_the_day_count_never_reaches_the_summary_so_nothing_changes_at_midnight`.
+- **`unmarked_touch` is not reported.** `ai_company` calls it "a list to
+  confirm, not a verdict" and the committed blueprint produces nine. Nine
+  permanent info lines is how a brief stops being read. The two real warnings —
+  `partial_gate`, `automation_commits` — are counted in one summary line rather
+  than raised, so a regression still shows up in `changes` without costing an
+  interruption.
+- **One declared edge, no inferred ones.** A gate finding `depends_on` the
+  blueprint it was read out of, because that document is why the finding
+  exists. Two engagements stuck the same way share nothing.
+
+### The gate is a prediction, and it is held to that
+
+The adapter says what `advance` *would* refuse on. That is a claim about another
+module's behaviour, and restating another module's rules is how a check goes
+stale in silence. So the load-bearing test plants all five states, asserts the
+adapter names each one, and then calls the **real** `advance` and asserts it
+agrees — four refusals and one pass. A phase added to `PHASES` therefore cannot
+leave the adapter describing a gate that no longer exists while the suite still
+goes green.
+
+The state worth knowing about is `deliverable-seeded`: `engagement.py` can seed
+a target-design deliverable from the blueprint, and a seeded file **exists and
+is not empty**, so every folder listing and every "is it written?" check reads
+as done. Only the `UNEDITED REFERENCE` line separates it from real work.
 
 ## Four false alarms it produced on its first run
 

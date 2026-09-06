@@ -41,8 +41,11 @@ the desk's feeds are on the owner's machine and content's credentials are MCP
 connectors only a session can call, so both arrive as redacted signals committed
 to git by whoever *can* reach them. See ``tools/desk_signal.py`` and
 ``tools/content_signal.py``. The promise held -- both adapters dropped in beside
-``observe_jobs`` and the assembly did not change. ``business`` is still unwired
-and is still named out loud as a blind spot.
+``observe_jobs`` and the assembly did not change. ``business`` followed on
+2026-09-06 and is the one domain read straight from this process: an engagement
+is JSON and markdown in the checkout, and the company blueprint is committed.
+That has a limit worth stating -- ``engagements/`` is gitignored, so a cloud
+session sees the blueprint and no engagement at all, and says so.
 """
 
 from __future__ import annotations
@@ -1084,6 +1087,236 @@ def observe_content(signal, now: dt.datetime) -> list[Observation]:
 
 
 # ---------------------------------------------------------------------------
+# Business -- the engagements, and the company blueprint's money gates
+# ---------------------------------------------------------------------------
+
+# The four ways ``tools/engagement.py``'s ``advance`` refuses, and the one way
+# it does not. Named rather than spelled inline so this adapter and the test
+# that calls the real ``advance`` are demonstrably talking about the same five
+# states.
+GATE_CLEAR = "clear"
+GATE_DELIVERABLE_MISSING = "deliverable-missing"
+GATE_DELIVERABLE_SEEDED = "deliverable-seeded"
+GATE_DECK_MISSING = "deck-missing"
+GATE_NEEDS_APPROVER = "needs-approver"
+
+# ``ai_company``'s two warnings: a deliberate threshold, or automation whose
+# trigger needs checking. Both are real questions, neither is an emergency, so
+# they are counted rather than raised. ``unmarked_touch`` is not counted at
+# all -- ai_company itself calls it "a list to confirm, not a verdict", and the
+# committed blueprint produces nine. Nine permanent info lines is how a brief
+# stops being read.
+GATES_FOR_REVIEW = ("partial_gate", "automation_commits")
+
+
+@dataclass(frozen=True)
+class EngagementFacts:
+    """One readiness engagement, as the edge read it. Plain data, no paths.
+
+    ``gate`` is the refusal ``engagement.advance`` would give if it were called
+    right now, decided at the edge because deciding it means reading the
+    deliverable off disk. It is deliberately not a second opinion about the
+    phase: a matched pair of tests plants each state, asserts this adapter
+    names it, and asserts the *real* ``advance`` then refuses (or passes) to
+    match -- so a phase added to ``PHASES`` cannot leave this adapter
+    describing a gate that no longer exists.
+    """
+
+    slug: str
+    name: str
+    opened: str = ""
+    completed: str = ""
+    phase_key: str = ""
+    phase_title: str = ""
+    phase_since: str = ""
+    gate: str = GATE_CLEAR
+    gate_detail: str = ""
+
+
+def _days_since(stamp: str, now: dt.datetime) -> float:
+    """Whole days from an ISO date or timestamp to ``now``. Never negative."""
+    parsed = _iso(stamp)
+    if parsed is None:
+        return 0.0
+    return float(max((now - parsed).days, 0))
+
+
+def observe_business(
+    engagements: Sequence[EngagementFacts],
+    gates: Sequence[dict],
+    now: dt.datetime,
+) -> list[Observation]:
+    """The businesses: where each engagement is stuck, and what commits money.
+
+    Two sources that fail independently -- the engagement folders under
+    ``engagements/``, and the money gates ``tools/ai_company.py`` convicts in
+    the committed company blueprint. Nothing here reads a file or a clock it
+    was not handed.
+
+    **Two triggers fire here and only two.** An engagement parked on
+    ``approval`` is a named person's decision with every later phase stalled
+    behind it, which is the owner's ``blocking`` trigger stated exactly. An AI
+    step that reaches a payment or contract tool with no person step in front
+    of it is ``money``. Everything else -- a deliverable not written, a deck
+    not built -- is real, and is unwritten *work* rather than an undecided
+    *decision*: raising it as an interruption is how a channel stops being
+    read.
+
+    **No threshold is invented.** How long an engagement has sat at its current
+    phase is carried as a metric and never as a verdict. The owner was offered
+    a thresholds trigger on 2026-09-02 and declined it; nothing here
+    reintroduces one through the back door. The number is evidence for the
+    session already reading this.
+    """
+    observations: list[Observation] = []
+
+    for e in sorted(engagements, key=lambda x: x.slug):
+        entity = f"engagement:{e.slug}"
+        evidence = f"engagements/{e.slug}/engagement.json"
+
+        if e.completed:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{e.name} completed all twelve phases",
+                    at=e.completed,
+                    severity="info",
+                    evidence=evidence,
+                )
+            )
+            continue
+
+        # The day count goes in `metrics` and deliberately *not* in `summary`:
+        # `changes` diffs summaries, so a number that ticks over at midnight
+        # would report every open engagement as changed every single day, and
+        # a delta that always fires carries no information.
+        metrics = (("days_at_this_phase", _days_since(e.phase_since, now)),)
+        at = e.phase_since or now.isoformat()
+        where = f"{e.name} is at '{e.phase_title}'"
+
+        if e.gate == GATE_NEEDS_APPROVER:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{e.name} is waiting on a named stakeholder to approve",
+                    at=at,
+                    severity="act",
+                    trigger="blocking",
+                    evidence=evidence,
+                    detail=(
+                        "engagement.py refuses to advance past approval without "
+                        "--approved-by, and the plan and go-live phases are "
+                        "behind it"
+                    ),
+                    metrics=metrics,
+                )
+            )
+        elif e.gate == GATE_DELIVERABLE_MISSING:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{where}: {e.gate_detail} has not been written",
+                    at=at,
+                    severity="watch",
+                    evidence=evidence,
+                    detail="the phase gate refuses until that file exists and says something",
+                    metrics=metrics,
+                )
+            )
+        elif e.gate == GATE_DELIVERABLE_SEEDED:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{where}: {e.gate_detail} is still the unedited reference",
+                    at=at,
+                    severity="watch",
+                    evidence=evidence,
+                    detail=(
+                        "the file exists and is not empty, so a folder listing "
+                        "reads as done; engagement.py refuses it on the "
+                        "UNEDITED REFERENCE line it still carries"
+                    ),
+                    metrics=metrics,
+                )
+            )
+        elif e.gate == GATE_DECK_MISSING:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{where}: the stakeholder deck has not been built",
+                    at=at,
+                    severity="watch",
+                    evidence=evidence,
+                    detail="nothing is presented before the deck exists on disk",
+                    metrics=metrics,
+                )
+            )
+        else:
+            observations.append(
+                Observation(
+                    domain="business",
+                    entity=entity,
+                    summary=f"{where} with its gate clear",
+                    at=at,
+                    severity="info",
+                    evidence=evidence,
+                    metrics=metrics,
+                )
+            )
+
+    ungated = [g for g in gates if g.get("code") == "ungated_ai_commit"]
+    flagged = [g for g in gates if g.get("code") in GATES_FOR_REVIEW]
+
+    for finding in ungated:
+        observations.append(
+            Observation(
+                domain="business",
+                entity=f"gate:{finding.get('process', '?')}:{finding.get('step', '?')}",
+                summary=(
+                    f"{finding.get('title') or 'a committing step'} -- an AI step "
+                    "commits with no person step in front of it"
+                ),
+                at=now.isoformat(),
+                severity="act",
+                trigger="money",
+                evidence="tools/ai_company.py gates",
+                detail=str(finding.get("message", ""))[:400],
+                # Declared, not inferred: this finding exists because that
+                # document says what it says. It is the only edge the business
+                # domain has, and an invented second one would be the
+                # over-linking defect `graph_audit` convicts elsewhere.
+                depends_on=("blueprint:one-person-ai-company",),
+            )
+        )
+
+    if gates:
+        observations.append(
+            Observation(
+                domain="business",
+                entity="blueprint:one-person-ai-company",
+                summary=(
+                    f"the company blueprint has {len(ungated)} ungated AI commit "
+                    f"step(s) and {len(flagged)} flagged for review"
+                ),
+                at=now.isoformat(),
+                severity="info",
+                evidence="tools/ai_company.py gates",
+                metrics=(
+                    ("ungated_ai_commits", float(len(ungated))),
+                    ("flagged_for_review", float(len(flagged))),
+                ),
+            )
+        )
+
+    return observations
+
+
+# ---------------------------------------------------------------------------
 # Assembly -- the four derived answers
 # ---------------------------------------------------------------------------
 
@@ -1506,6 +1739,117 @@ def read_run_records(path: pathlib.Path) -> list[dict]:
     return out
 
 
+def _phase_since(data: dict) -> str:
+    """When the current phase became the current one.
+
+    The newest completion date on record, or the day the engagement opened if
+    nothing has completed yet. A *skipped* phase records no date, which is
+    correct here: skipping the revision phase does not restart the clock on
+    whatever is now waiting.
+    """
+    stamps = [
+        str(p.get("completed") or "")
+        for p in (data.get("phases") or {}).values()
+        if p.get("completed")
+    ]
+    return max(stamps) if stamps else str(data.get("created", ""))
+
+
+def _engagement_gate(folder: pathlib.Path, slug: str, phase, eng) -> tuple[str, str]:
+    """The refusal ``engagement.advance`` would give for this phase, right now.
+
+    The order matches ``advance`` exactly -- deliverable, then the deck, then
+    the approver -- because naming a different first refusal than the one the
+    owner would actually hit is worse than naming none at all.
+    """
+    if phase is None:
+        return GATE_CLEAR, ""
+    if phase.deliverable:
+        path = folder / slug / phase.deliverable
+        if not path.exists():
+            return GATE_DELIVERABLE_MISSING, phase.deliverable
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return GATE_DELIVERABLE_MISSING, phase.deliverable
+        if eng.SEED_MARKER in text:
+            return GATE_DELIVERABLE_SEEDED, phase.deliverable
+    if phase.key == "present" and not (folder / slug / eng.DECK_FILENAME).exists():
+        return GATE_DECK_MISSING, eng.DECK_FILENAME
+    if phase.key == "approval":
+        return GATE_NEEDS_APPROVER, ""
+    return GATE_CLEAR, ""
+
+
+def read_engagements(
+    root: pathlib.Path,
+) -> tuple[list[EngagementFacts], list[str]]:
+    """Every engagement on disk, and the gate each one would hit right now.
+
+    Returns ``(facts, blind)``. ``tools/engagement.py`` is imported here rather
+    than at module scope on purpose: this layer runs at the start of every
+    session, and a broken adapter source should cost one named blind spot, not
+    the whole brief.
+    """
+    folder = root / "engagements"
+    try:
+        from tools import engagement as eng
+    except Exception as exc:  # pragma: no cover -- import guard
+        return [], [f"the engagements (tools/engagement.py did not import: {exc})"]
+
+    if not folder.exists():
+        return [], [f"the engagements ({folder} does not exist)"]
+
+    facts: list[EngagementFacts] = []
+    blind: list[str] = []
+    for data in eng.list_engagements(folder):
+        slug = str(data.get("slug", ""))
+        try:
+            phase = eng.current_phase(data)
+            gate, gate_detail = _engagement_gate(folder, slug, phase, eng)
+        except (OSError, UnicodeDecodeError, KeyError) as exc:
+            # Refuse rather than repair: an engagement whose folder cannot be
+            # read is reported as unseen, never guessed into a state.
+            blind.append(f"engagement {slug or '<unnamed>'} ({exc})")
+            continue
+        facts.append(
+            EngagementFacts(
+                slug=slug,
+                name=str(data.get("name") or slug),
+                opened=str(data.get("created", "")),
+                completed=str(data.get("completed") or ""),
+                phase_key=phase.key if phase else "",
+                phase_title=phase.title if phase else "",
+                phase_since=_phase_since(data),
+                gate=gate,
+                gate_detail=gate_detail,
+            )
+        )
+
+    if not facts and not blind:
+        blind.append(
+            "any engagement (nothing under engagements/, which is gitignored -- "
+            "a cloud session never sees the owner's)"
+        )
+    return facts, blind
+
+
+def read_blueprint_gates(root: pathlib.Path) -> tuple[list[dict], list[str]]:
+    """``ai_company``'s verdict on every step of the blueprint that commits.
+
+    The blueprint is committed, so unlike the engagements this half is fully
+    visible from anywhere the repository is.
+    """
+    path = root / "docs" / "blueprint-one-person-ai-company.json"
+    if not path.exists():
+        return [], [f"the company blueprint ({path.name} is not in this checkout)"]
+    try:
+        from tools import ai_company as company
+
+        return list(company.audit_gates(company.load_blueprint(path))), []
+    except Exception as exc:  # pragma: no cover -- reader guard
+        return [], [f"the company blueprint (ai_company could not read it: {exc})"]
+
+
 def load_log(path: pathlib.Path) -> list[Observation]:
     if not path.exists():
         return []
@@ -1587,9 +1931,14 @@ def collect(
                 "holding them must run `content_signal.py capture --platform-json -`)"
             )
 
-    # Named rather than left implicit: a domain the owner asked for and this
-    # slice does not yet cover reads exactly like a domain with nothing wrong.
-    blind.append("the businesses -- adapter not built yet")
+    # The businesses, and the only domain read straight from this checkout: an
+    # engagement is JSON and markdown on disk and the blueprint is committed, so
+    # neither needs an emitter carrying it here. `engagements/` is gitignored
+    # though, so in a cloud session the first of these reads nothing and says so.
+    engagements, engagement_blind = read_engagements(root)
+    blind.extend(engagement_blind)
+    gate_findings, blueprint_blind = read_blueprint_gates(root)
+    blind.extend(blueprint_blind)
 
     observations = [
         *observe_jobs(records, now, jobs),
@@ -1597,6 +1946,7 @@ def collect(
         *observe_git(facts, now),
         *observe_desk(desk, now),
         *observe_content(content, now),
+        *observe_business(engagements, gate_findings, now),
     ]
     return observations, jobs, blind
 
