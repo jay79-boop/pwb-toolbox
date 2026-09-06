@@ -1215,11 +1215,11 @@ def cmd_plan(args):
     for i, spec in enumerate(fragility_specs, start=1):
         jobs.append(make_job("fragility", spec, f"fragility-{i}-{spec['param']}"))
     if not jobs:
-        print("Nothing to queue: the desk has no open positions and no closed record.")
-        print("Open a trade, or feed a backtest in with --sim.")
-        print("For sim options, run:")
+        print(
+            "Nothing to queue: no open positions and no closed record. "
+            "Open a trade, or feed a backtest in with --trades-out from:"
+        )
         print("  python tools/reversal_15m_sim.py --help")
-        print("(the flag you want is --trades-out.)")
         return 1
 
     record = closed_trades(ledger)
