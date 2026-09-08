@@ -162,15 +162,24 @@ top-level directories and points here for the detail.
 - `tools/awareness.py` — the situational awareness layer: what is happening
   now, why, what is changing, what is likely next, what is connected, what
   deserves attention, and what action is safest. Assembles evidence from the
-  run log, the scheduler table and git, and **stops there** — the answers are
+  run log, the scheduler table, git, the desk and content signals, the readiness
+  engagements and the money gates in the company blueprint, and **stops there**
+  — the answers are
   read inside a Claude session, so the reasoner is already present and the tool
   never editorialises. Stores observations, never state, which is how it
   satisfies the rule that retired the live dashboard. Refuses four ways: no
   history is "unanswerable" not "calm", nothing is projected without a named
   rule, no graph edge is inferred, and nothing that moves money is ever
   proposed as an action. Names its own blind spots, because an unwired domain
-  reads exactly like a healthy one. `docs/awareness.md`; log in `awareness/`
-  (gitignored). (`tests/test_awareness.py`)
+  reads exactly like a healthy one — since 2026-09-06 every domain has an
+  adapter, so what it names is a missing *source*: no `signals/desk.json`, no
+  render, or no `engagements/` (gitignored, so a cloud session sees none). The
+  business adapter's restraint is the part worth copying: two triggers and no
+  more, the days-stuck count kept as a metric rather than promoted to a
+  threshold, `unmarked_touch` counted rather than raised, and its gate held to
+  what `engagement.advance` actually refuses on by a test that calls the real
+  thing. `docs/awareness.md`; log in `awareness/` (gitignored).
+  (`tests/test_awareness.py`)
 - `tools/desk_signal.py` — the desk bridge. The desk's feeds are on the owner's
   Windows machine and a cloud session shares only GitHub, so `emit` runs there
   (from `run_job.ps1`, after every desk agent run) and writes a redacted reading
