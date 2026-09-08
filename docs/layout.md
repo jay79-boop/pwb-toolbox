@@ -8,21 +8,33 @@ top-level directories and points here for the detail.
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
-- `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
-- `tools/karaoke_server/` — shared-leaderboard server for `static/karaoke-box.html`; stdlib only.
-  Also home of the karaoke queue OS: `rotation.py` (random-but-fair singer
-  draw: wait ceiling, cooldown, no-show strikes, adaptive call lead, house-music
-  signal, per-singer memory), `sim.py` (simulated pub nights that judge it),
-  and `room.py` + `queue_server.py` serving `static/karaoke-queue.html` — one
-  command runs the night: big screen with QR + playback, phones join by scan.
-  `build_standalone.py` packs it all into one portable `karaoke_os.py`, and the
-  `release-karaoke.yml` workflow freezes that into `KaraokeQueue.exe` on a draft
-  release. `start_karaoke.ps1` + `install_shortcut.ps1` are the no-brainer path:
-  a Desktop icon that starts the night, opens the big screen itself, and turns
-  a busy port, a missing firewall rule and a missing Python into sentences
-  rather than tracebacks. Protocol in `docs/karaoke-rotation.md`, setup and the
-  four failures the launcher guards in `docs/karaoke-setup.md`
 - `tools/market_close/` — renders a daily market-close script for a TTS talking-head avatar
+
+**Moved out (2026-09-08 reorg): only trading work stays in this repo now.**
+`tools/grok_export/`, `tools/karaoke_server/` (+ `static/karaoke-*`, `docs/karaoke-*.md`,
+`.github/workflows/release-karaoke.yml`), the blueprint/business tooling's static+doc companions
+(`static/blueprint-builder.html`, `static/blueprint-dashboard.html`, `static/flow-canvas.html`,
+`static/process-grammar.js`, `docs/blueprint-example.json`, `docs/blueprint-guide.md`,
+`docs/blueprint-schema.json`, `docs/ai-readiness-framework.md`,
+`docs/one-person-ai-company.{md,html}`), the machine-setup install scripts
+(`tools/install_global_instructions.py`, `tools/install_spend_hook.py`,
+`tools/install_workspace_dirs.py`), `tools/graph_audit.py`, `tools/obsidian_sync.py`, and the
+`agent-fleet`/`aiq-research`/`cuopt-numerical-optimization-formulation`/`engagement-flow`/
+`process-mapping`/`spend-safety`/`ui-ux-pro-max`/`vault-route` skills all moved to
+`jay79-boop/hermes-agent` (`personal-tools/`, `skills/<category>/`) or, for the vault-specific
+pieces (`tools/obsidian_sync.py`, `vault-route` skill, `docs/vault-operating-manual.md`,
+`docs/vault-route.md`), to `jay79-boop/ray-vault`.
+`tools/awareness.py` and `tools/spend_watch.py` are the two exceptions, both kept resident (and
+also copied to `hermes-agent`) because live local wiring depends on them: `awareness.py` merges
+observations across desk, content and
+business into one ranked brief, so it stayed here whole along with the modules it imports
+(`content_signal.py`, `engagement.py`, `ai_company.py`, `blueprint_converter.py`) even though
+the content/business half isn't trading work — splitting it would have broken the merge that is
+the point of the tool. Their non-runtime companions (the builder/dashboard/canvas pages, the
+skills) still moved, since `awareness.py` doesn't need them. `spend_watch.py` stayed because
+`.claude/hooks/session-size.sh` calls it directly on every prompt; only the two scripts that
+*install* that hook and the global instructions machine-wide moved, since installing is a
+one-off with no local runtime dependency.
 - `tools/front_door.py` — renders `docs/desk-index.html`, the owner-facing index:
   every command, skill, page, subpackage and decision, each one-liner read from
   the file it describes rather than kept in a list beside it. Carries **no** live
@@ -46,21 +58,20 @@ top-level directories and points here for the detail.
   holdings and zero plans, and the run then prints "Nothing needs a decision" —
   a clean all-clear that is indistinguishable from a healthy one. Pointing it
   at the wrong tab is silent (captured 2026-08-19)
-- `tools/engagement.py` — tracks a business through the AI & automation
-  readiness framework (`docs/ai-readiness-framework.md`): twelve gated phases
-  from tool audit to go-live, a rendered stakeholder deck, and a cross-engagement
-  lessons retro. The `engagement-flow` skill is what actually does the phase
-  work; this is the state and the gates. Engagement data lands in
-  `engagements/`, which is gitignored because this fork is public.
-  `export-flow` writes the engagement as a `flow.json` that
-  `static/flow-canvas.html` imports, so an engagement can be seen as a map
-- `tools/blueprint_converter.py` — converts a business blueprint
-  (`docs/blueprint-schema.json`) between JSON and Excel. The blueprint is the
-  shared data model of this trio: `static/blueprint-builder.html` edits one,
-  `static/blueprint-dashboard.html` visualizes one read-only, and
-  `static/flow-canvas.html` imports one (each process renders as a chain of
-  steps). `docs/blueprint-example.json` is a worked example,
-  `docs/blueprint-guide.md` the manual
+- `tools/engagement.py` — kept resident only because `tools/awareness.py`
+  imports it for the business-observation half of its brief; the framework it
+  tracks (`ai-readiness-framework.md`), the `engagement-flow` skill that does
+  the phase work, and `static/flow-canvas.html` (which `export-flow` fed a
+  `flow.json` into) all moved to `hermes-agent` in the 2026-09-08 reorg. State
+  and gates only: twelve gated phases from tool audit to go-live. Engagement
+  data lands in `engagements/`, which is gitignored because this fork is public
+- `tools/blueprint_converter.py` — kept resident only because
+  `tests/test_ai_company.py` imports `check_blueprint` from it, and
+  `static/process-grammar.js` (now in `hermes-agent`) is tested against its
+  `check_process` case for case. The builder/dashboard pages, the schema and
+  the guide (`docs/blueprint-schema.json`, `docs/blueprint-example.json`,
+  `docs/blueprint-guide.md`) moved to `hermes-agent` with the rest of the
+  business-blueprint tooling
 - `tools/ai_company.py` — the one-person AI company, made checkable. Its
   subject is `docs/blueprint-one-person-ai-company.json`, a whole local service
   business as a blueprint — five loop stages, every process, every step's
@@ -118,7 +129,6 @@ top-level directories and points here for the detail.
   stops charging a real cost. Warns when an exchange serves less history than
   was asked for: Kraken answers with ~720 candles however far back `since`
   reaches, and answers successfully
-- `tools/graph_audit.py` — audits a graphify knowledge graph against this repo's actual imports
 - `tools/kronos_lab.py` — measures the Kronos K-line foundation model
   (shiyu-coder/Kronos) before trusting it: walk-forward scorecard (direction
   hit rate with exact p-value, information coefficient, error vs persistence)
@@ -317,93 +327,6 @@ top-level directories and points here for the detail.
   repairs — an empty session is `None`, a stale bar is marked `STALE`, a
   future-stamped bar is named as a clock fault. It will **not** audit its feed:
   one vendor, unaudited, and it says so. Protocol in `docs/desk-levels.md`
-- `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
-  the patterns that exhaust a usage window: Routines that re-arm themselves into
-  a persistent session, wakes bound to a session too fat to load cheaply, and
-  too many sessions live at once. It will **not** derive a burn rate from a
-  single snapshot — session metadata reports lifetime totals, so a rate needs a
-  `--baseline` to diff against. Pure functions, tested on synthetic snapshots
-  (`tests/test_spend_watch.py`); protocol in `docs/spend-safety.md`. Also flags
-  two enabled Routines running the same job on the same cron, and its `session`
-  command warns — from the session's own transcript, costing no tokens — when
-  the current session has itself grown expensive to keep going. Wired to every
-  prompt by `.claude/hooks/session-size.sh`
-- `tools/install_spend_hook.py` — installs a self-contained copy of that size
-  warning into `~/.claude/` so it fires in every session on the machine rather
-  than only in this repo's, and adds the Action Ledger rule to the user-level
-  `CLAUDE.md`. Merges into an existing `settings.json` rather than replacing it,
-  backs up whatever it touches, and is idempotent. `--check` reports without
-  writing. Must run locally — a cloud container's `~/.claude` does not survive
-  the session (`tests/test_install_spend_hook.py`)
-- `tools/install_global_instructions.py` — writes `docs/global-instructions.md`,
-  the owner's cross-project working rules, into the user-level `CLAUDE.md`
-  between two marker lines. Only that region is ever replaced, so the Action
-  Ledger rule and any hand-written lines survive a refresh; a lone marker is
-  left as ordinary text rather than guessed at. Idempotent, backs up the file
-  it touches, `--check` and `--diff` report without writing. The source stays
-  in this public fork without the owner's name or city, and a test holds it
-  there. Must run locally, for the same reason as the spend hook
-  (`tests/test_install_global_instructions.py`)
-- `tools/obsidian_sync.py` — mirrors an Obsidian vault into `docs/journal` as
-  plain markdown. **`--vault` is optional**: Obsidian records every vault it has
-  ever opened, with its absolute path, in `obsidian.json` (`%APPDATA%\obsidian`
-  on Windows), so `sync` reads that rather than asking where the vault is —
-  falling back to scanning for a folder holding `.obsidian/`, and reporting
-  everywhere it looked when it finds nothing. It refuses to guess between two
-  vaults, because a run wipes `docs/journal`. `vaults` lists what it can see.
-  A vault that is a git repo has its **own `.gitignore` honoured** via
-  `git check-ignore` (`--no-gitignore` opts out), reusing the exclusion list the
-  owner already maintains — this matters because the real vault is the Claude
-  config repo, whose `Projects/` transcripts are gitignored for carrying personal
-  detail.
-  `[[Wikilinks]]` become relative markdown links, `![[embeds]]`
-  of non-note files are copied alongside and rewritten, frontmatter passes
-  through untouched. `docs/journal` is treated as fully generated — every run
-  wipes and rewrites it, guarded by a `.obsidian-sync-marker` so it never
-  silently clobbers a directory it did not create. A `.syncignore` file at the
-  vault root (gitignore-style patterns) excludes anything that should not
-  leave the vault; `.obsidian/`, `.trash/`, and other dotfolders are always
-  excluded. **`docs/journal/` is gitignored and the vault is not mirrored into
-  this repo at all** (decided 2026-08-29 — the vault turned out to be the Claude
-  config repo, and this fork is public), so `--commit`/`--push` refuse here
-  rather than staging nothing and reporting success; they still work for a
-  checkout that tracks the mirror. Must run where the vault's
-  files are readable — a local machine or WSL, never a cloud session, which has
-  no access to the vault at all (`tests/test_obsidian_sync.py`)
-- `tools/install_workspace_dirs.py` — ends "it can only see one repo" for local
-  sessions by registering the **home directory** in
-  `permissions.additionalDirectories` in user-level settings, so every repo
-  including ones created later is reachable with nothing to re-run. A scanned
-  list was the first design and was wrong: a snapshot goes stale on the next
-  `git init`, which is the failure it exists to end (`--repos-only` still does
-  it). The breadth is paired with deny rules, which outrank every allow —
-  `~/.claude/projects` (transcripts carrying SSNs and claim numbers),
-  credentials, `.ssh`, `.aws`, `AppData` — and deny governs Read/Edit only, so a
-  program under those paths still runs. `--diagnose` names which of the two
-  causes you are in and writes nothing; the other cause is a cloud session, where
-  the repo was never cloned and no setting can help. Merges, backs up,
-  idempotent, refuses to overwrite unparseable JSON
-  (`tests/test_install_workspace_dirs.py`); both causes and the four mechanisms
-  are in `docs/working-directories.md`
-- `static/flow-canvas.html` — process-mapping tool (a clean-room redesign of
-  puzzleapp.io's workflow canvas): drag-and-connect step cards, wait, end and
-  go-to steps, status/owner coloring, layered auto-layout, undo, and
-  Paper/Slate themes, plus a monthly person-time figure and a checks panel
-  holding the map to the standard. Opens from `file://` and loads
-  `process-grammar.js` from the same directory — no build step, but it is no
-  longer one file. Saves to localStorage, exports JSON. Import accepts its own
-  exports, `engagement.py export-flow` files, and business blueprints
-  (`docs/blueprint-schema.json`). Design spec in
-  `docs/specs/2026-08-22-flow-canvas-design.md`
-- `static/process-grammar.js` — the branch grammar in one place: the checks
-  (unlabelled branches, branches pointing nowhere, forks with one way out,
-  long loop-backs that should be go-to steps, unpriced person steps), the
-  duration parser, the layering, the load rollup, and the renumber-and-repoint
-  logic. `flow-canvas`, `blueprint-builder` and `blueprint-dashboard` all load
-  it rather than keeping a copy, and `tests/test_process_grammar.py` holds it
-  against `check_process` in `tools/blueprint_converter.py` case for case, so
-  a browser tool cannot call a map finished that the validator then rejects.
-  The rules themselves are in the `process-mapping` skill
 - `static/journal-shots.js` — chart screenshots for the journal: downscale and
   re-encode on the way in, then account the result against the ~5 MB localStorage
   a `file://` page gets. The arithmetic is what is tested (`node
@@ -421,6 +344,19 @@ top-level directories and points here for the detail.
   leans on
 - `pine/` — TradingView strategies kept as reviewable source; `README.md` there covers
   the chart setup they need. Nothing under `pwb_toolbox/` imports them
+- `tools/spend_watch.py` — audits a `list_sessions`/`list_triggers` snapshot for
+  the patterns that exhaust a usage window: Routines that re-arm themselves into
+  a persistent session, wakes bound to a session too fat to load cheaply, and
+  too many sessions live at once. It will **not** derive a burn rate from a
+  single snapshot — session metadata reports lifetime totals, so a rate needs a
+  `--baseline` to diff against. Pure functions, tested on synthetic snapshots
+  (`tests/test_spend_watch.py`). Also flags two enabled Routines running the
+  same job on the same cron, and its `session` command warns — from the
+  session's own transcript, costing no tokens — when the current session has
+  itself grown expensive to keep going. Wired to every prompt by
+  `.claude/hooks/session-size.sh`, which is the only reason it is still here —
+  everything else about spend safety (the skill, the protocol doc, the
+  installer scripts) moved to `hermes-agent`
 - `docs/trading-wisdom.md` — the sourced knowledge base behind the desk: ten
   machine-enforceable risk rules with their originating traders/papers, the
   retail base-rate studies that justify paper-first, the evidence review
@@ -442,13 +378,9 @@ top-level directories and points here for the detail.
   live-only and cannot drive paperMoney, so the one account already holding the
   options is the one that cannot fill rule 9's paper record
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`,
-  `ai-readiness-framework.md` (the engagement playbook `tools/engagement.py` tracks),
   `page-style.md` (the standing look for any page or artifact built here —
   light, colour-coded, validated; the rule is in `CLAUDE.md`, the tokens and
-  the checks are here),
-  `one-person-ai-company.md` (the reference target architecture that playbook's
-  phase 7 designs toward — a local service business as a loop rather than a
-  funnel, with agents on the information and people on money and risk), plus
+  the checks are here), plus
   `index.html` (the published landing page; see "Design tooling" below),
   `tradingview-mcp.md` (connecting Claude to TradingView Desktop over the Chrome
   DevTools Protocol — unrelated to the library, written down because the setup has
@@ -461,23 +393,13 @@ top-level directories and points here for the detail.
   `tradingview-agent-security.md` (whether to point an agent at TradingView at all,
   and on which account — the CDP threat model, the two-login rule, and what was
   actually verified about the open-source bridge by reading its source),
-  `agent-fleet.md` (critique and design of the owner's multi-agent fleet — the
-  operating procedure itself is the `agent-fleet` skill under `.claude/skills/`),
   `skills.md` (the bar for turning a repeated job into a skill, the two homes a
   skill can live in, and the retirement rule — with `prompts/` as its staging
-  area for long prompts not yet packaged),
-  `vault-operating-manual.md` (the Obsidian vault's standing rules, operating
-  rules and note schema — canonical here; the vault's personal half stays out of
-  this public fork and lives only locally and in a private artifact),
-  `vault-route.md` (how a cloud session attaches and reads that vault, which is
-  the private repo `jay79-boop/ray-vault`, and why the route is read-only: the
-  owner's nightly backup pushes without pulling, so a commit from a session
-  breaks it. The procedure is the `vault-route` skill; `tests/test_vault_boundary.py`
-  fails CI if vault content lands in this fork),
-  and the spend-safety pair — `token-drain-2026-08-24.md` (what exhausted a
-  five-hour window, measured rather than guessed) and `spend-safety.md` (every
-  surface that can reach a card, ranked by worst case, and the five layers that
-  bound them; the rules themselves are the `spend-safety` skill)
+  area for long prompts not yet packaged).
+  `ai-readiness-framework.md`, `one-person-ai-company.md`, `agent-fleet.md`,
+  `vault-operating-manual.md`, `vault-route.md`, `token-drain-2026-08-24.md` and
+  `spend-safety.md` moved with the tooling they document — see the 2026-09-08
+  reorg note above.
 
 
 ## Commands
@@ -493,18 +415,12 @@ black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 node static/option-lab.test.js    # greeks/ladder math (also run by pytest)
 node static/journal-shots.test.js # screenshot sizing/budget (also run by pytest)
-node static/process-grammar.test.js  # branch grammar (also run by pytest)
 node static/strategy-lab-stats.test.js  # dashboard math (also run by pytest)
-node static/karaoke-qr.test.js    # the QR the screen draws (also run by pytest)
 pytest tests/test_skills.py -q    # skills: live paths, description budget
 
 python tools/trade_card.py plan --help    # pre-trade card + hold-time checker
 python tools/analyze_trades.py export.csv # diagnose a Schwab transaction export
-python tools/spend_watch.py audit snapshot.json  # what is draining the window
 python tools/spend_watch.py session <transcript>.jsonl  # is this session too big
-python tools/install_spend_hook.py --check  # size warning in EVERY session? (local only)
-python tools/install_global_instructions.py --check  # are the owner rules in ~/.claude/CLAUDE.md current? (local only)
-python tools/install_workspace_dirs.py --diagnose  # why can't this chat see my other repo?
 python tools/night_lab.py plan            # queue tonight's stress jobs
 python tools/season_scan.py report        # seasonality: report + watchlist + json
 python tools/calibration_audit.py --symbols SPY  # is our option math calibrated?
@@ -520,10 +436,5 @@ python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an i
 python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
 python tools/awareness.py brief --short    # the same, in six lines
 python tools/desk_watch.py check          # which sessions did the desk not report?
-python tools/obsidian_sync.py vaults      # which Obsidian vaults exist here (local machine only)
-python tools/obsidian_sync.py sync --dry-run  # local mirror only; docs/journal is gitignored by decision
 python tools/front_door.py build      # rebuild the desk index: what we have, and every decision
-python -m tools.karaoke_server.sim report  # does the random singer queue stay fair?
-python -m tools.karaoke_server.queue_server  # run a karaoke night: screen + phone QR joins (LAN only)
-python tools/karaoke_server/build_standalone.py  # one-file karaoke_os.py for any other computer
 ```

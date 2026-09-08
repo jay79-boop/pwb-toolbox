@@ -46,8 +46,12 @@ sessions still exist and hold their context, so resuming is two
 `update_trigger` calls with `enabled: true` and nothing has to be rebuilt.
 Everything below describes the armed configuration it will resume into.
 
-Protocol: the `agent-fleet` skill;
-rationale: `docs/agent-fleet.md` (PR #109). This registry is the ledger entry
+Protocol: the `agent-fleet` skill (moved to `jay79-boop/hermes-agent` in the
+2026-09-08 reorg — it isn't trading work);
+rationale: `docs/agent-fleet.md` there now (PR #109). This registry is left
+here rather than moved with it, since it's live operational state (session and
+trigger IDs) rather than documentation — moving it needs the owner's own
+attention, not a mechanical file move. This registry is the ledger entry
 the design depends on — a restarted lead rehydrates from here, never from a
 peer's memory. Keep it current or the watchdogs are chasing ghosts.
 

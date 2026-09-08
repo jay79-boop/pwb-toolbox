@@ -90,9 +90,10 @@ so a formatting nit cannot mask a real failure.
 sessions — an import failure in the first moments means the install is still
 running; re-run rather than treating it as real. No-op locally.
 `.claude/hooks/session-size.sh` warns once when the session passes 10M/25M/50M
-cache reads. `tools/install_spend_hook.py` installs it into `~/.claude/` so it
-fires in every project; `tools/install_global_instructions.py` writes
-`docs/global-instructions.md` into the user-level `CLAUDE.md`. **Both are local
+cache reads. The scripts that install it and the global instructions
+machine-wide (`install_spend_hook.py`, `install_global_instructions.py`) now
+live in `jay79-boop/hermes-agent`'s `personal-tools/tools/` — they were never
+trade-specific, just global Claude Code setup. **Both are local
 only** — a cloud container's `~/.claude` dies with the container.
 
 ```bash
@@ -187,8 +188,10 @@ Each of these has a full account in `docs/`; the one-liner is the rule.
   staleness out of an ahead/behind count. `docs/local-checkout.md`.
 - **Never commit keys.** `.env` is gitignored; `.env.example` lists every
   variable. `.mcp.json` reads `API_KEY_21ST` from the *process* environment —
-  `.env` alone does not reach it. The one committed key is the Amplitude browser
-  ingestion key in `static/karaoke-queue.html`, public by design.
+  `.env` alone does not reach it. No key is committed in this repo (the one
+  exception, an Amplitude browser ingestion key public by design, lived in
+  `static/karaoke-queue.html`, which moved to `hermes-agent` with the rest of
+  the karaoke app).
 
 ## The ledger
 

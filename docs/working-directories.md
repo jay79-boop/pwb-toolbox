@@ -77,7 +77,8 @@ Do not keep a list of your repositories in this file. It goes stale silently;
 ask the session to enumerate them at read time instead.
 
 That example is not hypothetical: `ray-vault` is the Obsidian vault, and the
-route is written up in [vault-route.md](vault-route.md) — including the one rule
+route is written up in `vault-route.md` in `jay79-boop/ray-vault` (moved there in
+the 2026-09-08 reorg, alongside the `vault-route` skill) — including the one rule
 that is not obvious from here, which is that a session may read it and must never
 push to it.
 

@@ -1,5 +1,14 @@
 # Skills: what each one is for, and when to retire it
 
+**2026-09-08 reorg note:** `ui-ux-pro-max`, `aiq-research`,
+`cuopt-numerical-optimization-formulation`, `agent-fleet`, `engagement-flow`,
+`process-mapping`, `spend-safety` and `vault-route` moved to
+`jay79-boop/hermes-agent` (or, `vault-route`, to `jay79-boop/ray-vault`) —
+none of them are trading work, and this repo now only carries trading skills
+(`backtest-trust`, `lab-standard`, `pine-converter`, `pre-trade-pack`,
+`steward`). The narrative below is kept for the reasoning it documents, not as
+a live description of what's currently installed here.
+
 A skill is a **unit of recurring work**. A pull request is a unit of change.
 Those are different things, and conflating them is how a skills directory turns
 into forty files that never fire.
