@@ -31,8 +31,8 @@ node <dataviz-skill>/scripts/validate_palette.js "#hex,#hex,..." --mode light --
 ```
 
 Use `--pairs all` when the colours can appear anywhere relative to each other,
-which is the normal case for a document. This is not ceremony — building
-`docs/one-person-ai-company.html` it caught two sets that looked fine and were
+which is the normal case for a document. This is not ceremony — building the
+one-person-ai-company reference page it caught two sets that looked fine and were
 not: a hand-picked violet/blue pair at ΔE 3.4, and a teal/green pair at ΔE 11.2
 that had passed as *saturated hues* and collided once they were darkened for
 text contrast. **Validate the values you are actually shipping**, not the ones
@@ -100,9 +100,9 @@ current AI-default faces and read as unconsidered.
   page body never scrolls sideways. Check it at 390px.
 - Structural devices encode something true. A numbered marker is for an actual
   sequence; a shared colour means the two things really are the same thing.
-  `docs/one-person-ai-company.html` gives marketing and finance one colour
-  because the loop closes when finance's cash becomes marketing's budget —
-  that is information, not decoration.
+  The one-person-ai-company reference page (now in `hermes-agent`) gives
+  marketing and finance one colour because the loop closes when finance's cash
+  becomes marketing's budget — that is information, not decoration.
 
 ## Before publishing
 

@@ -176,8 +176,9 @@ Each of these has a full account in `docs/`; the one-liner is the rule.
   is gitignored and `--commit`/`--push` refuse there. It *is* reachable as the
   private repo `jay79-boop/ray-vault` — attach read-only, and **never push**:
   their nightly backup does add/commit/push with no pull, so a commit from a
-  session breaks that night's backup. `docs/vault-route.md`,
-  `.claude/skills/vault-route/`. `tests/test_vault_boundary.py` fails CI if vault
+  session breaks that night's backup. `vault-route.md` and the `vault-route`
+  skill (both in `ray-vault` itself since the 2026-09-08 reorg) carry the
+  procedure. `tests/test_vault_boundary.py` fails CI if vault
   content lands here — cite the vault by repo name, never by note path.
 - **Their local checkout**: `C:\Users\Gexio\OneDrive\pwb-toolbox` is canonical; a
   second one exists at `C:\Users\Gexio\pwb-toolbox`. `jay` and `upstream` mean
@@ -189,9 +190,9 @@ Each of these has a full account in `docs/`; the one-liner is the rule.
 - **Never commit keys.** `.env` is gitignored; `.env.example` lists every
   variable. `.mcp.json` reads `API_KEY_21ST` from the *process* environment —
   `.env` alone does not reach it. No key is committed in this repo (the one
-  exception, an Amplitude browser ingestion key public by design, lived in
-  `static/karaoke-queue.html`, which moved to `hermes-agent` with the rest of
-  the karaoke app).
+  exception, an Amplitude browser ingestion key public by design, lived in the
+  karaoke queue page, which moved to `hermes-agent` with the rest of the
+  karaoke app).
 
 ## The ledger
 

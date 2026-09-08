@@ -52,8 +52,8 @@ Four refusals, in the house pattern of *refuse rather than repair*:
   the same refusal as `night_lab` dropping model output it cannot check.
 - **No edge is inferred.** Connections come from declared `depends_on` and
   nothing else. An invented edge is a shortcut across the whole graph, which is
-  the over-linking defect `tools/graph_audit.py` convicts in someone else's
-  resolver.
+  the over-linking defect the graph auditor (now in `hermes-agent`) convicts in
+  someone else's resolver.
 - **Nothing that moves money is proposed as an action.** It is returned with
   `safe=False` and the reason, for a person. Same doctrine as
   `tools/ai_company.py`: agents move information, people move money. Asserted by

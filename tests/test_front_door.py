@@ -35,12 +35,18 @@ def page(index):
 
 
 def test_the_scan_finds_the_repository():
-    """Acquit guard: empty scans would satisfy every containment test below."""
+    """Acquit guard: empty scans would satisfy every containment test below.
+
+    ``skills`` and ``pages`` floors dropped in the 2026-09-08 reorg, which
+    moved every non-trading skill and static page out to jay79-boop/hermes-agent
+    (or, the vault ones, to jay79-boop/ray-vault) -- 5 skills and 4 pages is the
+    genuine post-reorg count, not a regression.
+    """
     index = front_door.build_index()
     counts = index.counts()
     assert counts["commands"] >= 20, counts
-    assert counts["skills"] >= 8, counts
-    assert counts["pages"] >= 6, counts
+    assert counts["skills"] >= 4, counts
+    assert counts["pages"] >= 3, counts
     assert counts["library"] >= 6, counts
     assert counts["decisions"] >= 25, counts
 
