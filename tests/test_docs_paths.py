@@ -163,9 +163,7 @@ NOT_IN_THIS_TREE = {
     "static/flow-canvas.html": (
         "Moved to hermes-agent with the blueprint/engagement tooling."
     ),
-    "static/process-grammar.js": (
-        "Moved to hermes-agent with the blueprint tooling."
-    ),
+    "static/process-grammar.js": ("Moved to hermes-agent with the blueprint tooling."),
     "static/vendor/amplitude-unified.umd.js": (
         "Moved to hermes-agent with the karaoke app, its only user."
     ),
