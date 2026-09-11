@@ -1,24 +1,13 @@
 # Design tooling (UI/UX), and the keys it needs
 
-
-`.claude/skills/` vendors the MIT-licensed
-[ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) suite,
-installed with `npx ui-ux-pro-max-cli init --ai claude`. It is unrelated to the
-trading library — the package itself is headless — and exists only so sessions in
-this repo can build dashboards, docs pages, and report UIs to a consistent
-standard. Nothing under `pwb_toolbox/` imports it, and `pytest` never touches it.
-
-The core skill is a local CSV database (84 UI styles, 192 color palettes, 74 font
-pairings, 98 UX guidelines, 25 chart types, 22 stacks) queried with stdlib Python
-— no network, no API key:
-
-```bash
-python3 .claude/skills/ui-ux-pro-max/scripts/search.py "saas landing page" --domain style
-python3 .claude/skills/ui-ux-pro-max/scripts/search.py "fintech dashboard" --domain color --json
-```
-
-The SKILL.md frontmatter says "67 styles, 161 palettes" — that string is hardcoded
-in the upstream template and lags the shipped CSVs. Trust the data files.
+**2026-09-08 reorg note:** the `ui-ux-pro-max` skill itself moved to
+`jay79-boop/hermes-agent` (`skills/creative/ui-ux-pro-max/`) along with every
+other non-trading skill — it's unrelated to the trading library and this repo
+now only carries trading skills. `docs/index.html` (built from its queries)
+and the `.mcp.json` / `API_KEY_21ST` setup below stayed, since both are this
+repo's own published page and dev tooling, not the skill itself. To re-run a
+query, do it from a hermes-agent checkout:
+`python3 skills/creative/ui-ux-pro-max/scripts/search.py "saas landing page" --domain style`
 
 `docs/index.html` is a landing page built entirely from those queries — palette,
 font pairing and motion timings all came from the skill rather than being invented.

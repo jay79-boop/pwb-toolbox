@@ -20,7 +20,8 @@ every session reported `isUsingOverage: false`. What was spent was the window,
 which resets on a clock and cannot be bought back. The figure is also *lifetime*
 rather than in-window, so only part of it belongs to that night. An earlier
 version of this file called it "billed", which was wrong and is corrected here;
-`docs/token-drain-2026-08-24.md` carries the full forensics.
+`token-drain-2026-08-24.md`, in `hermes-agent`'s `personal-tools/docs/` since
+the 2026-09-08 reorg, carries the full forensics.
 
 Nor was it one runaway session: seventeen were active in that window, twelve on
 Opus and nine of those at `max` effort. The window died of arithmetic. But the
@@ -88,8 +89,9 @@ that would read identically at a lower tier.
 
 This file governs PR stewardship only. The wider rules it is one instance of:
 
-- `docs/token-drain-2026-08-24.md` — the measured forensics of the incident
-  above, and the six rules that came out of it.
+- `token-drain-2026-08-24.md` (in `hermes-agent`'s `personal-tools/docs/`) —
+  the measured forensics of the incident above, and the six rules that came
+  out of it.
 - The `spend-safety` skill — the five layers, the two-key pattern for
   irreversible actions, and the pre-flight checklist for any paid service. It
   is the authority on scheduled jobs and money-capable surfaces; where this file

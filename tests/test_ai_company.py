@@ -63,6 +63,14 @@ GRAMMAR = ROOT / "static" / "process-grammar.js"
 needs_node = pytest.mark.skipif(
     shutil.which("node") is None, reason="node is not installed"
 )
+needs_grammar = pytest.mark.skipif(
+    not GRAMMAR.exists(),
+    reason=(
+        "process-grammar.js moved to hermes-agent in the 2026-09-08 reorg "
+        "(it isn't trading work); the cross-check it enables now belongs there, "
+        "next to flow-canvas.html"
+    ),
+)
 
 
 @pytest.fixture(scope="module")
@@ -118,6 +126,7 @@ def test_unreadable_duration_is_none_not_zero():
 
 
 @needs_node
+@needs_grammar
 def test_duration_matches_the_browser_parser(tmp_path):
     """Python and process-grammar.js must read a duration identically.
 

@@ -1,7 +1,9 @@
 """Keep the Obsidian vault's contents out of this public fork.
 
 `jay79-boop/ray-vault` can be attached to a session in about a minute now --
-`docs/vault-route.md` has the route. That is new, and it is useful, and it is
+`vault-route.md`, in `ray-vault` itself since the 2026-09-08 reorg (it used to
+live here as `docs/vault-route.md`), has the route. That is new, and it is
+useful, and it is
 also the first time a session working in this repository has had the vault's
 personal half sitting readable on the same disk as a public checkout.
 

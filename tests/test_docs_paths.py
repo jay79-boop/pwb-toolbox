@@ -129,6 +129,75 @@ NOT_IN_THIS_TREE = {
         "not exist in the tree, and is not gitignored either -- creating it is "
         "meant to be a rare, deliberate act, not something a checkout ships with."
     ),
+    # 2026-09-08 reorg: this repo was narrowed to trading work only. Everything
+    # below moved to jay79-boop/hermes-agent (personal-tools/, skills/<category>/)
+    # or, for vault-specific pieces, jay79-boop/ray-vault -- see docs/layout.md's
+    # "Moved out" note and CLAUDE.md. docs/decisions/ and docs/claude-md-archive-
+    # 2026-09-04.md are a historical record and were deliberately left unedited,
+    # so they still name these by their old, now-elsewhere paths.
+    ".github/workflows/release-karaoke.yml": (
+        "Moved to hermes-agent with the karaoke app."
+    ),
+    "docs/ai-readiness-framework.md": (
+        "Moved to hermes-agent with the engagement tooling."
+    ),
+    "docs/blueprint-example.json": "Moved to hermes-agent with the blueprint tooling.",
+    "docs/blueprint-guide.md": "Moved to hermes-agent with the blueprint tooling.",
+    "docs/blueprint-schema.json": "Moved to hermes-agent with the blueprint tooling.",
+    "docs/one-person-ai-company.html": (
+        "Moved to hermes-agent with the blueprint tooling."
+    ),
+    "docs/one-person-ai-company.md": (
+        "Moved to hermes-agent with the blueprint tooling."
+    ),
+    "docs/vault-operating-manual.md": (
+        "Moved to ray-vault with the vault-route skill."
+    ),
+    "docs/vault-route.md": "Moved to ray-vault with the vault-route skill.",
+    "static/blueprint-builder.html": (
+        "Moved to hermes-agent with the blueprint tooling."
+    ),
+    "static/blueprint-dashboard.html": (
+        "Moved to hermes-agent with the blueprint tooling."
+    ),
+    "static/flow-canvas.html": (
+        "Moved to hermes-agent with the blueprint/engagement tooling."
+    ),
+    "static/process-grammar.js": ("Moved to hermes-agent with the blueprint tooling."),
+    "static/vendor/amplitude-unified.umd.js": (
+        "Moved to hermes-agent with the karaoke app, its only user."
+    ),
+    "static/karaoke-queue.html": "Moved to hermes-agent with the karaoke app.",
+    "tools/graph_audit.py": (
+        "Moved to hermes-agent; the audited graph was pwb-toolbox-specific "
+        "and did not move."
+    ),
+    "tools/grok_export/": "Moved to hermes-agent -- unrelated to trading.",
+    "tools/install_global_instructions.py": (
+        "Moved to hermes-agent -- generic Claude Code machine setup."
+    ),
+    "tools/install_spend_hook.py": (
+        "Moved to hermes-agent -- generic Claude Code machine setup."
+    ),
+    "tools/install_workspace_dirs.py": (
+        "Moved to hermes-agent -- generic Claude Code machine setup."
+    ),
+    "tools/karaoke_server/": "Moved to hermes-agent -- unrelated to trading.",
+    "tools/obsidian_sync.py": "Moved to ray-vault with the vault-route skill.",
+    "tests/test_karaoke_qr.py": "Moved to hermes-agent with the karaoke app.",
+    "docs/global-instructions.md": (
+        "Moved to hermes-agent with the machine-setup scripts."
+    ),
+    "docs/token-drain-2026-08-24.md": (
+        "Moved to hermes-agent with the spend-safety skill."
+    ),
+    "docs/agent-fleet.md": "Moved to hermes-agent with the agent-fleet skill.",
+    "docs/spend-safety.md": "Moved to hermes-agent with the spend-safety skill.",
+    "docs/specs/2026-08-22-flow-canvas-design.md": (
+        "Moved to hermes-agent with flow-canvas.html, its subject."
+    ),
+    ".claude/skills/aiq-research": "Moved to hermes-agent's skills/research/.",
+    ".claude/skills/vault-route/": "Moved to ray-vault.",
 }
 
 # Backticked tokens containing a slash. Globs (`season/*`), gitignore negations
