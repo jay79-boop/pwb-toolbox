@@ -427,6 +427,18 @@ top-level directories and points here for the detail.
   behind `crypto_scan`'s signals, iron condor venue/construction facts, and
   the propose-then-approve learning loop. Trading sessions and the desk agent
   consult it; it grows by proposal, never by silent edit
+- `tools/trading_agents.py` — thin CLI over `TauricResearch/TradingAgents`
+  (Apache-2.0), an external multi-agent LLM trading-debate framework,
+  installed only via the optional `requirements-tradingagents.txt` (its
+  langchain/langgraph/redis stack is heavy and nothing else here needs it).
+  `analyze TICKER` runs its analyst debate and writes the decision to
+  `trading_agents/<ticker>_<date>.json` as a **signal only** — never wired to
+  `spec_desk`, the desk agent, or anything that can reach a broker. Needs an
+  LLM provider key and network access that a cloud session here does not
+  carry, so `tests/test_trading_agents.py` covers the wrapper's own logic
+  (argument handling, the record it writes) against a fake graph rather than
+  a real one. Protocol, install steps and what was and wasn't verified in
+  `docs/trading-agents.md`
 - `tools/broker_costs.py` — prices the same option structure at every broker on
   the shortlist, with platform fees in the total where they belong, because a
   headline commission decides nothing on its own. `condor` runs the weekly
@@ -517,6 +529,7 @@ python -m tools.desk_agent.runlog summary --last 20  # is the agent actually wor
 python -m tools.desk_agent.runlog unpushed  # did its committed log actually reach GitHub?
 python tools/desk_levels.py levels NQ=F --markdown  # session levels/FVGs, no chart needed
 python tools/nvidia_vision.py ask chart.png --prompt "what is this"  # read an image with a vision model
+python tools/trading_agents.py analyze NVDA --date 2026-09-10  # TradingAgents debate -> logged signal (optional install, needs an LLM key)
 python tools/awareness.py brief            # now / why / changing / next / connected / attention / safest
 python tools/awareness.py brief --short    # the same, in six lines
 python tools/desk_watch.py check          # which sessions did the desk not report?

@@ -1,0 +1,11 @@
+# Optional. tools/trading_agents.py wraps TauricResearch/TradingAgents
+# (Apache-2.0) — a multi-agent LLM trading-debate framework. Not folded into
+# requirements.txt: its stack (langchain, langgraph, a redis client) is heavy
+# and nothing else in this repo needs it, so it would otherwise cost every CI
+# run and every session's venv build for a tool most sessions never touch.
+#
+# Install:
+#   pip install -r requirements-tradingagents.txt
+# Then set an LLM provider key before running the tool — see
+# docs/trading-agents.md.
+git+https://github.com/TauricResearch/TradingAgents.git
