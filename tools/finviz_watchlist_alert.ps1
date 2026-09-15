@@ -20,13 +20,31 @@
   Not meant to be run by hand day to day -- use the menu's "Check your
   watchlist" option for that. This is the unattended half, registered by
   tools\install_finviz_watchlist_task.ps1.
+
+.PARAMETER WatchlistFile
+  Watchlist to check instead of the default finviz\watchlist.txt.
+
+.PARAMETER OutDir
+  Folder for the saved report instead of Desktop\finviz-research.
+
+.PARAMETER LogPath
+  Run log instead of tools\finviz_scan_watchlist_task.log.
+
+.PARAMETER NoPopup
+  Write the message the popup would show into the log instead of showing
+  it. For testing: a real MessageBox waits for a click.
 #>
 [CmdletBinding()]
-param()
+param(
+  [string] $WatchlistFile,
+  [string] $OutDir,
+  [string] $LogPath,
+  [switch] $NoPopup
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$logPath = Join-Path $repoRoot 'tools\finviz_scan_watchlist_task.log'
+if ($LogPath) { $logPath = $LogPath } else { $logPath = Join-Path $repoRoot 'tools\finviz_scan_watchlist_task.log' }
 
 function Show-FinvizPopup {
   param(
@@ -34,6 +52,11 @@ function Show-FinvizPopup {
     [string] $Title,
     [string] $IconName
   )
+  if ($NoPopup) {
+    $line = "`r`nPOPUP [" + $Title + "]: " + $Text + "`r`n"
+    [IO.File]::AppendAllText($logPath, $line, (New-Object Text.UTF8Encoding $false))
+    return
+  }
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   $owner = New-Object System.Windows.Forms.Form
@@ -62,11 +85,26 @@ try {
 
   $env:FINVIZ_DESKTOP = [Environment]::GetFolderPath('Desktop')
 
+  $checkArgs = @((Join-Path $repoRoot 'tools\finviz_scan.py'), 'check', '--quiet')
+  if ($WatchlistFile) { $checkArgs += @('--file', $WatchlistFile) }
+  if ($OutDir) { $checkArgs += @('--out-dir', $OutDir) }
+
   Push-Location $repoRoot
+  # Windows PowerShell 5.1 turns every stderr line of a native program into a
+  # terminating error under ErrorActionPreference Stop when 2>&1 is used.
+  # yfinance writes warnings to stderr for any bad or delisted ticker, so this
+  # used to abort the run into the catch block below: no popup, just a log
+  # line nobody reads. Exit code 2 is the signal; stderr is only log text.
+  $ErrorActionPreference = 'Continue'
   try {
-    $output = & $python (Join-Path $repoRoot 'tools\finviz_scan.py') check --quiet 2>&1 | Out-String
+    # A blank stderr line stringifies as 'System.Management.Automation.RemoteException'
+    # unless its message is read off directly.
+    $output = & $python @checkArgs 2>&1 | ForEach-Object {
+      if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+    } | Out-String
     $exitCode = $LASTEXITCODE
   } finally {
+    $ErrorActionPreference = 'Stop'
     Pop-Location
   }
 
@@ -85,9 +123,15 @@ try {
     Show-FinvizPopup -Text $text -Title 'Finviz Research -- check failed' -IconName 'Warning'
   }
 } catch {
-  # last-resort: even a failure to get this far should leave a trace somewhere
+  # Last resort. A log line alone is how scheduled jobs in this repo have died
+  # for weeks unnoticed, so this pops a warning too.
+  $errMessage = $_.Exception.Message
   try {
-    $errText = '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] SCRIPT ERROR: ' + $_.Exception.Message
+    $errText = '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] SCRIPT ERROR: ' + $errMessage
     [IO.File]::WriteAllText($logPath, $errText, (New-Object Text.UTF8Encoding $false))
+  } catch { }
+  try {
+    $text = "The daily Finviz watchlist check could not run.`r`n`r`n" + $errMessage + "`r`n`r`nLog: $logPath"
+    Show-FinvizPopup -Text $text -Title 'Finviz Research -- check failed' -IconName 'Warning'
   } catch { }
 }

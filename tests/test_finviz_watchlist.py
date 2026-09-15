@@ -3,12 +3,18 @@ no yfinance. Every signal is a pure function of a constructed bars
 DataFrame, same approach as test_crypto_scan.py's synthetic-coin tests.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
+import tools.finviz_scan as finviz_scan
 from tools.finviz_scan import (
+    DEFAULT_WATCHLIST_FILE,
     WATCHLIST_MIN_BARS,
+    _stamp,
+    check_watchlist,
     classify_confluence,
     ema,
     load_watchlist,
@@ -294,6 +300,45 @@ def test_render_watchlist_check_handles_empty_results():
     report, flagged = render_watchlist_check({}, skipped=[])
     assert flagged == []
     assert "Nothing to check" in report
+
+
+def test_check_watchlist_reports_a_bad_ticker_as_no_data_not_thin_history(
+    monkeypatch,
+):
+    # Live 2026-09-15: a misspelled ticker got "need 100+ bars of history",
+    # which sends you looking for the wrong problem.
+    def fake_fetch_bars(symbols):
+        return {
+            "AAPL": make_bars(
+                flat_then_move(days=260, flat=100.0, drift=0.04, n_drift=1)
+            ),
+            "THIN": make_bars([100.0] * 10),
+        }
+
+    monkeypatch.setattr(finviz_scan, "fetch_bars", fake_fetch_bars)
+    report, flagged = check_watchlist(["AAPL", "THIN", "ZZZZQQ"])
+    assert "skipped (need 100+ bars of history): THIN" in report
+    assert "no price data (check the spelling, or it may be delisted): ZZZZQQ" in report
+    assert "ZZZZQQ" not in report.split("no price data")[0]
+
+
+def test_default_watchlist_is_anchored_to_the_repo_not_the_current_folder():
+    path = Path(DEFAULT_WATCHLIST_FILE)
+    assert path.is_absolute()
+    assert path == Path(finviz_scan.__file__).resolve().parent.parent / (
+        "finviz/watchlist.txt"
+    )
+
+
+def test_stamp_has_seconds_so_same_minute_runs_do_not_overwrite():
+    # Live 2026-09-15: two checks in one minute saved to the same file.
+    assert len(_stamp()) == len("2026-09-15_020930")
+
+
+def test_watchlist_round_trips_as_utf8(tmp_path):
+    path = tmp_path / "watchlist.txt"
+    path.write_bytes("AAPL  # Apple — core\n".encode("utf-8"))
+    assert load_watchlist(path) == ["AAPL"]
 
 
 # ---------------------------------------------------------------------------

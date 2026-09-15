@@ -174,7 +174,12 @@ one-off with no local runtime dependency.
   + `tools/finviz_watchlist_alert.ps1` optionally register a Windows
   Scheduled Task that runs `check` daily and pops a message only when
   something is flagged — Interactive logon (a popup needs a desktop to draw
-  on, same tradeoff as `desk_agent`'s `alerts` job)
+  on, same tradeoff as `desk_agent`'s `alerts` job), and pops a warning when
+  the check itself fails rather than only logging it. `LOOKUP_ADDONS` is the
+  slot for extra research sources on `lookup` (Perplexity or similar, down
+  the road): empty by default, one function per source, each isolated so a
+  failing source cannot blank the Finviz sections. An AI-backed source spends
+  paid tokens, so it stays opt-in with its key read from `.env`.
 - `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
   the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit

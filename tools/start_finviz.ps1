@@ -62,11 +62,29 @@ try {
 
   foreach ($pkg in @('finvizfinance', 'pandas', 'yfinance')) {
     Write-Host "Checking for the $pkg package..."
-    & $python -c "import $pkg" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-      Write-Host "Not found -- installing $pkg (one-time, a few seconds)..."
-      & $python -m pip install --quiet $pkg
-      if ($LASTEXITCODE -ne 0) {
+    # Windows PowerShell 5.1 turns a native program's stderr into a
+    # terminating error under ErrorActionPreference Stop -- even with 2>$null.
+    # A missing package prints an ImportError to stderr, so without this the
+    # check itself killed the launcher on exactly the first run it exists for.
+    # Exit codes are what gets checked; the preference is restored either way.
+    $ErrorActionPreference = 'Continue'
+    try {
+      & $python -c "import $pkg" 2>$null
+      $importExit = $LASTEXITCODE
+      if ($importExit -ne 0) {
+        Write-Host "Not found -- installing $pkg (one-time, a few seconds)..."
+        # A blank stderr line stringifies as 'System.Management.Automation.RemoteException'
+        # unless its message is read off directly.
+        & $python -m pip install --quiet $pkg 2>&1 | ForEach-Object {
+          if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.Exception.Message } else { Write-Host "$_" }
+        }
+        $pipExit = $LASTEXITCODE
+      }
+    } finally {
+      $ErrorActionPreference = 'Stop'
+    }
+    if ($importExit -ne 0) {
+      if ($pipExit -ne 0) {
         throw "pip install $pkg failed. Check the internet connection and re-run this script."
       }
       Write-Host 'Installed.'
@@ -80,10 +98,14 @@ try {
   Write-Host ''
 
   Push-Location $repoRoot
+  # Same 5.1 stderr trap as above: a library warning mid-menu must not end
+  # the session.
+  $ErrorActionPreference = 'Continue'
   try {
     & $python (Join-Path $repoRoot 'tools\finviz_scan.py') menu
     $exitCode = $LASTEXITCODE
   } finally {
+    $ErrorActionPreference = 'Stop'
     Pop-Location
   }
 

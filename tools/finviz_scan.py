@@ -61,8 +61,20 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_OUT_DIR = "finviz"
-DEFAULT_WATCHLIST_FILE = "finviz/watchlist.txt"
+# Anchored to this file, not the current directory: a relative default meant
+# running the script from any other folder silently started a second, empty
+# watchlist there.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_WATCHLIST_FILE = str(REPO_ROOT / "finviz" / "watchlist.txt")
+
+# Extra research sources for `lookup`, run after the Finviz sections. Empty by
+# default. Each entry is (section title, callable taking a ticker and
+# returning plain text). One failing never blanks the Finviz sections or the
+# other add-ons -- see run_addons(). An AI-backed source (Perplexity and the
+# like) spends paid tokens on every lookup, which this tool otherwise never
+# does: keep such an add-on opt-in, read its key from the environment (.env,
+# never committed), and say in its section title that it costs money.
+LOOKUP_ADDONS: list[tuple[str, object]] = []
 
 # Starting points, not trading advice -- edit or add to these freely. Each is
 # a {finviz filter name: option value} dict, exactly what `set_filter` below
@@ -143,20 +155,57 @@ def parse_filter_kv(raw: str) -> tuple[str, str]:
     return name, value
 
 
-def render_screener(df: pd.DataFrame | None, top: int) -> str:
+def human_number(value) -> str:
+    """41390000000.0 -> '41.39B'. Console display only; saved files keep the
+    raw number."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if x != x:
+        return ""
+    for size, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(x) >= size:
+            return f"{x / size:.2f}{suffix}"
+    return f"{x:g}"
+
+
+def humanize_screener(df: pd.DataFrame) -> pd.DataFrame:
+    """A display copy with Market Cap as 41.39B and Volume as 1,646,765
+    instead of scientific notation."""
+    out = df.copy()
+    if "Market Cap" in out.columns:
+        out["Market Cap"] = out["Market Cap"].map(human_number)
+    if "Volume" in out.columns:
+        out["Volume"] = out["Volume"].map(
+            lambda v: f"{float(v):,.0f}" if pd.notna(v) else ""
+        )
+    return out
+
+
+def render_screener(df: pd.DataFrame | None, top: int, limit: int | None = None) -> str:
     if df is None or df.empty:
         return "No tickers matched these filters."
-    shown = df.head(top)
-    lines = [
-        f"{len(df)} match(es), showing {len(shown)}:",
-        "",
-        shown.to_string(index=False),
-    ]
+    shown = humanize_screener(df.head(top))
+    if limit is not None and len(df) >= limit:
+        # Finviz stopped at the fetch limit, so the real match count is unknown.
+        header = (
+            f"First {len(df)} match(es) fetched -- that is the fetch limit, more "
+            f"may match (--limit to fetch more). Showing {len(shown)}:"
+        )
+    else:
+        header = f"{len(df)} match(es), showing {len(shown)}:"
+    lines = [header, "", shown.to_string(index=False)]
     if len(df) > top:
         lines.append(
             f"\n... {len(df) - top} more not shown (--top to see more, --out to save all)"
         )
     return "\n".join(lines)
+
+
+def _one_line(text) -> str:
+    """Finviz headlines arrive wrapped in newlines and indentation."""
+    return " ".join(str(text).split())
 
 
 def render_lookup(
@@ -168,6 +217,7 @@ def render_lookup(
     insiders_error: str | None,
     news_top: int = 8,
     insiders_top: int = 8,
+    addons: list[tuple[str, str | None, str | None]] | None = None,
 ) -> str:
     lines = [f"=== {ticker.upper()} ==="]
     if not fundament:
@@ -186,8 +236,8 @@ def render_lookup(
     else:
         cols = [c for c in NEWS_COLUMNS if c in news.columns]
         for _, row in news.head(news_top).iterrows():
-            date = row.get("Date", "")
-            title = row.get("Title", "")
+            date = _one_line(row.get("Date", ""))
+            title = _one_line(row.get("Title", ""))
             lines.append(f"  {date}  {title}")
         if not cols:
             lines.append(f"  (unexpected columns: {list(news.columns)})")
@@ -202,7 +252,28 @@ def render_lookup(
         table = insiders[cols] if cols else insiders
         lines.append(table.head(insiders_top).to_string(index=False))
 
+    for title, text, error in addons or []:
+        lines += ["", f"-- {title} --"]
+        if error:
+            lines.append(f"  could not load: {error}")
+        elif not text:
+            lines.append("  (none)")
+        else:
+            lines += [f"  {line}" for line in str(text).splitlines()]
+
     return "\n".join(lines)
+
+
+def run_addons(ticker: str, addons) -> list[tuple[str, str | None, str | None]]:
+    """(title, text, error) per add-on. Each is isolated: one raising is
+    reported in its own section and the rest still run."""
+    out = []
+    for title, fetch in addons:
+        try:
+            out.append((title, fetch(ticker), None))
+        except Exception as exc:
+            out.append((title, None, str(exc) or type(exc).__name__))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +327,7 @@ def fetch_lookup(ticker: str) -> dict:
         "news_error": news_error,
         "insiders": insiders,
         "insiders_error": insiders_error,
+        "addons": run_addons(ticker, LOOKUP_ADDONS),
     }
 
 
@@ -476,7 +548,7 @@ def load_watchlist(path: Path) -> list[str]:
     if not path.exists():
         return []
     out = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         symbol = line.split("#", 1)[0].strip().upper()
         if symbol:
             out.append(symbol)
@@ -486,7 +558,7 @@ def load_watchlist(path: Path) -> list[str]:
 def save_watchlist(path: Path, symbols: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cleaned = sorted({s.strip().upper() for s in symbols if s.strip()})
-    path.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
+    path.write_text("\n".join(cleaned) + ("\n" if cleaned else ""), encoding="utf-8")
 
 
 def fetch_bars(
@@ -535,7 +607,7 @@ def run_watchlist_check(
 
 
 def render_watchlist_check(
-    results: dict[str, dict], skipped: list[str]
+    results: dict[str, dict], skipped: list[str], no_data: list[str] = ()
 ) -> tuple[str, list[str]]:
     """Returns (report text, symbols with a 2+ signal confluence -- the
     ones worth an actual look, not the whole watchlist)."""
@@ -586,7 +658,27 @@ def render_watchlist_check(
         lines.append(
             f"skipped (need {WATCHLIST_MIN_BARS}+ bars of history): {', '.join(sorted(skipped))}"
         )
+    if no_data:
+        lines.append(
+            f"no price data (check the spelling, or it may be delisted): "
+            f"{', '.join(sorted(no_data))}"
+        )
     return "\n".join(lines), flagged
+
+
+def check_watchlist(symbols: list[str]) -> tuple[str, list[str]]:
+    """Fetch bars and build the report -- the one path both `check` and the
+    menu use. Returns (report text, flagged symbols)."""
+    bars = fetch_bars(symbols)
+    results, skipped = run_watchlist_check(bars)
+    no_data = [s for s in symbols if s not in bars]
+    return render_watchlist_check(results, sorted(set(skipped)), sorted(set(no_data)))
+
+
+def _stamp() -> str:
+    # Seconds included: two runs inside one minute used to overwrite each
+    # other's saved report.
+    return dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
 
 def default_desktop_dir() -> Path:
@@ -607,7 +699,17 @@ def default_desktop_dir() -> Path:
 def _save_csv(df: pd.DataFrame, out: str) -> None:
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
+    df.to_csv(path, index=False, encoding="utf-8")
+
+
+def _lookup_json(result: dict) -> str:
+    import json
+
+    payload = dict(result)
+    for key in ("news", "insiders"):
+        df = payload.get(key)
+        payload[key] = df.to_dict(orient="records") if df is not None else None
+    return json.dumps(payload, indent=2, default=str)
 
 
 def cmd_screener(args):
@@ -618,7 +720,7 @@ def cmd_screener(args):
     df = fetch_screener(
         filters, order=args.order, limit=args.limit, ascend=not args.desc
     )
-    print(render_screener(df, args.top))
+    print(render_screener(df, args.top, limit=args.limit))
     if args.out and df is not None and not df.empty:
         _save_csv(df, args.out)
         print(f"\nsaved {len(df)} row(s) -> {args.out}")
@@ -628,15 +730,9 @@ def cmd_lookup(args):
     result = fetch_lookup(args.ticker)
     print(render_lookup(args.ticker, **result))
     if args.out:
-        import json
-
-        payload = dict(result)
-        for key in ("news", "insiders"):
-            df = payload.get(key)
-            payload[key] = df.to_dict(orient="records") if df is not None else None
         path = Path(args.out)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, default=str))
+        path.write_text(_lookup_json(result), encoding="utf-8")
         print(f"\nsaved -> {args.out}")
 
 
@@ -682,10 +778,7 @@ def cmd_check(args):
             f"finviz_scan.py watchlist add TICKER ..."
         )
         return
-    bars = fetch_bars(symbols)
-    results, skipped = run_watchlist_check(bars)
-    skipped += [s for s in symbols if s not in bars]
-    report, flagged = render_watchlist_check(results, sorted(set(skipped)))
+    report, flagged = check_watchlist(symbols)
     print(report)
 
     out_dir = (
@@ -694,9 +787,8 @@ def cmd_check(args):
         else default_desktop_dir() / "finviz-research"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
-    out_path = out_dir / f"watchlist-check_{stamp}.txt"
-    out_path.write_text(report)
+    out_path = out_dir / f"watchlist-check_{_stamp()}.txt"
+    out_path.write_text(report, encoding="utf-8")
     print(f"\nsaved -> {out_path}")
 
     if flagged and not args.quiet:
@@ -711,6 +803,19 @@ def _prompt(message: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
     value = input(f"{message}{suffix}: ").strip()
     return value or default
+
+
+def _prompt_int(message: str, default: int) -> int:
+    while True:
+        raw = _prompt(message, str(default))
+        try:
+            value = int(raw)
+        except ValueError:
+            print("  Type a whole number, like 20.")
+            continue
+        if value > 0:
+            return value
+        print("  Type a number above 0.")
 
 
 def run_menu() -> None:
@@ -773,9 +878,10 @@ def _menu_preset_screener() -> None:
     except (ValueError, IndexError):
         print("Not a valid preset number.\n")
         return
-    top = int(_prompt("How many rows to show", "20") or 20)
-    df = fetch_screener(PRESETS[preset], limit=max(top, 100))
-    print("\n" + render_screener(df, top) + "\n")
+    top = _prompt_int("How many rows to show", 20)
+    limit = max(top, 100)
+    df = fetch_screener(PRESETS[preset], limit=limit)
+    print("\n" + render_screener(df, top, limit=limit) + "\n")
     _menu_maybe_save_csv(df)
 
 
@@ -796,17 +902,17 @@ def _menu_custom_screener() -> None:
     if not filters:
         print("No filters entered -- that would list the entire market, skipping.\n")
         return
-    top = int(_prompt("How many rows to show", "20") or 20)
-    df = fetch_screener(filters, limit=max(top, 100))
-    print("\n" + render_screener(df, top) + "\n")
+    top = _prompt_int("How many rows to show", 20)
+    limit = max(top, 100)
+    df = fetch_screener(filters, limit=limit)
+    print("\n" + render_screener(df, top, limit=limit) + "\n")
     _menu_maybe_save_csv(df)
 
 
 def _menu_maybe_save_csv(df: pd.DataFrame) -> None:
     if df is None or df.empty:
         return
-    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
-    suggested = default_desktop_dir() / "finviz-research" / f"screener_{stamp}.csv"
+    suggested = default_desktop_dir() / "finviz-research" / f"screener_{_stamp()}.csv"
     save = _prompt(
         "Save the full results to a CSV file? (Enter for Desktop, or type a path, or 'n' to skip)",
         str(suggested),
@@ -824,23 +930,16 @@ def _menu_lookup() -> None:
         return
     result = fetch_lookup(ticker)
     print("\n" + render_lookup(ticker, **result) + "\n")
-    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
-    suggested = default_desktop_dir() / "finviz-research" / f"{ticker}_{stamp}.json"
+    suggested = default_desktop_dir() / "finviz-research" / f"{ticker}_{_stamp()}.json"
     save = _prompt(
         "Save this to a file? (Enter for Desktop, or type a path, or 'n' to skip)",
         str(suggested),
     )
     if save.lower() in ("n", "no", "skip"):
         return
-    import json
-
-    payload = dict(result)
-    for key in ("news", "insiders"):
-        col = payload.get(key)
-        payload[key] = col.to_dict(orient="records") if col is not None else None
     out_path = Path(save)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2, default=str))
+    out_path.write_text(_lookup_json(result), encoding="utf-8")
     print(f"saved -> {out_path}\n")
 
 
@@ -875,15 +974,11 @@ def _menu_watchlist_check() -> None:
         print("Watchlist is empty -- add tickers first (option 6).\n")
         return
     print(f"Checking {len(symbols)} ticker(s): {', '.join(symbols)} ...")
-    bars = fetch_bars(symbols)
-    results, skipped = run_watchlist_check(bars)
-    skipped += [s for s in symbols if s not in bars]
-    report, _flagged = render_watchlist_check(results, sorted(set(skipped)))
+    report, _flagged = check_watchlist(symbols)
     print("\n" + report)
 
-    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
     suggested = (
-        default_desktop_dir() / "finviz-research" / f"watchlist-check_{stamp}.txt"
+        default_desktop_dir() / "finviz-research" / f"watchlist-check_{_stamp()}.txt"
     )
     save = _prompt(
         "Save this report? (Enter for Desktop, or type a path, or 'n' to skip)",
@@ -893,11 +988,19 @@ def _menu_watchlist_check() -> None:
         return
     out_path = Path(save)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(report)
+    out_path.write_text(report, encoding="utf-8")
     print(f"saved -> {out_path}\n")
 
 
 def main(argv=None):
+    # Piped output (the scheduled task's log) is cp1252 on Windows; a headline
+    # with a curly quote would otherwise crash the whole run mid-print.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     ap = argparse.ArgumentParser(
         prog="finviz_scan",
         description="Finviz research (screener + single-ticker lookup) from your own machine.",

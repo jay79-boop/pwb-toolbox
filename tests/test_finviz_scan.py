@@ -11,10 +11,13 @@ import pandas as pd
 import pytest
 
 from tools.finviz_scan import (
+    LOOKUP_ADDONS,
     PRESETS,
+    human_number,
     parse_filter_kv,
     render_lookup,
     render_screener,
+    run_addons,
 )
 
 
@@ -52,6 +55,98 @@ def test_render_screener_truncates_and_says_so():
     assert "T0" in out and "T1" in out
     assert "T4" not in out
     assert "3 more not shown" in out
+
+
+def test_render_screener_says_when_the_fetch_limit_cut_it_off():
+    # Live 2026-09-15: a 100-row fetch printed "100 match(es)" while far more
+    # tickers matched. At the limit the true count is unknown and must say so.
+    df = pd.DataFrame({"Ticker": [f"T{i}" for i in range(100)]})
+    out = render_screener(df, top=5, limit=100)
+    assert "fetch limit" in out
+    assert "100 match(es), showing" not in out
+
+
+def test_render_screener_below_the_limit_is_a_real_count():
+    df = pd.DataFrame({"Ticker": ["AAPL", "MSFT"]})
+    out = render_screener(df, top=5, limit=100)
+    assert "2 match(es), showing 2" in out
+    assert "fetch limit" not in out
+
+
+def test_render_screener_prints_readable_numbers_not_scientific():
+    df = pd.DataFrame(
+        {"Ticker": ["A"], "Market Cap": [4.139e10], "Volume": [1646765.0]}
+    )
+    out = render_screener(df, top=5)
+    assert "41.39B" in out
+    assert "1,646,765" in out
+    assert "e+" not in out
+
+
+def test_render_screener_does_not_alter_the_callers_frame():
+    df = pd.DataFrame({"Ticker": ["A"], "Market Cap": [4.139e10]})
+    render_screener(df, top=5)
+    assert df["Market Cap"].iloc[0] == 4.139e10  # CSV export keeps the raw number
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (4.861e12, "4.86T"),
+        (4.139e10, "41.39B"),
+        (3.94e6, "3.94M"),
+        (1500, "1.50K"),
+        (12, "12"),
+        (float("nan"), ""),
+        ("n/a", "n/a"),
+    ],
+)
+def test_human_number(value, expected):
+    assert human_number(value) == expected
+
+
+def test_render_lookup_collapses_wrapped_headlines():
+    # Live Finviz titles arrive as "\n      Title text\n    ".
+    news = pd.DataFrame(
+        {
+            "Date": ["2026-09-14 22:39:00"],
+            "Title": ["\n            Apple event\n            recap\n        "],
+        }
+    )
+    out = render_lookup("AAPL", {"Company": "Apple Inc"}, news, None, None, None)
+    assert "  2026-09-14 22:39:00  Apple event recap" in out
+
+
+def test_lookup_addons_ship_empty():
+    # Paid/AI sources are opt-in; the tool spends no tokens by default.
+    assert LOOKUP_ADDONS == []
+
+
+def test_run_addons_isolates_a_failing_source():
+    def good(ticker):
+        return f"summary for {ticker}"
+
+    def broken(ticker):
+        raise RuntimeError("no API key set")
+
+    out = run_addons("AAPL", [("Broken source", broken), ("Good source", good)])
+    assert out == [
+        ("Broken source", None, "no API key set"),
+        ("Good source", "summary for AAPL", None),
+    ]
+
+
+def test_render_lookup_shows_addon_sections_after_finviz():
+    addons = [
+        ("Research add-on (paid)", "line one\nline two", None),
+        ("Other add-on", None, "timed out"),
+    ]
+    out = render_lookup(
+        "AAPL", {"Company": "Apple Inc"}, None, None, None, None, addons=addons
+    )
+    assert out.index("-- Insider trades") < out.index("-- Research add-on (paid) --")
+    assert "  line one\n  line two" in out
+    assert "-- Other add-on --\n  could not load: timed out" in out
 
 
 def test_render_lookup_reports_missing_fundamentals():
