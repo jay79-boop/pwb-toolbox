@@ -142,6 +142,44 @@ one-off with no local runtime dependency.
   not a trader. Scoring is pure math tested on synthetic bars
   (`tests/test_crypto_scan.py`); signal choices are sourced in
   `docs/trading-wisdom.md`
+- `tools/finviz_scan.py` — Finviz research (free tier, not Elite) with zero AI
+  tokens spent: `screener` filters the market to a ticker list via named
+  presets or `Name=Value` filters, `lookup TICKER` pulls one ticker's
+  fundamentals, news and insider trades. `menu` is the no-brainer interactive
+  mode (`tools/start_finviz.ps1` + `tools/install_finviz_shortcut.ps1` put a
+  desktop icon on it, same pattern as `hermes-agent`'s karaoke shortcut).
+  `list-filters` / `filter-options NAME` print Finviz's own valid filter
+  names/values so a preset is never guessed. Wraps the `finvizfinance`
+  package (BeautifulSoup + requests, no relation to any AI provider); only
+  `fetch_screener`/`fetch_lookup` touch the network, and only on the owner's
+  machine — the cloud proxy blocks finviz.com too. Rendering and filter
+  parsing are pure and tested (`tests/test_finviz_scan.py`), including an
+  offline check that every built-in preset is a real finviz filter name and
+  option value.
+  `watchlist add/remove/list` tracks a ticker list (`finviz/watchlist.txt`);
+  `check` reads real daily price history for it via yfinance (same source
+  and same cloud-blocked rule as `crypto_scan.py`/`season_scan.py`, not
+  Finviz — it has no historical-OHLCV endpoint) and flags EMA20/50 crosses,
+  80-EMA bounce/reject, RSI extremes, 50/200-SMA golden/death crosses,
+  52-week proximity and volume surges. Explicitly does not claim to find
+  "perfect timing" — see the comment above `watchlist_signals()` for what
+  each signal is, where it's sourced from, and why 52-week/volume/MACD are
+  reported as context rather than scored. Saved research (screener CSVs,
+  lookups, watchlist checks) defaults to the owner's Desktop, not this repo
+  (`default_desktop_dir()`, reading `FINVIZ_DESKTOP` as set by
+  `start_finviz.ps1` from `[Environment]::GetFolderPath('Desktop')`, which
+  sees a OneDrive-redirected Desktop that Python alone cannot). The signal
+  math is pure and tested on synthetic price series
+  (`tests/test_finviz_watchlist.py`). `tools/install_finviz_watchlist_task.ps1`
+  + `tools/finviz_watchlist_alert.ps1` optionally register a Windows
+  Scheduled Task that runs `check` daily and pops a message only when
+  something is flagged — Interactive logon (a popup needs a desktop to draw
+  on, same tradeoff as `desk_agent`'s `alerts` job), and pops a warning when
+  the check itself fails rather than only logging it. `LOOKUP_ADDONS` is the
+  slot for extra research sources on `lookup` (Perplexity or similar, down
+  the road): empty by default, one function per source, each isolated so a
+  failing source cannot blank the Finviz sections. An AI-backed source spends
+  paid tokens, so it stays opt-in with its key read from `.env`.
 - `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
   the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit

@@ -56,6 +56,16 @@ night_lab/*
 # owner watches and the report derives from it; this fork is public.
 season/*
 !season/README.md
+
+# finviz research (tools/finviz_scan.py) - saved screener CSVs, ticker
+# lookup JSON and the watchlist itself are local run output/config,
+# regenerable or personal, same reasoning as season/universe.txt above.
+finviz/*
+!finviz/README.md
+# the daily watchlist task's per-run log (tools/finviz_watchlist_alert.ps1) -
+# overwritten every run, same reasoning as tools/desk_agent/logs/ above.
+tools/finviz_scan_watchlist_task.log
+
 # Pine converter corpus (docs/converter-corpus.md) - fetched scripts and their
 # manifest. Regenerable by re-running the fetch, and large; not source.
 corpus/
