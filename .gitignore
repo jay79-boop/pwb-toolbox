@@ -56,6 +56,12 @@ night_lab/*
 # owner watches and the report derives from it; this fork is public.
 season/*
 !season/README.md
+
+# finviz research (tools/finviz_scan.py) - saved screener CSVs and ticker
+# lookup JSON are local run output, regenerable by re-running the tool.
+finviz/*
+!finviz/README.md
+
 # Pine converter corpus (docs/converter-corpus.md) - fetched scripts and their
 # manifest. Regenerable by re-running the fetch, and large; not source.
 corpus/

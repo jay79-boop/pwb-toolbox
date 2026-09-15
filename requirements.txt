@@ -6,6 +6,7 @@ click
 datasets
 deap
 ffn
+finvizfinance
 huggingface_hub
 ib_insync
 matplotlib

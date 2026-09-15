@@ -142,6 +142,20 @@ one-off with no local runtime dependency.
   not a trader. Scoring is pure math tested on synthetic bars
   (`tests/test_crypto_scan.py`); signal choices are sourced in
   `docs/trading-wisdom.md`
+- `tools/finviz_scan.py` — Finviz research (free tier, not Elite) with zero AI
+  tokens spent: `screener` filters the market to a ticker list via named
+  presets or `Name=Value` filters, `lookup TICKER` pulls one ticker's
+  fundamentals, news and insider trades. `menu` is the no-brainer interactive
+  mode (`tools/start_finviz.ps1` + `tools/install_finviz_shortcut.ps1` put a
+  desktop icon on it, same pattern as `hermes-agent`'s karaoke shortcut).
+  `list-filters` / `filter-options NAME` print Finviz's own valid filter
+  names/values so a preset is never guessed. Wraps the `finvizfinance`
+  package (BeautifulSoup + requests, no relation to any AI provider); only
+  `fetch_screener`/`fetch_lookup` touch the network, and only on the owner's
+  machine — the cloud proxy blocks finviz.com too. Rendering and filter
+  parsing are pure and tested (`tests/test_finviz_scan.py`), including an
+  offline check that every built-in preset is a real finviz filter name and
+  option value
 - `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
   the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
