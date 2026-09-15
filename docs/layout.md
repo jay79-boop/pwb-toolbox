@@ -155,7 +155,26 @@ one-off with no local runtime dependency.
   machine — the cloud proxy blocks finviz.com too. Rendering and filter
   parsing are pure and tested (`tests/test_finviz_scan.py`), including an
   offline check that every built-in preset is a real finviz filter name and
-  option value
+  option value.
+  `watchlist add/remove/list` tracks a ticker list (`finviz/watchlist.txt`);
+  `check` reads real daily price history for it via yfinance (same source
+  and same cloud-blocked rule as `crypto_scan.py`/`season_scan.py`, not
+  Finviz — it has no historical-OHLCV endpoint) and flags EMA20/50 crosses,
+  80-EMA bounce/reject, RSI extremes, 50/200-SMA golden/death crosses,
+  52-week proximity and volume surges. Explicitly does not claim to find
+  "perfect timing" — see the comment above `watchlist_signals()` for what
+  each signal is, where it's sourced from, and why 52-week/volume/MACD are
+  reported as context rather than scored. Saved research (screener CSVs,
+  lookups, watchlist checks) defaults to the owner's Desktop, not this repo
+  (`default_desktop_dir()`, reading `FINVIZ_DESKTOP` as set by
+  `start_finviz.ps1` from `[Environment]::GetFolderPath('Desktop')`, which
+  sees a OneDrive-redirected Desktop that Python alone cannot). The signal
+  math is pure and tested on synthetic price series
+  (`tests/test_finviz_watchlist.py`). `tools/install_finviz_watchlist_task.ps1`
+  + `tools/finviz_watchlist_alert.ps1` optionally register a Windows
+  Scheduled Task that runs `check` daily and pops a message only when
+  something is flagged — Interactive logon (a popup needs a desktop to draw
+  on, same tradeoff as `desk_agent`'s `alerts` job)
 - `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
   the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit

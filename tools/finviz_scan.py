@@ -1,26 +1,41 @@
 #!/usr/bin/env python
 """Finviz research from your own machine -- no AI tokens spent doing it.
 
-Two things, both against Finviz's free public site (not Elite):
+Four things:
 
-    screener   filter the whole market down to a ticker list + key stats
-    lookup     one ticker's fundamentals, recent news, and insider trades
+    screener    filter the whole market down to a ticker list + key stats
+                (Finviz's free public site, not Elite)
+    lookup      one ticker's fundamentals, recent news, and insider trades
+                (also Finviz)
+    watchlist   your own tracked-ticker list -- add/remove/view
+    check       EMA/RSI/volume/52-week timing signals on that watchlist,
+                against real daily price history (yfinance, not Finviz --
+                see the comment above watchlist_signals() for what each
+                signal means and where it's from). Read that comment before
+                trusting any of it: nothing here finds "perfect timing",
+                it flags candidates worth a closer look.
 
-Fetching is done by the `finvizfinance` package (BeautifulSoup + requests
-under the hood, MIT licensed, no relation to any AI provider) -- this file
-is a thin, testable wrapper around it plus a no-brainer `menu` mode for
-`tools/start_finviz.ps1` to launch. Nothing here calls an LLM; the only
-network calls are the two `fetch_*` functions below, and only ever to
-finviz.com.
+`screener`/`lookup` fetching is done by the `finvizfinance` package
+(BeautifulSoup + requests under the hood, MIT licensed, no relation to any
+AI provider); `check` fetches bars the same way `crypto_scan.py` and
+`season_scan.py` already do. This file is a thin, testable wrapper around
+both, plus a no-brainer `menu` mode for `tools/start_finviz.ps1` to launch.
+Nothing here calls an LLM -- the only network-touching functions are
+`fetch_screener`, `fetch_lookup` and `fetch_bars`, and only ever to
+finviz.com or Yahoo.
 
-Only `fetch_screener` and `fetch_lookup` touch the network, and only on
-your own machine -- same as `season_scan.py`'s Yahoo calls and
-`crypto_scan.py`'s yfinance calls, the cloud proxy that runs this repo's
-CI blocks finviz.com too. Everything else (rendering, filter parsing,
-the preset table) is pure and covered by tests/test_finviz_scan.py,
-including a check that every PRESETS entry is a real finviz filter name
-with a real option value, run against finvizfinance's own vendored
-filter table -- offline, no live fetch required.
+Only those three functions touch the network, and only on your own
+machine -- the cloud proxy that runs this repo's CI blocks both finviz.com
+and yfinance. Everything else (rendering, filter parsing, the preset
+table, every EMA/RSI/confluence calculation) is pure and covered by
+tests/test_finviz_scan.py and tests/test_finviz_watchlist.py, including a
+check that every PRESETS entry is a real finviz filter name with a real
+option value, run against finvizfinance's own vendored filter table --
+offline, no live fetch required.
+
+Research files (saved screener CSVs, ticker lookups, watchlist checks)
+default to your Desktop (a `finviz-research` folder there), not this repo
+-- see default_desktop_dir() below.
 
 Examples::
 
@@ -31,16 +46,23 @@ Examples::
     python tools/finviz_scan.py lookup AAPL
     python tools/finviz_scan.py list-filters
     python tools/finviz_scan.py filter-options "Market Cap."
+    python tools/finviz_scan.py watchlist add AAPL MSFT NVDA
+    python tools/finviz_scan.py watchlist list
+    python tools/finviz_scan.py check
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 DEFAULT_OUT_DIR = "finviz"
+DEFAULT_WATCHLIST_FILE = "finviz/watchlist.txt"
 
 # Starting points, not trading advice -- edit or add to these freely. Each is
 # a {finviz filter name: option value} dict, exactly what `set_filter` below
@@ -238,6 +260,346 @@ def fetch_lookup(ticker: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Watchlist -- EMA/RSI/volume/52-week signals on real daily price history.
+# A DIFFERENT data source from everything above: Finviz's free site has no
+# historical-OHLCV endpoint, so this pulls daily bars via yfinance the same
+# way crypto_scan.py and season_scan.py already do (fetch_bars below is a
+# deliberate near-duplicate of crypto_scan.fetch_daily, not a cross-import --
+# `python tools/finviz_scan.py check` runs this file as a script, and a
+# script's own directory goes on sys.path, not the repo root, so `from
+# tools.crypto_scan import ...` would break exactly there while still
+# passing under pytest). Same rule as everywhere else in this repo: the
+# cloud proxy blocks yfinance too, so `fetch_bars` only ever runs on your
+# own machine.
+#
+# Read this before trusting any of it: no indicator or combination of
+# indicators finds "perfect timing" -- that phrase describes something that
+# does not exist. Every signal here is a documented, commonly-cited pattern,
+# not a guarantee; it flags candidates worth a closer look, the same way
+# crypto_scan's score_universe does, and is exactly as fallible on a bad
+# day. Sourced from a 2026-09-15 web search (capital.com, altrady.com,
+# Phillip Nova, and TradingView's own "GODMODE"-family scripts):
+#
+#     ema_cross     20-EMA crossing 50-EMA -- the most commonly cited
+#                   short/medium trend-change signal.
+#     ema80_react   price touching the 80-EMA and closing back on the same
+#                   side ("bounce") or the opposite side it came from
+#                   ("reject"). TradingView's EMA-confluence "GODMODE"
+#                   scripts (55/99-period EMA pairs, etc.) use a moving
+#                   average as support/resistance the same way -- but
+#                   "godmode" names a family of different community
+#                   scripts, not one standardized formula, so nothing here
+#                   claims to reproduce a specific one.
+#     rsi           Wilder's RSI(14); <30 oversold, >70 overbought.
+#     ma_cross      50/200-day SMA golden/death cross -- ema_cross's
+#                   long-horizon sibling, deliberately a different lookback.
+#     near_52w      price within NEAR_52W_PCT of its 52-week high/low.
+#                   Reported as context only -- "near a high" and "near a
+#                   low" each read as bullish under one style (breakout,
+#                   mean-reversion) and bearish under the other, so it is
+#                   not folded into the confluence count below.
+#     volume        today's volume vs its own 20-day average, excluding
+#                   today -- same exclude-the-surge-itself logic as
+#                   crypto_scan.coin_signals. Context only, not scored.
+#     macd          MACD(12,26,9) histogram sign, cited repeatedly as the
+#                   standard confirmation for an EMA cross. Context only.
+#
+# `classify_confluence` counts how many of the four *directional* signals
+# (ema_cross, ema80_react, rsi extreme, ma_cross) agree on this bar. A
+# higher count is not "more correct" -- it is "more of these specific,
+# named things happened to line up today." Treat it as a same-day
+# prioritization order for your own research, never as a signal to act on
+# by itself.
+# ---------------------------------------------------------------------------
+
+WATCHLIST_HISTORY_DAYS = 300  # enough to seed EMA80 and cover a 52-week window
+WATCHLIST_MIN_BARS = (
+    100  # fewer than this and EMA80/52-week reads are too seed-biased to report
+)
+NEAR_52W_PCT = 0.05  # within 5% of the 52-week extreme counts as "near"
+EMA80_TOUCH_PCT = 0.015  # within 1.5% of the 80-EMA counts as a touch
+
+
+def ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI: average gain/loss smoothed with alpha = 1/period."""
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def macd_histogram(close: pd.Series) -> pd.Series:
+    macd_line = ema(close, 12) - ema(close, 26)
+    signal_line = ema(macd_line, 9)
+    return macd_line - signal_line
+
+
+def _ema80_reaction(
+    close: pd.Series, high: pd.Series, low: pd.Series, ema80: pd.Series
+) -> str:
+    last_close, last_high, last_low = (
+        float(close.iloc[-1]),
+        float(high.iloc[-1]),
+        float(low.iloc[-1]),
+    )
+    last_ema80 = float(ema80.iloc[-1])
+    touched = (
+        last_low <= last_ema80 <= last_high
+        or abs(last_low - last_ema80) / last_ema80 <= EMA80_TOUCH_PCT
+        or abs(last_high - last_ema80) / last_ema80 <= EMA80_TOUCH_PCT
+    )
+    if not touched:
+        return "none"
+    prior_above = float(close.iloc[-2]) > float(ema80.iloc[-2])
+    if prior_above and last_close > last_ema80:
+        return "bounce"
+    if not prior_above and last_close < last_ema80:
+        return "reject"
+    return "cross"  # touched from one side, closed the other -- a break, not a bounce/reject
+
+
+def watchlist_signals(bars: pd.DataFrame) -> dict:
+    """Signals for one ticker from daily bars (columns: open, high, low,
+    close, volume; oldest first). Raises ValueError on too little history
+    rather than reporting a seed-biased EMA80/52-week number as real."""
+    close = bars["close"].astype(float)
+    high = bars["high"].astype(float)
+    low = bars["low"].astype(float)
+    volume = bars["volume"].astype(float)
+    n = len(close)
+    if n < WATCHLIST_MIN_BARS:
+        raise ValueError(f"need {WATCHLIST_MIN_BARS} bars, have {n}")
+
+    last = float(close.iloc[-1])
+    ema20, ema50, ema80 = ema(close, 20), ema(close, 50), ema(close, 80)
+    rsi14 = rsi(close, 14)
+    hist = macd_histogram(close)
+
+    prev_diff = float(ema20.iloc[-2] - ema50.iloc[-2])
+    last_diff = float(ema20.iloc[-1] - ema50.iloc[-1])
+    ema_cross = "none"
+    if prev_diff <= 0 < last_diff:
+        ema_cross = "bullish"
+    elif prev_diff >= 0 > last_diff:
+        ema_cross = "bearish"
+
+    rsi_last = float(rsi14.iloc[-1])
+    rsi_signal = (
+        "oversold" if rsi_last < 30 else "overbought" if rsi_last > 70 else "neutral"
+    )
+
+    sma50, sma200 = close.rolling(50).mean(), close.rolling(200).mean()
+    ma_cross = "none"
+    if n >= 201 and pd.notna(sma200.iloc[-2]):
+        prev_ma_diff = float(sma50.iloc[-2] - sma200.iloc[-2])
+        last_ma_diff = float(sma50.iloc[-1] - sma200.iloc[-1])
+        if prev_ma_diff <= 0 < last_ma_diff:
+            ma_cross = "golden"
+        elif prev_ma_diff >= 0 > last_ma_diff:
+            ma_cross = "death"
+
+    window = min(n, 252)
+    high_52w = float(high.iloc[-window:].max())
+    low_52w = float(low.iloc[-window:].min())
+    from_high = last / high_52w - 1  # <= 0
+    from_low = last / low_52w - 1  # >= 0
+    near_52w = "none"
+    if abs(from_high) <= NEAR_52W_PCT:
+        near_52w = "high"
+    elif from_low <= NEAR_52W_PCT:
+        near_52w = "low"
+
+    vol_avg20 = float(volume.iloc[-21:-1].mean())
+    volume_surge = (
+        float(volume.iloc[-1]) / vol_avg20 - 1 if vol_avg20 > 0 else float("nan")
+    )
+
+    return {
+        "last": last,
+        "ema20": float(ema20.iloc[-1]),
+        "ema50": float(ema50.iloc[-1]),
+        "ema80": float(ema80.iloc[-1]),
+        "ema_cross": ema_cross,
+        "ema80_react": _ema80_reaction(close, high, low, ema80),
+        "rsi14": rsi_last,
+        "rsi_signal": rsi_signal,
+        "ma_cross": ma_cross,
+        "near_52w": near_52w,
+        "from_52w_high": from_high,
+        "from_52w_low": from_low,
+        "volume_surge": volume_surge,
+        "macd_hist": float(hist.iloc[-1]),
+        "bars": n,
+    }
+
+
+def classify_confluence(signals: dict) -> dict:
+    """How many of the four *directional* signals agree on this bar. See
+    the module-level note above on why near_52w/volume/macd are context
+    only and not counted here."""
+    bullish = sum(
+        1
+        for key, value in (
+            ("ema_cross", "bullish"),
+            ("ema80_react", "bounce"),
+            ("rsi_signal", "oversold"),
+            ("ma_cross", "golden"),
+        )
+        if signals[key] == value
+    )
+    bearish = sum(
+        1
+        for key, value in (
+            ("ema_cross", "bearish"),
+            ("ema80_react", "reject"),
+            ("rsi_signal", "overbought"),
+            ("ma_cross", "death"),
+        )
+        if signals[key] == value
+    )
+    direction = (
+        "bullish" if bullish > bearish else "bearish" if bearish > bullish else "mixed"
+    )
+    return {"bullish_count": bullish, "bearish_count": bearish, "direction": direction}
+
+
+def load_watchlist(path: Path) -> list[str]:
+    """One ticker per line; '#' starts a trailing comment; blank lines and
+    duplicates are dropped. Missing file reads as an empty watchlist."""
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        symbol = line.split("#", 1)[0].strip().upper()
+        if symbol:
+            out.append(symbol)
+    return sorted(set(out))
+
+
+def save_watchlist(path: Path, symbols: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned = sorted({s.strip().upper() for s in symbols if s.strip()})
+    path.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
+
+
+def fetch_bars(
+    symbols: list[str], days: int = WATCHLIST_HISTORY_DAYS
+) -> dict[str, pd.DataFrame]:
+    """Daily bars per symbol via yfinance. Missing/empty symbols are
+    dropped silently here and reported by the caller as skipped."""
+    import yfinance as yf
+
+    out = {}
+    raw = yf.download(
+        symbols,
+        period=f"{days}d",
+        interval="1d",
+        group_by="ticker",
+        progress=False,
+        auto_adjust=False,
+    )
+    for sym in symbols:
+        try:
+            df = raw[sym] if isinstance(raw.columns, pd.MultiIndex) else raw
+        except KeyError:
+            continue
+        df = df.rename(columns=str.lower)[
+            ["open", "high", "low", "close", "volume"]
+        ].dropna()
+        if not df.empty:
+            out[sym] = df.reset_index(drop=True)
+    return out
+
+
+def run_watchlist_check(
+    bars_by_symbol: dict[str, pd.DataFrame],
+) -> tuple[dict[str, dict], list[str]]:
+    results: dict[str, dict] = {}
+    skipped: list[str] = []
+    for sym, bars in bars_by_symbol.items():
+        try:
+            signals = watchlist_signals(bars)
+        except ValueError:
+            skipped.append(sym)
+            continue
+        signals["confluence"] = classify_confluence(signals)
+        results[sym] = signals
+    return results, skipped
+
+
+def render_watchlist_check(
+    results: dict[str, dict], skipped: list[str]
+) -> tuple[str, list[str]]:
+    """Returns (report text, symbols with a 2+ signal confluence -- the
+    ones worth an actual look, not the whole watchlist)."""
+    flagged = [
+        sym
+        for sym, s in results.items()
+        if max(s["confluence"]["bullish_count"], s["confluence"]["bearish_count"]) >= 2
+    ]
+    lines = [
+        "Finviz Research -- watchlist check",
+        "No indicator finds perfect timing. This flags candidates for your own",
+        "look, nothing more -- see the comment above watchlist_signals() in",
+        "tools/finviz_scan.py for what each signal is and where it's from.",
+        "",
+    ]
+    if not results:
+        lines.append(
+            "Nothing to check -- empty watchlist, or no symbol had enough history."
+        )
+    ranked = sorted(
+        results,
+        key=lambda sym: -max(
+            results[sym]["confluence"]["bullish_count"],
+            results[sym]["confluence"]["bearish_count"],
+        ),
+    )
+    for sym in ranked:
+        s = results[sym]
+        c = s["confluence"]
+        marker = "  <-- FLAGGED" if sym in flagged else ""
+        vol = (
+            "n/a"
+            if s["volume_surge"] != s["volume_surge"]
+            else f"{s['volume_surge']:+.1%}"
+        )
+        lines += [
+            f"{sym}{marker}",
+            f"  last {s['last']:.2f}   confluence: {c['direction']} "
+            f"({c['bullish_count']} bullish / {c['bearish_count']} bearish signal(s))",
+            f"  EMA20/50 cross: {s['ema_cross']:<8}  EMA80 reaction: {s['ema80_react']:<6}  "
+            f"RSI14: {s['rsi14']:.1f} ({s['rsi_signal']})",
+            f"  50/200 SMA cross: {s['ma_cross']:<6}  52w: {s['near_52w']:<4} "
+            f"({s['from_52w_high']:+.1%} from high, {s['from_52w_low']:+.1%} from low)",
+            f"  volume vs 20d avg: {vol}   MACD(12,26,9) hist: {s['macd_hist']:+.3f}",
+            "",
+        ]
+    if skipped:
+        lines.append(
+            f"skipped (need {WATCHLIST_MIN_BARS}+ bars of history): {', '.join(sorted(skipped))}"
+        )
+    return "\n".join(lines), flagged
+
+
+def default_desktop_dir() -> Path:
+    """Where to save research files. FINVIZ_DESKTOP is set by
+    start_finviz.ps1 to [Environment]::GetFolderPath('Desktop'), which sees
+    a OneDrive-redirected Desktop that Path.home()/"Desktop" cannot. Falls
+    back to Path.home()/"Desktop" for a direct `python tools/finviz_scan.py`
+    run outside the launcher."""
+    env = os.environ.get("FINVIZ_DESKTOP")
+    return Path(env) if env else Path.home() / "Desktop"
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -299,6 +661,52 @@ def cmd_list_presets(args):
             print(f"  {key} = {value}")
 
 
+def cmd_watchlist(args):
+    path = Path(args.file)
+    symbols = load_watchlist(path)
+    if args.action == "add":
+        symbols = sorted(set(symbols) | {s.upper() for s in args.tickers})
+        save_watchlist(path, symbols)
+    elif args.action == "remove":
+        symbols = sorted(set(symbols) - {s.upper() for s in args.tickers})
+        save_watchlist(path, symbols)
+    print(f"watchlist ({len(symbols)}): {', '.join(symbols) if symbols else '(empty)'}")
+
+
+def cmd_check(args):
+    path = Path(args.file)
+    symbols = load_watchlist(path)
+    if not symbols:
+        print(
+            f"Watchlist is empty ({path}). Add tickers first: "
+            f"finviz_scan.py watchlist add TICKER ..."
+        )
+        return
+    bars = fetch_bars(symbols)
+    results, skipped = run_watchlist_check(bars)
+    skipped += [s for s in symbols if s not in bars]
+    report, flagged = render_watchlist_check(results, sorted(set(skipped)))
+    print(report)
+
+    out_dir = (
+        Path(args.out_dir)
+        if args.out_dir
+        else default_desktop_dir() / "finviz-research"
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
+    out_path = out_dir / f"watchlist-check_{stamp}.txt"
+    out_path.write_text(report)
+    print(f"\nsaved -> {out_path}")
+
+    if flagged and not args.quiet:
+        print(f"\n{len(flagged)} flagged: {', '.join(flagged)}")
+    # Exit code, not just text: tools/finviz_watchlist_alert.ps1 (the daily
+    # scheduled-task wrapper) reads this to decide whether to pop a message,
+    # rather than parsing stdout.
+    sys.exit(2 if flagged else 0)
+
+
 def _prompt(message: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
     value = input(f"{message}{suffix}: ").strip()
@@ -315,10 +723,12 @@ def run_menu() -> None:
         print("3) Look up one ticker")
         print("4) List every filter name")
         print("5) List the option values for one filter")
-        print("6) Quit")
-        choice = _prompt("Choose", "6")
+        print("6) Manage your watchlist (add/remove/view tickers)")
+        print("7) Check your watchlist for timing signals")
+        print("8) Quit")
+        choice = _prompt("Choose", "8")
 
-        if choice in ("6", "q", "quit", ""):
+        if choice in ("8", "q", "quit", ""):
             print("Bye.")
             return
 
@@ -342,6 +752,10 @@ def run_menu() -> None:
                 for opt in get_filter_options(name):
                     print(f"  {opt}")
                 print()
+            elif choice == "6":
+                _menu_watchlist_manage()
+            elif choice == "7":
+                _menu_watchlist_check()
             else:
                 print("Not a choice on the list -- try again.\n")
         except Exception as exc:
@@ -391,12 +805,17 @@ def _menu_custom_screener() -> None:
 def _menu_maybe_save_csv(df: pd.DataFrame) -> None:
     if df is None or df.empty:
         return
-    save = _prompt("Save the full results to a CSV file? (path, or blank to skip)")
-    if save:
-        _save_csv(df, save)
-        print(f"saved -> {save}\n")
-    else:
+    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
+    suggested = default_desktop_dir() / "finviz-research" / f"screener_{stamp}.csv"
+    save = _prompt(
+        "Save the full results to a CSV file? (Enter for Desktop, or type a path, or 'n' to skip)",
+        str(suggested),
+    )
+    if save.lower() in ("n", "no", "skip"):
         print()
+        return
+    _save_csv(df, save)
+    print(f"saved -> {save}\n")
 
 
 def _menu_lookup() -> None:
@@ -405,6 +824,77 @@ def _menu_lookup() -> None:
         return
     result = fetch_lookup(ticker)
     print("\n" + render_lookup(ticker, **result) + "\n")
+    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
+    suggested = default_desktop_dir() / "finviz-research" / f"{ticker}_{stamp}.json"
+    save = _prompt(
+        "Save this to a file? (Enter for Desktop, or type a path, or 'n' to skip)",
+        str(suggested),
+    )
+    if save.lower() in ("n", "no", "skip"):
+        return
+    import json
+
+    payload = dict(result)
+    for key in ("news", "insiders"):
+        col = payload.get(key)
+        payload[key] = col.to_dict(orient="records") if col is not None else None
+    out_path = Path(save)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2, default=str))
+    print(f"saved -> {out_path}\n")
+
+
+def _menu_watchlist_manage() -> None:
+    path = Path(DEFAULT_WATCHLIST_FILE)
+    while True:
+        symbols = load_watchlist(path)
+        print(
+            f"\nWatchlist ({len(symbols)}): {', '.join(symbols) if symbols else '(empty)'}"
+        )
+        print("  a) add ticker(s)   r) remove ticker(s)   b) back to the main menu")
+        pick = _prompt("Choose", "b")
+        if pick in ("b", "back", ""):
+            return
+        if pick == "a":
+            raw = _prompt("Ticker(s) to add, space-separated, e.g. AAPL MSFT")
+            add = {s.upper() for s in raw.split() if s.strip()}
+            if add:
+                save_watchlist(path, symbols + list(add))
+        elif pick == "r":
+            raw = _prompt("Ticker(s) to remove, space-separated")
+            remove = {s.upper() for s in raw.split() if s.strip()}
+            save_watchlist(path, [s for s in symbols if s not in remove])
+        else:
+            print("Not a choice on the list.")
+
+
+def _menu_watchlist_check() -> None:
+    path = Path(DEFAULT_WATCHLIST_FILE)
+    symbols = load_watchlist(path)
+    if not symbols:
+        print("Watchlist is empty -- add tickers first (option 6).\n")
+        return
+    print(f"Checking {len(symbols)} ticker(s): {', '.join(symbols)} ...")
+    bars = fetch_bars(symbols)
+    results, skipped = run_watchlist_check(bars)
+    skipped += [s for s in symbols if s not in bars]
+    report, _flagged = render_watchlist_check(results, sorted(set(skipped)))
+    print("\n" + report)
+
+    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
+    suggested = (
+        default_desktop_dir() / "finviz-research" / f"watchlist-check_{stamp}.txt"
+    )
+    save = _prompt(
+        "Save this report? (Enter for Desktop, or type a path, or 'n' to skip)",
+        str(suggested),
+    )
+    if save.lower() in ("n", "no", "skip"):
+        return
+    out_path = Path(save)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(report)
+    print(f"saved -> {out_path}\n")
 
 
 def main(argv=None):
@@ -454,6 +944,27 @@ def main(argv=None):
 
     p = sub.add_parser("list-presets", help="print the built-in screener presets")
     p.set_defaults(func=cmd_list_presets)
+
+    p = sub.add_parser("watchlist", help="add/remove/view the tracked-ticker list")
+    p.add_argument("action", choices=["add", "remove", "list"])
+    p.add_argument("tickers", nargs="*", help="ticker symbols (not needed for 'list')")
+    p.add_argument(
+        "--file", default=DEFAULT_WATCHLIST_FILE, help="watchlist file to use"
+    )
+    p.set_defaults(func=cmd_watchlist)
+
+    p = sub.add_parser(
+        "check",
+        help="EMA/RSI/volume/52-week signals on the watchlist -- see module docstring",
+    )
+    p.add_argument(
+        "--file", default=DEFAULT_WATCHLIST_FILE, help="watchlist file to read"
+    )
+    p.add_argument("--out-dir", help="where to save the report (default: your Desktop)")
+    p.add_argument(
+        "--quiet", action="store_true", help="skip the extra 'N flagged' summary line"
+    )
+    p.set_defaults(func=cmd_check)
 
     args = ap.parse_args(argv)
     args.func(args)

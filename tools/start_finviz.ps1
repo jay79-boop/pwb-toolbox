@@ -5,9 +5,11 @@
 
 .DESCRIPTION
   Finds Python (the repo's own .venv if one exists, otherwise whatever
-  'python' resolves to on PATH), makes sure the one net-new package this
-  tool needs (finvizfinance) is installed, then runs
-  tools\finviz_scan.py menu -- a plain numbered menu, no flags to type.
+  'python' resolves to on PATH), makes sure the packages this tool needs
+  (finvizfinance, pandas, yfinance -- the watchlist "check" command reads
+  real price history via yfinance, same as crypto_scan.py/season_scan.py)
+  are installed, then runs tools\finviz_scan.py menu -- a plain numbered
+  menu, no flags to type.
 
   Deliberately does NOT install the rest of requirements.txt: this repo's
   full dependency list includes heavy, unrelated packages (backtrader,
@@ -15,6 +17,11 @@
   on. If a fuller dev setup is already in place (python -m venv .venv &&
   pip install -r requirements-dev.txt, per CLAUDE.md), this script uses it
   as-is and installs nothing extra.
+
+  Also sets FINVIZ_DESKTOP to the real Desktop folder
+  ([Environment]::GetFolderPath('Desktop'), which sees a OneDrive-redirected
+  Desktop that Python's Path.home()/"Desktop" cannot) so saved research
+  files land where you'll actually look for them.
 
   The window stays open on both success and failure -- PowerShell launched
   from a desktop shortcut closes itself the instant the script ends, and a
@@ -53,16 +60,20 @@ try {
     Write-Host "No .venv found; using system Python: $python"
   }
 
-  Write-Host 'Checking for the finvizfinance package...'
-  & $python -c 'import finvizfinance' 2>$null
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host 'Not found -- installing finvizfinance (one-time, a few seconds)...'
-    & $python -m pip install --quiet finvizfinance
+  foreach ($pkg in @('finvizfinance', 'pandas', 'yfinance')) {
+    Write-Host "Checking for the $pkg package..."
+    & $python -c "import $pkg" 2>$null
     if ($LASTEXITCODE -ne 0) {
-      throw 'pip install finvizfinance failed. Check the internet connection and re-run this script.'
+      Write-Host "Not found -- installing $pkg (one-time, a few seconds)..."
+      & $python -m pip install --quiet $pkg
+      if ($LASTEXITCODE -ne 0) {
+        throw "pip install $pkg failed. Check the internet connection and re-run this script."
+      }
+      Write-Host 'Installed.'
     }
-    Write-Host 'Installed.'
   }
+
+  $env:FINVIZ_DESKTOP = [Environment]::GetFolderPath('Desktop')
 
   Write-Host ''
   Write-Host '------------------------------------------------------------'
