@@ -52,6 +52,11 @@ spec_desk/*
 night_lab/*
 !night_lab/README.md
 
+# TradingAgents proposals (tools/trading_agents.py) - personal trade signals,
+# and this fork is public. Only the README explaining that is tracked.
+trading_agents/*
+!trading_agents/README.md
+
 # seasonality lab (tools/season_scan.py) - universe.txt names what the
 # owner watches and the report derives from it; this fork is public.
 season/*
