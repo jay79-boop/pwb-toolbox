@@ -4,7 +4,11 @@
 Four things:
 
     screener    filter the whole market down to a ticker list + key stats
-                (Finviz's free public site, not Elite)
+                (Finviz's free public site, not Elite). A filter match is
+                not a scored setup -- add --vet (or --add-flagged) to run
+                the same timing signals `check` runs on the watchlist
+                against these hits before trusting any of them, or say yes
+                when `menu` asks the same thing.
     lookup      one ticker's fundamentals, recent news, and insider trades
                 (also Finviz)
     watchlist   your own tracked-ticker list -- add/remove/view
@@ -13,7 +17,10 @@ Four things:
                 see the comment above watchlist_signals() for what each
                 signal means and where it's from). Read that comment before
                 trusting any of it: nothing here finds "perfect timing",
-                it flags candidates worth a closer look.
+                it flags candidates worth a closer look. `vet_candidates()`
+                runs the identical pipeline against a screener's ticker
+                list instead of the watchlist -- what --vet/--add-flagged
+                and the menu's vetting step call.
 
 `screener`/`lookup` fetching is done by the `finvizfinance` package
 (BeautifulSoup + requests under the hood, MIT licensed, no relation to any
@@ -43,6 +50,7 @@ Examples::
     python tools/finviz_scan.py list-presets
     python tools/finviz_scan.py screener --preset large_cap_uptrend --top 20
     python tools/finviz_scan.py screener --filter "Sector=Technology" --filter "P/E=Under 20"
+    python tools/finviz_scan.py screener --preset large_cap_uptrend --add-flagged
     python tools/finviz_scan.py lookup AAPL
     python tools/finviz_scan.py list-filters
     python tools/finviz_scan.py filter-options "Market Cap."
@@ -201,6 +209,24 @@ def render_screener(df: pd.DataFrame | None, top: int, limit: int | None = None)
             f"\n... {len(df) - top} more not shown (--top to see more, --out to save all)"
         )
     return "\n".join(lines)
+
+
+def screener_tickers(df: pd.DataFrame | None, limit: int | None = None) -> list[str]:
+    """Ticker symbols from a screener result, in the order Finviz returned
+    them, deduped, optionally capped. What `--vet`/`--add-flagged` and the
+    menu's vetting step feed into `vet_candidates()` -- a screener match is
+    only a filter hit, not a scored setup; vetting is what decides which of
+    these are actually worth tracking today."""
+    if df is None or df.empty or "Ticker" not in df.columns:
+        return []
+    out: list[str] = []
+    for raw in df["Ticker"]:
+        sym = str(raw).strip().upper()
+        if sym and sym not in out:
+            out.append(sym)
+        if limit is not None and len(out) >= limit:
+            break
+    return out
 
 
 def _one_line(text) -> str:
@@ -390,6 +416,7 @@ WATCHLIST_MIN_BARS = (
 )
 NEAR_52W_PCT = 0.05  # within 5% of the 52-week extreme counts as "near"
 EMA80_TOUCH_PCT = 0.015  # within 1.5% of the 80-EMA counts as a touch
+SCREENER_VET_LIMIT = 25  # each vetted ticker is its own yfinance fetch
 
 
 def ema(series: pd.Series, span: int) -> pd.Series:
@@ -607,17 +634,22 @@ def run_watchlist_check(
 
 
 def render_watchlist_check(
-    results: dict[str, dict], skipped: list[str], no_data: list[str] = ()
+    results: dict[str, dict],
+    skipped: list[str],
+    no_data: list[str] = (),
+    heading: str = "watchlist check",
 ) -> tuple[str, list[str]]:
     """Returns (report text, symbols with a 2+ signal confluence -- the
-    ones worth an actual look, not the whole watchlist)."""
+    ones worth an actual look, not the whole watchlist). `heading` only
+    changes the title line -- `vet_candidates()` passes a different one so a
+    screener-hits report doesn't read as if it came from the watchlist."""
     flagged = [
         sym
         for sym, s in results.items()
         if max(s["confluence"]["bullish_count"], s["confluence"]["bearish_count"]) >= 2
     ]
     lines = [
-        "Finviz Research -- watchlist check",
+        f"Finviz Research -- {heading}",
         "No indicator finds perfect timing. This flags candidates for your own",
         "look, nothing more -- see the comment above watchlist_signals() in",
         "tools/finviz_scan.py for what each signal is and where it's from.",
@@ -675,6 +707,25 @@ def check_watchlist(symbols: list[str]) -> tuple[str, list[str]]:
     return render_watchlist_check(results, sorted(set(skipped)), sorted(set(no_data)))
 
 
+def vet_candidates(symbols: list[str]) -> tuple[str, list[str]]:
+    """The other caller of the same signal pipeline as `check_watchlist` --
+    for a screener's ticker list rather than the tracked watchlist. A
+    screener match only means Finviz's filters matched it today; this is
+    what actually vets whether it looks like a live setup, using the exact
+    same EMA/RSI/MA/52-week confluence logic (see the comment above
+    `watchlist_signals()`). Returns (report text, flagged symbols -- 2+
+    signal confluence, the ones `--add-flagged`/the menu offer to save)."""
+    bars = fetch_bars(symbols)
+    results, skipped = run_watchlist_check(bars)
+    no_data = [s for s in symbols if s not in bars]
+    return render_watchlist_check(
+        results,
+        sorted(set(skipped)),
+        sorted(set(no_data)),
+        heading="candidate vetting",
+    )
+
+
 def _stamp() -> str:
     # Seconds included: two runs inside one minute used to overwrite each
     # other's saved report.
@@ -724,6 +775,27 @@ def cmd_screener(args):
     if args.out and df is not None and not df.empty:
         _save_csv(df, args.out)
         print(f"\nsaved {len(df)} row(s) -> {args.out}")
+
+    if not (args.vet or args.add_flagged):
+        return
+    symbols = screener_tickers(df, limit=args.vet_limit)
+    if not symbols:
+        print("\nNothing to vet -- no tickers matched.")
+        return
+    print(f"\nVetting {len(symbols)} ticker(s) against timing signals ...")
+    report, flagged = vet_candidates(symbols)
+    print("\n" + report)
+    if not args.add_flagged:
+        return
+    path = Path(args.file)
+    if not flagged:
+        print("\nnothing flagged -- watchlist unchanged")
+        return
+    save_watchlist(path, load_watchlist(path) + flagged)
+    print(
+        f"\nadded {len(flagged)} flagged ticker(s) to the watchlist ({path}): "
+        f"{', '.join(flagged)}"
+    )
 
 
 def cmd_lookup(args):
@@ -883,6 +955,7 @@ def _menu_preset_screener() -> None:
     df = fetch_screener(PRESETS[preset], limit=limit)
     print("\n" + render_screener(df, top, limit=limit) + "\n")
     _menu_maybe_save_csv(df)
+    _menu_maybe_vet_and_track(df)
 
 
 def _menu_custom_screener() -> None:
@@ -907,6 +980,7 @@ def _menu_custom_screener() -> None:
     df = fetch_screener(filters, limit=limit)
     print("\n" + render_screener(df, top, limit=limit) + "\n")
     _menu_maybe_save_csv(df)
+    _menu_maybe_vet_and_track(df)
 
 
 def _menu_maybe_save_csv(df: pd.DataFrame) -> None:
@@ -922,6 +996,39 @@ def _menu_maybe_save_csv(df: pd.DataFrame) -> None:
         return
     _save_csv(df, save)
     print(f"saved -> {save}\n")
+
+
+def _menu_maybe_vet_and_track(df: pd.DataFrame) -> None:
+    """The step the screener alone can't do: a filter match is not a scored
+    setup. Offers to run the same EMA/RSI/MA/52-week vetting `check` runs on
+    the watchlist against these screener hits instead, then offers to add
+    whatever clears 2+ signal confluence -- not everything shown -- to the
+    watchlist."""
+    symbols = screener_tickers(df, limit=SCREENER_VET_LIMIT)
+    if not symbols:
+        return
+    do_vet = _prompt(
+        f"Vet these {len(symbols)} ticker(s) against timing signals "
+        "(EMA/RSI/MA/52-week, same as 'check')? (y/n)",
+        "y",
+    )
+    if do_vet.lower() not in ("y", "yes"):
+        return
+    print(f"\nChecking {len(symbols)} ticker(s) ...")
+    report, flagged = vet_candidates(symbols)
+    print("\n" + report)
+    if not flagged:
+        print("Nothing flagged -- none of these cleared 2+ signal confluence today.\n")
+        return
+    add = _prompt(
+        f"Add the {len(flagged)} flagged ticker(s) to your watchlist "
+        f"({', '.join(flagged)})? (y/n)",
+        "y",
+    )
+    if add.lower() in ("y", "yes"):
+        path = Path(DEFAULT_WATCHLIST_FILE)
+        save_watchlist(path, load_watchlist(path) + flagged)
+        print(f"added -> {path}\n")
 
 
 def _menu_lookup() -> None:
@@ -1031,6 +1138,31 @@ def main(argv=None):
     )
     p.add_argument("--top", type=int, default=20, help="rows to print to the console")
     p.add_argument("--out", help="also save every fetched row to this CSV path")
+    p.add_argument(
+        "--vet",
+        action="store_true",
+        help=(
+            "after screening, run the same EMA/RSI/MA/52-week vetting as "
+            "'check' on the matched tickers and report which look like a "
+            "live setup, not just a filter match"
+        ),
+    )
+    p.add_argument(
+        "--add-flagged",
+        action="store_true",
+        help="like --vet, and also add the flagged tickers to the watchlist",
+    )
+    p.add_argument(
+        "--vet-limit",
+        type=int,
+        default=SCREENER_VET_LIMIT,
+        help="max tickers to vet -- each is its own yfinance fetch",
+    )
+    p.add_argument(
+        "--file",
+        default=DEFAULT_WATCHLIST_FILE,
+        help="watchlist file --add-flagged writes to",
+    )
     p.set_defaults(func=cmd_screener)
 
     p = sub.add_parser("lookup", help="one ticker: fundamentals, news, insider trades")

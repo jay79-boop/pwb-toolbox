@@ -23,6 +23,7 @@ from tools.finviz_scan import (
     rsi,
     run_watchlist_check,
     save_watchlist,
+    vet_candidates,
     watchlist_signals,
 )
 
@@ -320,6 +321,62 @@ def test_check_watchlist_reports_a_bad_ticker_as_no_data_not_thin_history(
     assert "skipped (need 100+ bars of history): THIN" in report
     assert "no price data (check the spelling, or it may be delisted): ZZZZQQ" in report
     assert "ZZZZQQ" not in report.split("no price data")[0]
+
+
+# ---------------------------------------------------------------------------
+# vet_candidates -- same signal pipeline, fed a screener's ticker list
+# instead of the watchlist. The bug this closes: the screener would list
+# matches with nothing telling you which ones were actually worth tracking,
+# and the only way to get one onto the watchlist was retyping it by hand.
+# ---------------------------------------------------------------------------
+
+
+def test_vet_candidates_flags_a_planted_confluence_and_acquits_a_flat_one(monkeypatch):
+    def fake_fetch_bars(symbols):
+        return {
+            # 259 flat days then one sharp jump: EMA20/50 cross bullish and
+            # the 50/200-SMA golden-cross, a real 2-signal confluence -- not
+            # just noise that happens to hit the threshold once.
+            "HOT": make_bars([100.0] * 259 + [140.0]),
+            # Flat the whole way: nothing should fire.
+            "COLD": make_bars([100.0] * 260),
+        }
+
+    monkeypatch.setattr(finviz_scan, "fetch_bars", fake_fetch_bars)
+    report, flagged = vet_candidates(["HOT", "COLD"])
+    assert flagged == ["HOT"]
+    assert "COLD" in report
+    assert "COLD  <-- FLAGGED" not in report
+
+
+def test_vet_candidates_report_reads_as_candidate_vetting_not_watchlist_check(
+    monkeypatch,
+):
+    # The one thing that must differ from check_watchlist's report: nothing
+    # here is the tracked watchlist, and the heading should say so rather
+    # than reusing check's wording verbatim.
+    def fake_fetch_bars(symbols):
+        return {"AAPL": make_bars([100.0] * 260)}
+
+    monkeypatch.setattr(finviz_scan, "fetch_bars", fake_fetch_bars)
+    report, _flagged = vet_candidates(["AAPL"])
+    assert "candidate vetting" in report
+    assert "watchlist check" not in report
+
+
+def test_vet_candidates_same_no_data_and_thin_history_handling_as_check(monkeypatch):
+    def fake_fetch_bars(symbols):
+        return {
+            "AAPL": make_bars(
+                flat_then_move(days=260, flat=100.0, drift=0.04, n_drift=1)
+            ),
+            "THIN": make_bars([100.0] * 10),
+        }
+
+    monkeypatch.setattr(finviz_scan, "fetch_bars", fake_fetch_bars)
+    report, _flagged = vet_candidates(["AAPL", "THIN", "ZZZZQQ"])
+    assert "skipped (need 100+ bars of history): THIN" in report
+    assert "no price data (check the spelling, or it may be delisted): ZZZZQQ" in report
 
 
 def test_default_watchlist_is_anchored_to_the_repo_not_the_current_folder():

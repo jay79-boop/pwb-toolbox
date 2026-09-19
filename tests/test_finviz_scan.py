@@ -7,17 +7,24 @@ and option value finviz actually has -- that's the failure mode a hand-typed
 preset table would otherwise only surface live, on the owner's machine.
 """
 
+import argparse
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+import tools.finviz_scan as finviz_scan
 from tools.finviz_scan import (
     LOOKUP_ADDONS,
     PRESETS,
+    cmd_screener,
     human_number,
+    load_watchlist,
     parse_filter_kv,
     render_lookup,
     render_screener,
     run_addons,
+    screener_tickers,
 )
 
 
@@ -201,6 +208,148 @@ def test_render_lookup_reports_errors_without_hiding_the_rest():
     assert "Apple Inc" in out
     assert "could not load news: page layout changed" in out
     assert "could not load insider trades: no insider table on this ticker" in out
+
+
+def _bars(closes):
+    """Minimal daily bars for vet_candidates' fetch_bars mock -- a smaller,
+    local twin of test_finviz_watchlist.make_bars kept separate rather than
+    cross-imported, same reasoning as fetch_bars' own module comment."""
+    n = len(closes)
+    return pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c * 1.005 for c in closes],
+            "low": [c * 0.995 for c in closes],
+            "close": closes,
+            "volume": [1_000_000.0] * n,
+        }
+    )
+
+
+def _screener_args(tmp_path, **overrides):
+    defaults = dict(
+        preset=None,
+        filter=None,
+        order="Ticker",
+        desc=False,
+        limit=100,
+        top=20,
+        out=None,
+        vet=False,
+        add_flagged=False,
+        vet_limit=25,
+        file=str(tmp_path / "watchlist.txt"),
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# screener_tickers -- what --vet/--add-flagged and the menu's vetting step
+# feed to vet_candidates()
+# ---------------------------------------------------------------------------
+
+
+def test_screener_tickers_dedupes_uppercases_and_preserves_order():
+    df = pd.DataFrame({"Ticker": ["aapl", "MSFT", "AAPL", "nvda"]})
+    assert screener_tickers(df) == ["AAPL", "MSFT", "NVDA"]
+
+
+def test_screener_tickers_respects_limit():
+    df = pd.DataFrame({"Ticker": [f"T{i}" for i in range(10)]})
+    assert screener_tickers(df, limit=3) == ["T0", "T1", "T2"]
+
+
+@pytest.mark.parametrize("df", [None, pd.DataFrame(), pd.DataFrame({"Price": [1.0]})])
+def test_screener_tickers_empty_missing_or_no_ticker_column(df):
+    assert screener_tickers(df) == []
+
+
+# ---------------------------------------------------------------------------
+# cmd_screener --vet / --add-flagged -- the missing link the screener alone
+# never had: nothing vetted a match, and nothing carried it to the
+# watchlist. Both are exercised through cmd_screener itself, not just the
+# pure pieces, so a wiring mistake between them would actually fail here.
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_screener_vet_reports_but_does_not_touch_the_watchlist(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_screener",
+        lambda *a, **k: pd.DataFrame({"Ticker": ["HOT", "COLD"]}),
+    )
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_bars",
+        lambda symbols: {
+            "HOT": _bars([100.0] * 259 + [140.0]),  # sharp move -- something fires
+            "COLD": _bars([100.0] * 260),  # flat -- nothing should fire
+        },
+    )
+    args = _screener_args(tmp_path, vet=True)
+    cmd_screener(args)
+    out = capsys.readouterr().out
+    assert "candidate vetting" in out
+    assert not Path(args.file).exists()  # --vet alone never writes
+
+
+def test_cmd_screener_add_flagged_writes_only_the_flagged_tickers(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_screener",
+        lambda *a, **k: pd.DataFrame({"Ticker": ["HOT", "COLD"]}),
+    )
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_bars",
+        lambda symbols: {
+            "HOT": _bars([100.0] * 259 + [140.0]),
+            "COLD": _bars([100.0] * 260),
+        },
+    )
+    args = _screener_args(tmp_path, add_flagged=True)
+    cmd_screener(args)
+    out = capsys.readouterr().out
+    assert "added 1 flagged ticker(s)" in out
+    saved = load_watchlist(Path(args.file))
+    assert saved == ["HOT"]
+
+
+def test_cmd_screener_add_flagged_leaves_watchlist_unchanged_when_nothing_flags(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_screener",
+        lambda *a, **k: pd.DataFrame({"Ticker": ["COLD"]}),
+    )
+    monkeypatch.setattr(
+        finviz_scan, "fetch_bars", lambda symbols: {"COLD": _bars([100.0] * 260)}
+    )
+    args = _screener_args(tmp_path, add_flagged=True)
+    cmd_screener(args)
+    out = capsys.readouterr().out
+    assert "nothing flagged -- watchlist unchanged" in out
+    assert not Path(args.file).exists()
+
+
+def test_cmd_screener_vet_with_no_matches_skips_fetching_bars(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(finviz_scan, "fetch_screener", lambda *a, **k: pd.DataFrame())
+
+    def boom(symbols):
+        raise AssertionError("fetch_bars should not be called with nothing to vet")
+
+    monkeypatch.setattr(finviz_scan, "fetch_bars", boom)
+    args = _screener_args(tmp_path, vet=True)
+    cmd_screener(args)
+    assert "Nothing to vet" in capsys.readouterr().out
 
 
 def test_presets_use_real_finviz_filter_names_and_options():
