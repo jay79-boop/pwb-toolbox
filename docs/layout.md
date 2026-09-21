@@ -175,7 +175,13 @@ one-off with no local runtime dependency.
   Scheduled Task that runs `check` daily and pops a message only when
   something is flagged — Interactive logon (a popup needs a desktop to draw
   on, same tradeoff as `desk_agent`'s `alerts` job), and pops a warning when
-  the check itself fails rather than only logging it. `LOOKUP_ADDONS` is the
+  the check itself fails rather than only logging it. A screener match is a
+  filter hit, not a scored setup: `screener --vet` (or `--add-flagged`) runs
+  `vet_candidates()` — the identical EMA/RSI/MA/52-week pipeline `check`
+  runs on the watchlist — against the matched tickers instead, and
+  `--add-flagged` saves only the ones that clear 2+ signal confluence to the
+  watchlist; the interactive `menu` asks the same y/n after every screener
+  run rather than requiring a flag. `LOOKUP_ADDONS` is the
   slot for extra research sources on `lookup` (Perplexity or similar, down
   the road): empty by default, one function per source, each isolated so a
   failing source cannot blank the Finviz sections. An AI-backed source spends
