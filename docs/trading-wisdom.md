@@ -158,6 +158,39 @@ and why:
   (UTC midnight here), not a market fact; an edge that survives only one
   anchor choice is an artifact.
 
+## Chart-setup screening: what `finviz_scan.py`'s presets add
+
+`breakout_squeeze`, `breakout_momentum` and `megacap_short_exhaustion`
+(2026-09-22) are three named starting points for "what's about to move" —
+none of them a new claim of edge, just new combinations of signals already
+in this file or the scan's own confluence pipeline:
+
+- **`breakout_momentum` and `megacap_short_exhaustion` add no new signal
+  math.** They narrow the Finviz universe (trend filters, RSI, recent
+  performance, market cap), then vet through the same EMA20/50 cross,
+  EMA80 bounce/reject, RSI extreme, 50/200 golden/death-cross confluence
+  `watchlist_signals()`/`vet_candidates()` already run on the watchlist —
+  see the comment above `watchlist_signals()` in `tools/finviz_scan.py` for
+  what evidence backs each of those and what doesn't (short answer: EMA/MA
+  crosses and RSI extremes are commonly-cited technical patterns, not
+  peer-reviewed like the crypto momentum papers above; the module docstring
+  says so on every run).
+- **`breakout_squeeze` adds one new signal: `squeeze_signal()`,** a
+  Bollinger Band width (20-period, ±2σ) ranked against its own trailing 120
+  days — true when today's band is in the tightest 20% of that window. This
+  is the standard "coiling before it moves" read (John Bollinger,
+  *Bollinger on Bollinger Bands*, 2001) and the volatility-contraction leg
+  of Mark Minervini's VCP setup (*Trade Like a Stock Market Wizard*, 2013).
+  **Practitioner lore, not peer-reviewed evidence** — unlike the crypto
+  momentum papers above, no published out-of-sample test is cited here for
+  it, and it is direction-agnostic: a tight range says a bigger move is
+  coming, nothing about which way. The Finviz preset filters for tickers
+  near their 52-week high specifically to bias the *candidate list* toward
+  an upside break; the squeeze reading itself would fire identically on a
+  tight range near a low. Treat a flagged squeeze exactly like every other
+  signal in this pipeline — a candidate for your own look, never a trade
+  signal on its own.
+
 ## Iron condors: venue, construction, and the honest caveat
 
 **Venue: SPX — or XSP at small size.** Not SPY, not single names, not

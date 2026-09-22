@@ -14,6 +14,7 @@ from tools.finviz_scan import (
     DEFAULT_WATCHLIST_FILE,
     WATCHLIST_MIN_BARS,
     _stamp,
+    bollinger_width_pct,
     check_watchlist,
     classify_confluence,
     ema,
@@ -23,6 +24,7 @@ from tools.finviz_scan import (
     rsi,
     run_watchlist_check,
     save_watchlist,
+    squeeze_signal,
     vet_candidates,
     watchlist_signals,
 )
@@ -189,6 +191,56 @@ def test_ma_cross_none_without_enough_history_for_sma200():
 
 
 # ---------------------------------------------------------------------------
+# bollinger_width_pct / squeeze_signal -- the breakout-squeeze read
+# ---------------------------------------------------------------------------
+
+
+def _sawtooth(n, center=100.0, amplitude=10.0):
+    return [center + (amplitude if i % 2 == 0 else -amplitude) for i in range(n)]
+
+
+def test_bollinger_width_pct_zero_on_a_flat_series():
+    assert bollinger_width_pct(pd.Series([100.0] * 30)).iloc[-1] == 0
+
+
+def test_bollinger_width_pct_positive_when_price_swings():
+    s = pd.Series(_sawtooth(30))
+    assert bollinger_width_pct(s).iloc[-1] > 0
+
+
+def test_squeeze_signal_not_enough_history_returns_false_not_nan_crash():
+    result = squeeze_signal(pd.Series([100.0] * 50))
+    assert result["squeeze"] is False
+    assert result["bb_width_pct"] != result["bb_width_pct"]  # NaN
+    assert result["bb_width_rank"] != result["bb_width_rank"]  # NaN
+
+
+def test_squeeze_signal_true_when_the_range_has_contracted():
+    # wide swings for a while, then dead flat right up to today -- today's
+    # band is the tightest in the whole trailing window.
+    close = pd.Series(_sawtooth(150) + [100.0] * 110)
+    result = squeeze_signal(close)
+    assert result["squeeze"] is True
+    assert result["bb_width_rank"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_squeeze_signal_false_when_todays_range_is_the_widest():
+    # flat for a long time, then swinging hard right up to today -- the
+    # opposite of a squeeze, not a candidate for this preset.
+    close = pd.Series([100.0] * 160 + _sawtooth(20))
+    result = squeeze_signal(close)
+    assert result["squeeze"] is False
+    assert result["bb_width_rank"] >= 0.9
+
+
+def test_watchlist_signals_wires_up_the_squeeze_fields():
+    close = _sawtooth(150) + [100.0] * 110
+    signals = watchlist_signals(make_bars(close))
+    assert signals["squeeze"] is True
+    assert signals["bb_width_rank"] == pytest.approx(0.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
 # classify_confluence
 # ---------------------------------------------------------------------------
 
@@ -295,6 +347,75 @@ def test_render_watchlist_check_flags_only_strong_confluence():
     assert "WEAK  <-- FLAGGED" not in report
     assert "no indicator finds perfect timing" in report.lower()
     assert "DEAD" in report  # skipped tickers still get reported
+
+
+def test_render_watchlist_check_flags_a_squeeze_with_no_confluence():
+    # a coiling range that hasn't crossed any EMA/RSI/MA threshold yet --
+    # exactly the case classify_confluence alone would miss, which is why
+    # squeeze gets its own entry in the flagged criteria.
+    results = {
+        "COIL": {
+            "last": 100.0,
+            "ema20": 100.0,
+            "ema50": 100.0,
+            "ema80": 100.0,
+            "ema_cross": "none",
+            "ema80_react": "none",
+            "rsi14": 50.0,
+            "rsi_signal": "neutral",
+            "ma_cross": "none",
+            "near_52w": "none",
+            "from_52w_high": -0.02,
+            "from_52w_low": 0.3,
+            "volume_surge": 0.1,
+            "bb_width_pct": 0.01,
+            "bb_width_rank": 0.05,
+            "squeeze": True,
+            "macd_hist": 0.0,
+            "bars": 260,
+            "confluence": {
+                "bullish_count": 0,
+                "bearish_count": 0,
+                "direction": "mixed",
+            },
+        },
+    }
+    report, flagged = render_watchlist_check(results, skipped=[])
+    assert flagged == ["COIL"]
+    assert "COIL  <-- FLAGGED" in report
+    assert "Bollinger squeeze: YES" in report
+
+
+def test_render_watchlist_check_squeeze_field_is_optional_for_older_callers():
+    # the pre-squeeze dict shape (test_render_watchlist_check_flags_only_
+    # strong_confluence above) must still render without KeyError.
+    results = {
+        "OLD": {
+            "last": 100.0,
+            "ema20": 100.0,
+            "ema50": 100.0,
+            "ema80": 100.0,
+            "ema_cross": "none",
+            "ema80_react": "none",
+            "rsi14": 50.0,
+            "rsi_signal": "neutral",
+            "ma_cross": "none",
+            "near_52w": "none",
+            "from_52w_high": -0.02,
+            "from_52w_low": 0.3,
+            "volume_surge": 0.1,
+            "macd_hist": 0.0,
+            "bars": 260,
+            "confluence": {
+                "bullish_count": 0,
+                "bearish_count": 0,
+                "direction": "mixed",
+            },
+        },
+    }
+    report, flagged = render_watchlist_check(results, skipped=[])
+    assert flagged == []
+    assert "n/a (not enough history)" in report
 
 
 def test_render_watchlist_check_handles_empty_results():

@@ -51,6 +51,9 @@ Examples::
     python tools/finviz_scan.py screener --preset large_cap_uptrend --top 20
     python tools/finviz_scan.py screener --filter "Sector=Technology" --filter "P/E=Under 20"
     python tools/finviz_scan.py screener --preset large_cap_uptrend --add-flagged
+    python tools/finviz_scan.py screener --preset breakout_squeeze --vet
+    python tools/finviz_scan.py screener --preset breakout_momentum --vet
+    python tools/finviz_scan.py screener --preset megacap_short_exhaustion --vet
     python tools/finviz_scan.py lookup AAPL
     python tools/finviz_scan.py list-filters
     python tools/finviz_scan.py filter-options "Market Cap."
@@ -103,6 +106,35 @@ PRESETS = {
     "unusual_volume": {
         "Relative Volume": "Over 2",
         "Average Volume": "Over 500K",
+    },
+    # "About to explode upside", split into the two setups requested
+    # 2026-09-22 -- see the note above squeeze_signal() for why they're kept
+    # separate rather than merged into one preset.
+    "breakout_squeeze": {
+        # Finviz has no "tight range" filter, so this only narrows to liquid
+        # names sitting near their highs; the actual contraction read is
+        # squeeze_signal() on the vetted bars (--vet / the menu's vet step).
+        "52-Week High/Low": "0-10% below High",
+        "Average Volume": "Over 500K",
+    },
+    "breakout_momentum": {
+        # Already trending, not coiling: confirmed uptrend + a strong recent
+        # quarter + volume backing it up. Vets through the same EMA/RSI/MA
+        # confluence as every other preset here.
+        "200-Day Simple Moving Average": "Price above SMA200",
+        "50-Day Simple Moving Average": "Price above SMA50",
+        "Performance": "Quarter Up",
+        "Relative Volume": "Over 1.5",
+    },
+    "megacap_short_exhaustion": {
+        # "Big tech, liquid enough to short": mega-cap, extended well above
+        # its own trend, RSI already overbought. Vetting then looks for the
+        # bearish side of the same confluence (EMA80 reject, death cross
+        # starting) on top of this filter, not a separate signal.
+        "Market Cap.": "Mega ($200bln and more)",
+        "200-Day Simple Moving Average": "Price above SMA200",
+        "RSI (14)": "Overbought (70)",
+        "Performance": "Month +10%",
     },
 }
 
@@ -401,6 +433,17 @@ def fetch_lookup(ticker: str) -> dict:
 #                   crypto_scan.coin_signals. Context only, not scored.
 #     macd          MACD(12,26,9) histogram sign, cited repeatedly as the
 #                   standard confirmation for an EMA cross. Context only.
+#     squeeze       today's 20-period Bollinger Band width ranked against its
+#                   own trailing SQUEEZE_LOOKBACK days -- true when it's in
+#                   the tightest SQUEEZE_PERCENTILE of that window (Bollinger,
+#                   *Bollinger on Bollinger Bands*, 2001; the same "coil
+#                   before it moves" read behind Minervini's VCP, *Trade Like
+#                   a Stock Market Wizard*, 2013). Practitioner lore, not
+#                   peer-reviewed like the crypto momentum papers in
+#                   docs/trading-wisdom.md, and it says nothing about which
+#                   way the expansion breaks -- a squeeze near a 52-week LOW
+#                   is not a bullish read. Context only, not folded into the
+#                   confluence count below, same reasoning as near_52w.
 #
 # `classify_confluence` counts how many of the four *directional* signals
 # (ema_cross, ema80_react, rsi extreme, ma_cross) agree on this bar. A
@@ -417,6 +460,10 @@ WATCHLIST_MIN_BARS = (
 NEAR_52W_PCT = 0.05  # within 5% of the 52-week extreme counts as "near"
 EMA80_TOUCH_PCT = 0.015  # within 1.5% of the 80-EMA counts as a touch
 SCREENER_VET_LIMIT = 25  # each vetted ticker is its own yfinance fetch
+BB_PERIOD = 20  # Bollinger's own default
+BB_NUM_STD = 2.0  # Bollinger's own default
+SQUEEZE_LOOKBACK = 120  # trailing window today's band width is ranked against
+SQUEEZE_PERCENTILE = 0.20  # tightest 20% of that window counts as a squeeze
 
 
 def ema(series: pd.Series, span: int) -> pd.Series:
@@ -432,6 +479,47 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
+
+def bollinger_width_pct(
+    close: pd.Series, period: int = BB_PERIOD, num_std: float = BB_NUM_STD
+) -> pd.Series:
+    """Bollinger Band width as a fraction of the middle band: (upper -
+    lower) / middle. Small = price coiling in a tight range."""
+    mid = close.rolling(period).mean()
+    std = close.rolling(period).std(ddof=0)
+    return (2 * num_std * std) / mid
+
+
+def squeeze_signal(
+    close: pd.Series,
+    lookback: int = SQUEEZE_LOOKBACK,
+    percentile: float = SQUEEZE_PERCENTILE,
+) -> dict:
+    """Is today's Bollinger width unusually tight versus its own trailing
+    history? `bb_width_rank` is the fraction of the lookback window with a
+    *wider* band than today (0 = the tightest bar in the window). Returns
+    squeeze=False with NaN width/rank -- never raises -- when there isn't
+    enough history yet, same degrade-gracefully rule as near_52w. Also
+    False when the whole lookback window never moved at all (width stuck
+    at exactly 0 throughout): a flatlined ticker isn't "coiling", there's
+    no real range there to contract, and ranking a constant series is
+    undefined anyway."""
+    width = bollinger_width_pct(close)
+    tail = width.iloc[-lookback:]
+    if len(tail) < lookback or tail.isna().any() or tail.max() <= 0:
+        return {
+            "bb_width_pct": float("nan"),
+            "bb_width_rank": float("nan"),
+            "squeeze": False,
+        }
+    current = float(tail.iloc[-1])
+    rank = float((tail < current).mean())
+    return {
+        "bb_width_pct": current,
+        "bb_width_rank": rank,
+        "squeeze": rank <= percentile,
+    }
 
 
 def macd_histogram(close: pd.Series) -> pd.Series:
@@ -520,6 +608,8 @@ def watchlist_signals(bars: pd.DataFrame) -> dict:
         float(volume.iloc[-1]) / vol_avg20 - 1 if vol_avg20 > 0 else float("nan")
     )
 
+    squeeze = squeeze_signal(close)
+
     return {
         "last": last,
         "ema20": float(ema20.iloc[-1]),
@@ -534,6 +624,9 @@ def watchlist_signals(bars: pd.DataFrame) -> dict:
         "from_52w_high": from_high,
         "from_52w_low": from_low,
         "volume_surge": volume_surge,
+        "bb_width_pct": squeeze["bb_width_pct"],
+        "bb_width_rank": squeeze["bb_width_rank"],
+        "squeeze": squeeze["squeeze"],
         "macd_hist": float(hist.iloc[-1]),
         "bars": n,
     }
@@ -633,20 +726,34 @@ def run_watchlist_check(
     return results, skipped
 
 
+def _format_squeeze(s: dict) -> str:
+    """Handles the hand-built dicts in older tests/callers that predate the
+    squeeze fields -- reads as "n/a" rather than raising a KeyError."""
+    rank = s.get("bb_width_rank")
+    if rank is None or rank != rank:  # NaN or missing
+        return "n/a (not enough history)"
+    tag = "YES" if s.get("squeeze") else "no"
+    return f"{tag} (width rank {rank:.0%} of trailing {SQUEEZE_LOOKBACK}d, tighter = lower)"
+
+
 def render_watchlist_check(
     results: dict[str, dict],
     skipped: list[str],
     no_data: list[str] = (),
     heading: str = "watchlist check",
 ) -> tuple[str, list[str]]:
-    """Returns (report text, symbols with a 2+ signal confluence -- the
-    ones worth an actual look, not the whole watchlist). `heading` only
-    changes the title line -- `vet_candidates()` passes a different one so a
-    screener-hits report doesn't read as if it came from the watchlist."""
+    """Returns (report text, symbols worth an actual look, not the whole
+    watchlist) -- flagged on a 2+ signal confluence *or* a Bollinger squeeze
+    (see squeeze_signal()), since a coiling range is its own setup and won't
+    show up as EMA/RSI/MA confluence until after it's already broken.
+    `heading` only changes the title line -- `vet_candidates()` passes a
+    different one so a screener-hits report doesn't read as if it came from
+    the watchlist."""
     flagged = [
         sym
         for sym, s in results.items()
         if max(s["confluence"]["bullish_count"], s["confluence"]["bearish_count"]) >= 2
+        or s.get("squeeze", False)
     ]
     lines = [
         f"Finviz Research -- {heading}",
@@ -684,6 +791,7 @@ def render_watchlist_check(
             f"  50/200 SMA cross: {s['ma_cross']:<6}  52w: {s['near_52w']:<4} "
             f"({s['from_52w_high']:+.1%} from high, {s['from_52w_low']:+.1%} from low)",
             f"  volume vs 20d avg: {vol}   MACD(12,26,9) hist: {s['macd_hist']:+.3f}",
+            f"  Bollinger squeeze: {_format_squeeze(s)}",
             "",
         ]
     if skipped:

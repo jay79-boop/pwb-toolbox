@@ -161,27 +161,40 @@ one-off with no local runtime dependency.
   and same cloud-blocked rule as `crypto_scan.py`/`season_scan.py`, not
   Finviz — it has no historical-OHLCV endpoint) and flags EMA20/50 crosses,
   80-EMA bounce/reject, RSI extremes, 50/200-SMA golden/death crosses,
-  52-week proximity and volume surges. Explicitly does not claim to find
+  52-week proximity, volume surges, and (2026-09-22) a Bollinger-width
+  squeeze — today's 20-period band ranked against its own trailing 120 days,
+  true when it's in the tightest 20%. Explicitly does not claim to find
   "perfect timing" — see the comment above `watchlist_signals()` for what
-  each signal is, where it's sourced from, and why 52-week/volume/MACD are
-  reported as context rather than scored. Saved research (screener CSVs,
-  lookups, watchlist checks) defaults to the owner's Desktop, not this repo
-  (`default_desktop_dir()`, reading `FINVIZ_DESKTOP` as set by
-  `start_finviz.ps1` from `[Environment]::GetFolderPath('Desktop')`, which
-  sees a OneDrive-redirected Desktop that Python alone cannot). The signal
-  math is pure and tested on synthetic price series
-  (`tests/test_finviz_watchlist.py`). `tools/install_finviz_watchlist_task.ps1`
-  + `tools/finviz_watchlist_alert.ps1` optionally register a Windows
-  Scheduled Task that runs `check` daily and pops a message only when
-  something is flagged — Interactive logon (a popup needs a desktop to draw
-  on, same tradeoff as `desk_agent`'s `alerts` job), and pops a warning when
-  the check itself fails rather than only logging it. A screener match is a
-  filter hit, not a scored setup: `screener --vet` (or `--add-flagged`) runs
-  `vet_candidates()` — the identical EMA/RSI/MA/52-week pipeline `check`
-  runs on the watchlist — against the matched tickers instead, and
-  `--add-flagged` saves only the ones that clear 2+ signal confluence to the
+  each signal is, where it's sourced from, and why 52-week/volume/MACD/
+  squeeze are reported as context rather than folded into the EMA/RSI/MA
+  confluence count (squeeze is direction-agnostic on its own). Saved
+  research (screener CSVs, lookups, watchlist checks) defaults to the
+  owner's Desktop, not this repo (`default_desktop_dir()`, reading
+  `FINVIZ_DESKTOP` as set by `start_finviz.ps1` from
+  `[Environment]::GetFolderPath('Desktop')`, which sees a OneDrive-redirected
+  Desktop that Python alone cannot). The signal math is pure and tested on
+  synthetic price series (`tests/test_finviz_watchlist.py`).
+  `tools/install_finviz_watchlist_task.ps1` + `tools/finviz_watchlist_alert.ps1`
+  optionally register a Windows Scheduled Task that runs `check` daily and
+  pops a message only when something is flagged — Interactive logon (a
+  popup needs a desktop to draw on, same tradeoff as `desk_agent`'s `alerts`
+  job), and pops a warning when the check itself fails rather than only
+  logging it. A screener match is a filter hit, not a scored setup:
+  `screener --vet` (or `--add-flagged`) runs `vet_candidates()` — the
+  identical EMA/RSI/MA/52-week/squeeze pipeline `check` runs on the
+  watchlist — against the matched tickers instead, and `--add-flagged`
+  saves only the ones that clear 2+ signal confluence *or* a squeeze to the
   watchlist; the interactive `menu` asks the same y/n after every screener
-  run rather than requiring a flag. `LOOKUP_ADDONS` is the
+  run rather than requiring a flag. Three presets are built around this:
+  `breakout_squeeze` (liquid, near its 52-week high, let `--vet`'s squeeze
+  read do the actual "is it coiling" work — Finviz has no tight-range
+  filter of its own), `breakout_momentum` (already trending, confirmed by
+  the existing confluence math instead of a new signal), and
+  `megacap_short_exhaustion` (mega-cap for short-side liquidity, extended
+  and RSI-overbought by Finviz's own filter, then vetted for the bearish
+  side of the same confluence). Sourcing and honest caveats — squeeze is
+  practitioner lore (Bollinger; Minervini's VCP), not peer-reviewed —
+  are in `docs/trading-wisdom.md`. `LOOKUP_ADDONS` is the
   slot for extra research sources on `lookup` (Perplexity or similar, down
   the road): empty by default, one function per source, each isolated so a
   failing source cannot blank the Finviz sections. An AI-backed source spends
