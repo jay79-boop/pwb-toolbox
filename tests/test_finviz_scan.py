@@ -17,7 +17,9 @@ import tools.finviz_scan as finviz_scan
 from tools.finviz_scan import (
     LOOKUP_ADDONS,
     PRESETS,
+    STOCK_ONLY_PRESETS,
     cmd_screener,
+    exclude_etfs,
     human_number,
     load_watchlist,
     parse_filter_kv,
@@ -266,6 +268,48 @@ def test_screener_tickers_empty_missing_or_no_ticker_column(df):
 
 
 # ---------------------------------------------------------------------------
+# exclude_etfs -- Finviz has no stocks-only filter, so STOCK_ONLY_PRESETS
+# drop funds client-side. Real-world case that flagged the bug (2026-09-22
+# live run): breakout_squeeze matched AAXJ/ACWX/ACYN/AAPU alongside real
+# stocks on price/volume filters alone.
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_etfs_drops_only_the_fund_rows():
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAPL", "AAXJ", "MSFT"],
+            "Industry": [
+                "Consumer Electronics",
+                "Exchange Traded Fund",
+                "Software - Application",
+            ],
+        }
+    )
+    out = exclude_etfs(df)
+    assert list(out["Ticker"]) == ["AAPL", "MSFT"]
+
+
+@pytest.mark.parametrize(
+    "df", [None, pd.DataFrame(), pd.DataFrame({"Ticker": ["AAPL"]})]
+)
+def test_exclude_etfs_passes_through_when_nothing_to_filter(df):
+    out = exclude_etfs(df)
+    assert out is df or (out is not None and out.empty)
+
+
+def test_stock_only_presets_are_the_three_breakout_short_presets():
+    # a preset landing here without a real entry in PRESETS (or the reverse)
+    # would silently stop filtering, or filter a preset that doesn't exist
+    assert STOCK_ONLY_PRESETS == {
+        "breakout_squeeze",
+        "breakout_momentum",
+        "megacap_short_exhaustion",
+    }
+    assert STOCK_ONLY_PRESETS <= set(PRESETS)
+
+
+# ---------------------------------------------------------------------------
 # cmd_screener --vet / --add-flagged -- the missing link the screener alone
 # never had: nothing vetted a match, and nothing carried it to the
 # watchlist. Both are exercised through cmd_screener itself, not just the
@@ -336,6 +380,46 @@ def test_cmd_screener_add_flagged_leaves_watchlist_unchanged_when_nothing_flags(
     out = capsys.readouterr().out
     assert "nothing flagged -- watchlist unchanged" in out
     assert not Path(args.file).exists()
+
+
+def test_cmd_screener_drops_etfs_for_a_stock_only_preset(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_screener",
+        lambda *a, **k: pd.DataFrame(
+            {
+                "Ticker": ["AAPL", "AAXJ"],
+                "Industry": ["Consumer Electronics", "Exchange Traded Fund"],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        finviz_scan, "fetch_bars", lambda symbols: {"AAPL": _bars([100.0] * 260)}
+    )
+    args = _screener_args(tmp_path, preset="breakout_squeeze", vet=True)
+    cmd_screener(args)
+    out = capsys.readouterr().out
+    assert "AAPL" in out
+    assert "AAXJ" not in out
+
+
+def test_cmd_screener_keeps_etfs_for_a_non_stock_only_preset(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        finviz_scan,
+        "fetch_screener",
+        lambda *a, **k: pd.DataFrame(
+            {
+                "Ticker": ["AAPL", "AAXJ"],
+                "Industry": ["Consumer Electronics", "Exchange Traded Fund"],
+            }
+        ),
+    )
+    args = _screener_args(tmp_path, preset="large_cap_uptrend")
+    cmd_screener(args)
+    out = capsys.readouterr().out
+    assert "AAXJ" in out
 
 
 def test_cmd_screener_vet_with_no_matches_skips_fetching_bars(

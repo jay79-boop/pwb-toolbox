@@ -138,6 +138,19 @@ PRESETS = {
     },
 }
 
+# Presets built to find *stocks*, not funds. Finviz's screener has no
+# stocks-only toggle of its own -- confirmed 2026-09-22 live: AAXJ, ACWX,
+# ACYN and AAPU (leveraged/international ETFs) all matched breakout_squeeze
+# and breakout_momentum on price/volume alone, same as any real stock would.
+# These three get ETF rows dropped client-side after fetching (see
+# exclude_etfs() below); every other preset and any hand-typed --filter
+# stays exactly what Finviz matched.
+STOCK_ONLY_PRESETS = {
+    "breakout_squeeze",
+    "breakout_momentum",
+    "megacap_short_exhaustion",
+}
+
 # The columns worth printing from `ticker_fundament()`'s ~70-field dict, in
 # the order a person actually reads them. Anything not in this list is still
 # in the dict (and in --out json) -- this only trims the console view.
@@ -259,6 +272,16 @@ def screener_tickers(df: pd.DataFrame | None, limit: int | None = None) -> list[
         if limit is not None and len(out) >= limit:
             break
     return out
+
+
+def exclude_etfs(df: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Drop rows Finviz classifies as funds (Industry == 'Exchange Traded
+    Fund') rather than operating companies. Used only for STOCK_ONLY_PRESETS
+    -- the general screener path leaves whatever the caller's own filters
+    matched untouched. None/empty/columnless input passes through as-is."""
+    if df is None or df.empty or "Industry" not in df.columns:
+        return df
+    return df[df["Industry"] != "Exchange Traded Fund"].reset_index(drop=True)
 
 
 def _one_line(text) -> str:
@@ -879,6 +902,8 @@ def cmd_screener(args):
     df = fetch_screener(
         filters, order=args.order, limit=args.limit, ascend=not args.desc
     )
+    if args.preset in STOCK_ONLY_PRESETS:
+        df = exclude_etfs(df)
     print(render_screener(df, args.top, limit=args.limit))
     if args.out and df is not None and not df.empty:
         _save_csv(df, args.out)
