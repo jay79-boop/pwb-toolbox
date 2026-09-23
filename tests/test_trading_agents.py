@@ -87,6 +87,8 @@ def test_main_defaults_date_to_today(tmp_path, monkeypatch):
     rc = trading_agents.main(["analyze", "NVDA"])
     assert rc == 0
     assert fake.calls == [("NVDA", "2099-01-01")]
+    # Regression: this test once wrote a fake HOLD into the real trading_agents/.
+    assert (tmp_path / "NVDA_2099-01-01.json").exists()
 
 
 def test_missing_install_raises_actionable_error(monkeypatch, tmp_path):
