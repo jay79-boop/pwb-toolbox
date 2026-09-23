@@ -56,6 +56,27 @@ dollars of LLM spend per run — see TradingAgents' own README for its
 `TRADINGAGENTS_*` env vars (model choice, debate rounds, token caps) before
 running it unattended or in a loop.
 
+## Running it for $0 on local Ollama
+
+No wrapper change is needed: TradingAgents reads `TRADINGAGENTS_*` env vars
+itself, and its `ollama` provider defaults to `http://localhost:11434/v1`
+with no key.
+
+```powershell
+$env:TRADINGAGENTS_LLM_PROVIDER='ollama'; $env:TRADINGAGENTS_DEEP_THINK_LLM='llama3.1:8b'; $env:TRADINGAGENTS_QUICK_THINK_LLM='llama3.1:8b'
+python tools/trading_agents.py analyze NVDA --date 2026-09-21
+```
+
+What the first attempt showed (2026-09-22, the owner's 32 GB, CPU-only PC):
+
+- **It is a smoke test, not a signal.** The Sentiment Analyst's structured
+  output failed on the 8B model and fell back to free text on the first call.
+- **Ollama served the model with a 4096-token context.** News-heavy agent
+  prompts can exceed that and are truncated silently — no error says so.
+- **Memory is the limit.** `llama-server` held 8.4 GB; with a browser and
+  TradingView open the machine ran out and the run was killed mid-debate. Close
+  heavy apps first, or use a paid provider for a decision worth reading.
+
 ## What was verified, and what was not
 
 Verified from a cloud session with no LLM key and no TradingAgents-specific

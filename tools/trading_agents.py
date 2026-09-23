@@ -115,7 +115,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "analyze":
         date = args.date or _today()
-        path = run_analysis(args.ticker, date)
+        # OUT_DIR looked up at call time: run_analysis's default argument was
+        # bound at import, so patching OUT_DIR never redirected main()'s write.
+        path = run_analysis(args.ticker, date, out_dir=OUT_DIR)
         print(f"wrote {path}")
         return 0
 
