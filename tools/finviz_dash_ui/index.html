@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Finviz Research</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,600;6..72,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Finviz Research</h1>
+      <p class="sub">Your stock board &mdash; every number fetched live, no AI tokens spent.</p>
+    </div>
+    <div class="headertools">
+      <span id="market-status" class="chip chip-muted" title="US market hours, Eastern time">&hellip;</span>
+      <form id="search-form" class="searchform" autocomplete="off">
+        <label class="sronly" for="search-input">Search a ticker</label>
+        <input id="search-input" type="text" placeholder="Search a ticker, e.g. NVDA" spellcheck="false">
+        <button type="submit" class="btn">Go</button>
+      </form>
+      <button id="text-menu-btn" class="btn ghost" title="Open the original numbered text menu in its own window">Text menu</button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Dashboard sections">
+    <button class="tab active" data-tab="watchlist">My Watchlist</button>
+    <button class="tab" data-tab="map">Market Map</button>
+    <button class="tab" data-tab="screener">Screener</button>
+  </nav>
+
+  <main>
+    <div id="banner" class="banner" hidden></div>
+
+    <section id="pane-watchlist" class="pane active" aria-label="My Watchlist"></section>
+    <section id="pane-map" class="pane" aria-label="Market Map"></section>
+    <section id="pane-screener" class="pane" aria-label="Screener"></section>
+  </main>
+
+  <footer>
+    <span id="footer-note"></span>
+  </footer>
+
+  <!-- Per-ticker detail overlay -->
+  <div id="ticker-view" class="overlay" hidden>
+    <div class="overlay-inner">
+      <div class="overlay-head">
+        <button id="ticker-back" class="btn ghost">&larr; Back</button>
+        <div id="ticker-name" class="overlay-title"></div>
+        <button id="ticker-watch" class="btn">Add to watchlist</button>
+      </div>
+      <div id="ticker-body"></div>
+    </div>
+  </div>
+
+  <!-- Pinned: v5 removed addCandlestickSeries(), which app.js calls; unpinned,
+       the chart silently fell back to a plain line. -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

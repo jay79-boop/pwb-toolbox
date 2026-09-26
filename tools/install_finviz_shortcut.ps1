@@ -43,9 +43,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$launcher = Join-Path $PSScriptRoot 'start_finviz.ps1'
+$launcher = Join-Path $PSScriptRoot 'start_finviz_dash.ps1'
 if (-not (Test-Path -LiteralPath $launcher)) {
-  throw "start_finviz.ps1 is not next to this script. Expected: $launcher"
+  throw "start_finviz_dash.ps1 is not next to this script. Expected: $launcher"
 }
 
 # Derived from where this file sits, never a hard-coded user path: CLAUDE.md
@@ -88,7 +88,7 @@ try {
   $shortcut.TargetPath = $powershell
   $shortcut.Arguments = $arguments
   $shortcut.WorkingDirectory = $repoRoot
-  $shortcut.Description = 'Finviz screener + ticker lookup. No AI tokens used.'
+  $shortcut.Description = 'Finviz Research dashboard (watchlist, map, screener). No AI tokens used.'
   $shortcut.WindowStyle = 1
   $shortcut.Save()
 
@@ -115,7 +115,8 @@ Write-Host ''
 Write-Host 'Done. There is now a Finviz Research icon on your Desktop:' -ForegroundColor Green
 Write-Host "    $linkPath"
 Write-Host ''
-Write-Host 'Double-click it to start. A console window opens with a numbered menu.'
+Write-Host 'Double-click it to start a console window, then a browser tab opens'
+Write-Host 'with the Finviz Research dashboard.'
 Write-Host 'To see the icon now, run:'
 Write-Host "    explorer.exe /select,`"$linkPath`""
 exit 0
