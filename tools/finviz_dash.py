@@ -569,6 +569,28 @@ _CONTENT_TYPES = {
 }
 
 
+# Actions that change something on the machine. Any website the owner visits
+# can make the browser send a GET to 127.0.0.1 (an <img> tag is enough), so
+# these require a header only the dashboard's own page sends. A cross-origin
+# page cannot add a custom header without a CORS preflight, and this server
+# never approves one.
+WRITE_ACTIONS = frozenset(
+    {"watchlist-add", "watchlist-remove", "screener-export", "text-menu"}
+)
+CSRF_HEADER = "X-Finviz-Dash"
+
+
+def _host_allowed(host_header: str | None, port: int) -> bool:
+    """Only loopback names on our own port. Blocks DNS rebinding, where a
+    hostile domain re-points itself at 127.0.0.1 to read the API."""
+    if not host_header:
+        return False
+    return host_header.strip().lower() in {
+        f"127.0.0.1:{port}",
+        f"localhost:{port}",
+    }
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "FinvizDash/1.0"
 
@@ -639,6 +661,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error("Not found.", 404)
             return
         action = parts[1] if len(parts) > 1 else ""
+        if not _host_allowed(self.headers.get("Host"), self.server.server_address[1]):
+            self._send_error("Refused: unexpected Host header.", 403)
+            return
+        if action in WRITE_ACTIONS and self.headers.get(CSRF_HEADER) != "1":
+            self._send_error(
+                f"Refused: {action} only works from the dashboard page itself.", 403
+            )
+            return
         query = self._query()
         try:
             if action == "watchlist":

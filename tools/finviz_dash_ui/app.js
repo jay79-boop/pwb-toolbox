@@ -45,7 +45,13 @@ var tabLoaded = {};
 /* ---------------- fetch + banners ---------------- */
 
 function fetchJSON(url) {
-  return fetch(url, { cache: "no-store" }).then(function (r) {
+  // X-Finviz-Dash marks the call as coming from this page. The server refuses
+  // watchlist edits, CSV saves and the text menu without it, because another
+  // website cannot attach a custom header to a request aimed at 127.0.0.1.
+  return fetch(url, {
+    cache: "no-store",
+    headers: { "X-Finviz-Dash": "1" },
+  }).then(function (r) {
     return r.json().then(function (data) {
       if (!r.ok || (data && data.ok === false)) {
         throw new Error((data && data.error) || ("HTTP " + r.status));
