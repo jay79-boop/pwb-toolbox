@@ -199,6 +199,17 @@ one-off with no local runtime dependency.
   the road): empty by default, one function per source, each isolated so a
   failing source cannot blank the Finviz sections. An AI-backed source spends
   paid tokens, so it stays opt-in with its key read from `.env`.
+- `tools/finviz_dash.py` + `tools/finviz_dash_ui/` — local browser dashboard
+  over `finviz_scan` (standard-library HTTP server on `127.0.0.1:8721`, no
+  build step): watchlist cards with signals, an S&P 500 heat map, the
+  screener presets plus stacked `Name=Value` filters, and a per-ticker view
+  with candles, fundamentals, news and insiders. Every number is fetched at
+  request time behind a short TTL cache; nothing is stored. The screener
+  fetches up to 1000 rows ordered by market cap, so a cap drops the
+  smallest names, never the back of the alphabet. `tools/start_finviz_dash.ps1`
+  launches it and is what the desktop icon from `install_finviz_shortcut.ps1`
+  now points at; the numbered text `menu` stays reachable from its header.
+  No automated tests yet — verified live against Finviz and in Chrome.
 - `tools/spec_desk.py` — the "trade spicy" desk: ledger and rules engine for
   the walled-off high-risk paper pot (four lanes: 15–45 DTE option buys,
   sub-capped 0–7 DTE lotteries, momentum stocks, defined-risk credit
