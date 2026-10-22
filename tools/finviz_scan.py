@@ -363,6 +363,116 @@ def run_addons(ticker: str, addons) -> list[tuple[str, str | None, str | None]]:
 # `screener`, `lookup` and `menu` on your own machine.
 # ---------------------------------------------------------------------------
 
+# finviz.com's screener page moved from a semantic <table>/<select
+# id="pageSelect"> to a div-based ARIA grid (data-column-id cells, a "N / M"
+# page-count button, no <select> at all) -- confirmed live 2026-10-22.
+# finvizfinance 1.5.0's own Overview.screener_view() still looks for the old
+# markup and returns None for every query, filtered or not -- every preset,
+# plus _fetch_map in finviz_dash.py which is built on top of this. This
+# reimplements just the page-fetch/parse step against the new grid, reusing
+# finvizfinance's own (unaffected -- it's offline filter-table validation,
+# not live markup) set_filter/order_dict/URL building so a PRESETS entry is
+# still checked against finvizfinance's real filter names.
+_SCREENER_NUMBER_COLS = {"Market Cap", "P/E", "Price", "Volume"}
+_SCREENER_COLUMN_MAP = {
+    "ticker": "Ticker",
+    "company": "Company",
+    "sector": "Sector",
+    "industry": "Industry",
+    "country": "Country",
+    "marketCap": "Market Cap",
+    "PE": "P/E",
+    "price": "Price",
+    "change": "Change %",
+    "volume": "Volume",
+}
+
+
+def _grid_page_count(soup) -> int:
+    """How many screener result pages exist, read from the "N / M" page
+    button finviz's redesign uses in place of the old <select
+    id="pageSelect">. Found by its aria-label, not its CSS class: the same
+    "select-trigger_label" class renders every dropdown on the page (order
+    by, signal, tickers/filters, ...), so a bare class match grabs whichever
+    of those happens to come first in the document, not the pager. 0 (same
+    as finvizfinance's own _get_page) when the page has no results or the
+    button itself is missing -- a further redesign, not a 0-match query."""
+    button = soup.find("button", attrs={"aria-label": "Page"})
+    if button is None:
+        return 0
+    text = button.get_text(strip=True)
+    if "/" not in text:
+        return 0
+    try:
+        return int(text.rsplit("/", 1)[-1].strip())
+    except ValueError:
+        return 0
+
+
+def _parse_grid_rows(soup) -> list[dict]:
+    """One dict per data row of the new div/grid screener table, built from
+    each cell's data-column-id rather than position. The ticker comes from
+    the cell's data-ticker attribute, not its text: the cell nests a hidden
+    logo-fallback span that duplicates the symbol in get_text() (ticker "A"
+    renders as "AA") -- the same class of bug finvizfinance's own old parser
+    hit and fixed with a data-boxover-ticker attribute on the table it no
+    longer gets served."""
+    from finvizfinance.util import number_convert
+
+    rows_out = []
+    for row in soup.find_all(attrs={"role": "row"}):
+        values: dict[str, object] = {}
+        for cell in row.find_all(attrs={"role": "gridcell"}):
+            name = _SCREENER_COLUMN_MAP.get(cell.get("data-column-id"))
+            if name is None:
+                continue
+            raw = (
+                cell.get("data-ticker") or cell.get_text(strip=True)
+                if name == "Ticker"
+                else cell.get_text(strip=True)
+            )
+            values[name] = number_convert(raw) if name in _SCREENER_NUMBER_COLS else raw
+        if "Ticker" in values:
+            rows_out.append(values)
+    return rows_out
+
+
+def _grid_screener_view(
+    ov, order: str = "Ticker", limit: int = 100, ascend: bool = True
+) -> pd.DataFrame | None:
+    from time import sleep
+
+    from finvizfinance.screener.base import order_dict, validate_choice
+    from finvizfinance.util import web_scrap
+
+    validate_choice(order, order_dict, "order")
+    ov.request_params["o"] = ("" if ascend else "-") + order_dict[order]
+
+    soup = web_scrap(ov.url, ov.request_params)
+    rows = _parse_grid_rows(soup)
+    if not rows:
+        return None
+    # The "N / M" pager button itself isn't rendered when everything fits on
+    # one page -- a real, common case (a narrow filter combo can match a
+    # handful of tickers), not a 0-match query. _grid_page_count already
+    # reads 0 for that case; range(1, 0) below is simply empty, so a missing
+    # pager only skips page 2+, it never discards the real page-1 rows above.
+    page = _grid_page_count(soup)
+    remaining = limit - len(rows)
+    for i in range(1, page):
+        if remaining <= 0:
+            break
+        sleep(1)
+        ov.request_params["r"] = i * ov.size + 1
+        soup = web_scrap(ov.url, ov.request_params)
+        page_rows = _parse_grid_rows(soup)
+        rows.extend(page_rows)
+        remaining -= len(page_rows)
+    ov.reset()
+    if not rows:
+        return None
+    return pd.DataFrame(rows[:limit] if limit else rows)
+
 
 def fetch_screener(
     filters: dict,
@@ -375,7 +485,7 @@ def fetch_screener(
     ov = Overview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    return _grid_screener_view(ov, order=order, limit=limit, ascend=ascend)
 
 
 def fetch_lookup(ticker: str) -> dict:

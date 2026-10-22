@@ -18,6 +18,9 @@ from tools.finviz_scan import (
     LOOKUP_ADDONS,
     PRESETS,
     STOCK_ONLY_PRESETS,
+    _grid_page_count,
+    _grid_screener_view,
+    _parse_grid_rows,
     cmd_screener,
     exclude_etfs,
     human_number,
@@ -28,6 +31,8 @@ from tools.finviz_scan import (
     run_addons,
     screener_tickers,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_parse_filter_kv_splits_on_first_equals():
@@ -452,3 +457,81 @@ def test_presets_use_real_finviz_filter_names_and_options():
                 f"preset {preset_name!r} uses invalid option {option_value!r} "
                 f"for filter {filter_name!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# finviz.com's 2026-10 redesign replaced the screener's <table>/<select
+# id="pageSelect"> markup with a div-based ARIA grid; finvizfinance 1.5.0's
+# own Overview.screener_view() still expects the old markup and returns None
+# for every query against it. fetch_screener() now parses the grid itself
+# (_parse_grid_rows/_grid_page_count/_grid_screener_view below) -- these
+# tests pin that parsing against a real captured page, offline, so a future
+# finviz redesign is caught here rather than only live on the owner's
+# machine. The fixture is a trimmed single-page screener result (header +
+# two data rows, no pager) saved 2026-10-22 from a real megacap_short_exhaustion
+# query that returned too few matches to paginate -- exactly the case that
+# silently produced None (0 results) before this fix, even though real rows
+# were on the page.
+# ---------------------------------------------------------------------------
+
+
+def _load_grid_fixture():
+    from bs4 import BeautifulSoup
+
+    html = (FIXTURES_DIR / "finviz_screener_grid_single_page.html").read_text(
+        encoding="utf-8"
+    )
+    return BeautifulSoup(html, "html.parser")
+
+
+def test_parse_grid_rows_reads_real_ticker_not_duplicated_cell_text():
+    """The ticker cell's visible text duplicates the symbol (a hidden
+    logo-fallback span repeats it, so get_text() on ticker "A" reads "AA")
+    -- the parser must read the clean value from the cell's data-ticker
+    attribute instead, the same fix finvizfinance's own old table parser
+    made for the identical bug under a different attribute name."""
+    rows = _parse_grid_rows(_load_grid_fixture())
+    assert [r["Ticker"] for r in rows] == ["COST", "CVX"]
+
+
+def test_parse_grid_rows_converts_only_the_numeric_columns():
+    rows = _parse_grid_rows(_load_grid_fixture())
+    cost = rows[0]
+    assert cost["Market Cap"] == pytest.approx(442_380_000_000.0)
+    assert cost["P/E"] == pytest.approx(48.09)
+    assert cost["Price"] == pytest.approx(998.31)
+    assert cost["Volume"] == pytest.approx(1_512_498.0)
+    # Change % is deliberately left as finviz's own string ("0.37%"), not
+    # converted -- _fetch_map in finviz_dash.py parses the "%" itself.
+    assert cost["Change %"] == "0.37%"
+    assert isinstance(cost["Change %"], str)
+
+
+def test_grid_page_count_is_zero_when_results_fit_on_one_page():
+    """A real, common case (a narrow filter combo matches a handful of
+    tickers): finviz doesn't render the "N / M" pager button at all, which
+    must not be read as 0 matches -- see
+    test_grid_screener_view_keeps_rows_even_with_no_pager below."""
+    assert _grid_page_count(_load_grid_fixture()) == 0
+
+
+def test_grid_screener_view_keeps_rows_even_with_no_pager(monkeypatch):
+    """The regression this fix is for: _grid_page_count legitimately reads 0
+    for a single-page result (no pager button rendered), and that must not
+    make _grid_screener_view discard the real rows already parsed off page
+    one and return None instead."""
+    monkeypatch.setattr(
+        "finvizfinance.util.web_scrap", lambda url, params: _load_grid_fixture()
+    )
+
+    class FakeOverview:
+        url = "https://finviz.com/screener.ashx"
+        size = 20
+        request_params = {"v": 111}
+
+        def reset(self):
+            pass
+
+    df = _grid_screener_view(FakeOverview(), limit=100)
+    assert df is not None
+    assert list(df["Ticker"]) == ["COST", "CVX"]
