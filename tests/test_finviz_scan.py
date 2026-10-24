@@ -18,8 +18,10 @@ from tools.finviz_scan import (
     LOOKUP_ADDONS,
     PRESETS,
     STOCK_ONLY_PRESETS,
+    FinvizScreenerDriftError,
     cmd_screener,
     exclude_etfs,
+    fetch_screener,
     human_number,
     load_watchlist,
     parse_filter_kv,
@@ -452,3 +454,62 @@ def test_presets_use_real_finviz_filter_names_and_options():
                 f"preset {preset_name!r} uses invalid option {option_value!r} "
                 f"for filter {filter_name!r}"
             )
+
+
+class _FakeOverview:
+    """Stand-in for finvizfinance's Overview -- enough surface for
+    fetch_screener: set_filter/screener_view, plus the url/request_params
+    attributes _looks_like_finviz_redesign reads."""
+
+    url = "https://finviz.com/screener.ashx"
+    request_params = {"v": 111}
+
+    def set_filter(self, filters_dict):
+        pass
+
+    def screener_view(self, **kwargs):
+        return None
+
+
+class _FakeTag:
+    def __init__(self, has_rows_pending):
+        self._has_rows_pending = has_rows_pending
+
+    def find(self, attrs=None, **kwargs):
+        if attrs == {"data-rows-pending": True}:
+            return object() if self._has_rows_pending else None
+        return None
+
+
+def test_fetch_screener_raises_on_the_client_rendered_redesign(monkeypatch):
+    """finvizfinance returns None both for a genuine 0-match and for a page
+    it can no longer parse at all -- confirmed live 2026-10-24 that Finviz's
+    screener now renders rows via a client-side canvas grid
+    (`data-rows-pending`, no server-rendered `<tr>`s). fetch_screener must
+    tell these apart rather than silently reporting "no stocks matched"."""
+    monkeypatch.setattr(
+        finviz_scan.sys.modules["finvizfinance.screener.overview"],
+        "Overview",
+        _FakeOverview,
+    )
+    monkeypatch.setattr(
+        finviz_scan.sys.modules["finvizfinance.util"],
+        "web_scrap",
+        lambda url, params: _FakeTag(has_rows_pending=True),
+    )
+    with pytest.raises(FinvizScreenerDriftError):
+        fetch_screener({"Market Cap.": "+Large (over $10bln)"})
+
+
+def test_fetch_screener_passes_through_a_genuine_zero_match(monkeypatch):
+    monkeypatch.setattr(
+        finviz_scan.sys.modules["finvizfinance.screener.overview"],
+        "Overview",
+        _FakeOverview,
+    )
+    monkeypatch.setattr(
+        finviz_scan.sys.modules["finvizfinance.util"],
+        "web_scrap",
+        lambda url, params: _FakeTag(has_rows_pending=False),
+    )
+    assert fetch_screener({"Market Cap.": "+Large (over $10bln)"}) is None

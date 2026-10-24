@@ -364,6 +364,29 @@ def run_addons(ticker: str, addons) -> list[tuple[str, str | None, str | None]]:
 # ---------------------------------------------------------------------------
 
 
+class FinvizScreenerDriftError(RuntimeError):
+    """finvizfinance's server-side table parser found nothing to parse.
+
+    Confirmed live 2026-10-24: Finviz now ships the screener's rows via a
+    client-side canvas-rendered grid (`data-rows-pending` on the results
+    div, no server-rendered `<tr>`s, no `#pageSelect`) -- finvizfinance 1.5.0
+    (latest on PyPI) can only parse the old server-rendered table, so
+    `screener_view` returns None for *every* query, filtered or not, the same
+    way it would for a genuine 0-match result. Raising here turns that into
+    a loud failure instead of a silent "no stocks matched" -- see
+    `_looks_like_finviz_redesign` below for the detection."""
+
+
+def _looks_like_finviz_redesign(ov) -> bool:
+    """True if the live screener page is the client-rendered redesign that
+    finvizfinance's HTML parser cannot read, as opposed to a genuine 0-match
+    result under the old server-rendered table it was built for."""
+    from finvizfinance.util import web_scrap
+
+    soup = web_scrap(ov.url, ov.request_params)
+    return soup.find(attrs={"data-rows-pending": True}) is not None
+
+
 def fetch_screener(
     filters: dict,
     order: str = "Ticker",
@@ -375,7 +398,15 @@ def fetch_screener(
     ov = Overview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    if df is None and _looks_like_finviz_redesign(ov):
+        raise FinvizScreenerDriftError(
+            "Finviz's screener page no longer renders rows server-side "
+            "(data-rows-pending canvas grid) -- finvizfinance can't scrape "
+            "it. This is not a 0-match result; it needs an updated "
+            "finvizfinance release or a JS-capable fetch, not a filter fix."
+        )
+    return df
 
 
 def fetch_lookup(ticker: str) -> dict:
