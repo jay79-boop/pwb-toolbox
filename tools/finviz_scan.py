@@ -370,9 +370,83 @@ def fetch_screener(
     limit: int = 100,
     ascend: bool = True,
 ) -> pd.DataFrame:
+    """finviz.com rebuilt its screener page as a virtualized ``fv-table_*``
+    div grid (confirmed live 2026-10-29), dropping the
+    ``table.screener_table`` / ``#pageSelect`` markup finvizfinance 1.5.0
+    (the latest release on PyPI) still expects for parsing -- every preset,
+    and even a filterless call, silently came back empty. ``_FvTableOverview``
+    below overrides only the three parsing hooks finvizfinance.screener.base.Base
+    exposes for this; request building, retry/backoff, Wall detection and
+    filter validation stay the untouched upstream implementation. Defined
+    locally (not at module scope) to keep finvizfinance's import lazy, same
+    as everywhere else in this module.
+    """
+    from finvizfinance.constants import NUMBER_COL
     from finvizfinance.screener.overview import Overview
+    from finvizfinance.util import number_convert, require
 
-    ov = Overview()
+    class _FvTableOverview(Overview):
+        def _get_page(self, soup) -> int:
+            if soup.select_one(".fv-table_row") is None:
+                return 0
+            last = 1
+            for a in soup.select("a.fv-table_pager-page[aria-label^='Page ']"):
+                try:
+                    last = max(last, int(a.get("aria-label", "").rsplit(" ", 1)[-1]))
+                except ValueError:
+                    continue
+            return last
+
+        def _header_cells(self, soup):
+            return [
+                c
+                for c in soup.select(".fv-table_header-cell")
+                if c.get("data-column-id") != "row"
+            ]
+
+        def _parse_table_header(self, soup) -> list[str]:
+            cells = self._header_cells(soup)
+            require(cells or None, self.url, ".fv-table_header-cell")
+            return [
+                (c.select_one(".fv-table_header-label") or c).get_text(strip=True)
+                for c in cells
+            ]
+
+        def _parse_table(self, df, soup, limit):
+            if df is None:
+                df = pd.DataFrame([], columns=self._parse_table_header(soup))
+            headers = list(df.columns)
+            num_col_index = [headers.index(h) for h in headers if h in NUMBER_COL]
+            rows = soup.select(".fv-table_body .fv-table_row")
+            if limit != -1:
+                rows = rows[:limit]
+            frame = []
+            for row in rows:
+                cells = [
+                    c
+                    for c in row.select(".fv-table_cell")
+                    if c.get("data-column-id") != "row"
+                ]
+                values = []
+                for i, cell in enumerate(cells):
+                    if i >= len(headers):
+                        break
+                    if cell.get("data-column-id") == "ticker" and cell.get(
+                        "data-ticker"
+                    ):
+                        values.append(cell["data-ticker"])
+                    elif i in num_col_index:
+                        values.append(number_convert(cell.get_text(strip=True)))
+                    else:
+                        values.append(cell.get_text(strip=True))
+                values.extend([None] * (len(headers) - len(values)))
+                frame.append(values)
+            new_df = pd.DataFrame(frame, columns=headers)
+            if len(df) == 0:
+                return new_df
+            return pd.concat([df, new_df], ignore_index=True)
+
+    ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
     return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
