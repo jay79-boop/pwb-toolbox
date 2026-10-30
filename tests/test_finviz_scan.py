@@ -452,3 +452,100 @@ def test_presets_use_real_finviz_filter_names_and_options():
                 f"preset {preset_name!r} uses invalid option {option_value!r} "
                 f"for filter {filter_name!r}"
             )
+
+
+# finviz.com rebuilt its screener page as a virtualized "fv-table_*" div grid
+# (confirmed live 2026-10-29), dropping the "table.screener_table" /
+# "#pageSelect" markup finvizfinance 1.5.0 (latest on PyPI) expects --
+# fetch_screener's _FvTableOverview subclass parses the new markup instead.
+# This pins that parsing against a static snapshot of the real structure so
+# a future finviz/finvizfinance change shows up here, offline, rather than
+# as a silent empty DataFrame discovered live. One page (no "Page 2" link)
+# is enough to pin header mapping, data-ticker extraction (the ticker cell's
+# visible text duplicates the symbol, same reason as the old table's
+# data-boxover-ticker workaround), and number_convert on Market Cap/Volume
+# while Change % stays a raw string (what _fetch_map's own string parsing
+# expects).
+_FV_TABLE_HTML = """
+<div class="fv-table_header-row">
+  <div class="fv-table_header-cell" data-column-id="row">
+    <span class="fv-table_header-label">No.</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="ticker">
+    <span class="fv-table_header-label">Ticker</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="company">
+    <span class="fv-table_header-label">Company</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="marketCap">
+    <span class="fv-table_header-label">Market Cap</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="volume">
+    <span class="fv-table_header-label">Volume</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="change">
+    <span class="fv-table_header-label">Change %</span>
+  </div>
+</div>
+<div class="fv-table_body">
+  <div class="fv-table_row" data-row-key="AAPL">
+    <div class="fv-table_cell" data-column-id="row">1</div>
+    <div class="fv-table_cell" data-column-id="ticker" data-ticker="AAPL">
+      <a><span>AAPL</span><span>AAPL</span></a>
+    </div>
+    <div class="fv-table_cell" data-column-id="company">Apple Inc</div>
+    <div class="fv-table_cell" data-column-id="marketCap">5017.92B</div>
+    <div class="fv-table_cell" data-column-id="volume">35,714,805</div>
+    <div class="fv-table_cell" data-column-id="change">-0.94%</div>
+  </div>
+  <div class="fv-table_row" data-row-key="MSFT">
+    <div class="fv-table_cell" data-column-id="row">2</div>
+    <div class="fv-table_cell" data-column-id="ticker" data-ticker="MSFT">
+      <a><span>MSFT</span><span>MSFT</span></a>
+    </div>
+    <div class="fv-table_cell" data-column-id="company">Microsoft Corp</div>
+    <div class="fv-table_cell" data-column-id="marketCap">3938.60B</div>
+    <div class="fv-table_cell" data-column-id="volume">20,123,456</div>
+    <div class="fv-table_cell" data-column-id="change">-0.06%</div>
+  </div>
+</div>
+<nav class="fv-table_pager">
+  <div class="fv-table_pager-pages">
+    <a aria-label="Page 1" class="fv-table_pager-page">1</a>
+  </div>
+</nav>
+"""
+
+
+def _fv_table_soup():
+    from bs4 import BeautifulSoup
+
+    return BeautifulSoup(_FV_TABLE_HTML, "lxml")
+
+
+def test_fetch_screener_parses_the_new_fv_table_markup(monkeypatch):
+    import finvizfinance.screener.base as fv_base
+
+    monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: _fv_table_soup())
+    df = finviz_scan.fetch_screener({}, limit=20)
+    assert df is not None
+    assert list(df.columns) == [
+        "Ticker",
+        "Company",
+        "Market Cap",
+        "Volume",
+        "Change %",
+    ]
+    assert list(df["Ticker"]) == ["AAPL", "MSFT"]  # data-ticker, not the garbled text
+    assert df["Market Cap"].tolist() == [5017.92e9, 3938.60e9]  # number_convert
+    assert df["Volume"].tolist() == [35714805.0, 20123456.0]
+    assert df["Change %"].tolist() == ["-0.94%", "-0.06%"]  # left as a raw string
+
+
+def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
+    import finvizfinance.screener.base as fv_base
+    from bs4 import BeautifulSoup
+
+    empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
+    monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
+    assert finviz_scan.fetch_screener({}, limit=20) is None
