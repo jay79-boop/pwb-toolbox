@@ -549,3 +549,67 @@ def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
     assert finviz_scan.fetch_screener({}, limit=20) is None
+
+
+def test_recover_industry_matches_finviz_renamed_href():
+    from bs4 import BeautifulSoup
+
+    # finviz renamed the quote page's Industry filter link from f=ind_ to
+    # f=industry_ (live 2026-11-05); finvizfinance 1.5.0's own fallback still
+    # only matches f=ind_, so this is what our recovery has to catch instead.
+    soup = BeautifulSoup(
+        '<a class="quote-header_category" '
+        'href="/screener/stocks?v=111&f=industry_consumerelectronics">'
+        "Consumer Electronics</a>",
+        "lxml",
+    )
+    assert finviz_scan._recover_industry(soup) == "Consumer Electronics"
+
+
+def test_recover_industry_still_matches_legacy_href():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        '<a href="/screener/stocks?v=111&f=ind_softwareapplication">'
+        "Software - Application</a>",
+        "lxml",
+    )
+    assert finviz_scan._recover_industry(soup) == "Software - Application"
+
+
+def test_recover_industry_returns_none_when_absent():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        '<a href="/screener/stocks?v=111&f=sec_technology">Tech</a>', "lxml"
+    )
+    assert finviz_scan._recover_industry(soup) is None
+
+
+def test_fetch_lookup_recovers_industry_when_classification_drops_it(monkeypatch):
+    """ticker_fundament() can return Industry=None (the finviz rename above)
+    while the quote page still carries the link under its new href -- this
+    is the regression for the drift fetch_lookup hit live on AAPL."""
+    from bs4 import BeautifulSoup
+
+    class FakeQuote:
+        def __init__(self, ticker):
+            self.ticker = ticker
+            self.soup = BeautifulSoup(
+                '<a href="/screener/stocks?v=111&f=industry_consumerelectronics">'
+                "Consumer Electronics</a>",
+                "lxml",
+            )
+
+        def ticker_fundament(self):
+            return {"Company": "Apple Inc", "Sector": "Technology", "Industry": None}
+
+        def ticker_news(self):
+            return pd.DataFrame()
+
+        def ticker_inside_trader(self):
+            return pd.DataFrame()
+
+    monkeypatch.setattr("finvizfinance.quote.finvizfinance", FakeQuote, raising=False)
+    result = finviz_scan.fetch_lookup("AAPL")
+    assert result["fundament"]["Industry"] == "Consumer Electronics"
