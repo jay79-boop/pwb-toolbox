@@ -549,3 +549,36 @@ def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
     assert finviz_scan.fetch_screener({}, limit=20) is None
+
+
+# finviz.com's quote page renamed the Industry classification anchor's
+# screener-filter-code prefix from "f=ind_" to "f=industry_" (confirmed live
+# 2026-11-06). finvizfinance 1.5.0's own fallback regex still looks for
+# "f=ind_", so every lookup's Industry came back silently None even though
+# the anchor is right there -- Sector/Country/Exchange were unaffected since
+# their prefixes ("f=sec_"/"f=geo_"/"f=exch_") didn't change. This pins
+# fetch_lookup's own recovery of the renamed prefix against a static snapshot
+# of the new markup (no "div.quote-links" wrapper, classification anchors as
+# flat "a.quote-header_category" links) so a further rename shows up here,
+# offline, rather than as a silently blank field discovered live.
+_QUOTE_HTML_RENAMED_INDUSTRY_PREFIX = """
+<h2 class="quote-header_ticker-wrapper_company">Apple Inc</h2>
+<a class="quote-header_category" href="/screener/stocks?v=111&f=sec_technology">Technology</a>
+<a class="quote-header_category" href="/screener/stocks?v=111&f=industry_consumerelectronics">Consumer Electronics</a>
+<a class="quote-header_category" href="/screener/stocks?v=111&f=geo_usa">USA</a>
+<a class="quote-header_category" href="/screener/stocks?v=111&f=exch_nasd">NASD</a>
+<table class="snapshot-table2">
+  <tr><td>P/E</td><td>30.00</td></tr>
+</table>
+"""
+
+
+def test_fetch_lookup_recovers_industry_from_renamed_filter_code(monkeypatch):
+    import finvizfinance.quote as fv_quote
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_QUOTE_HTML_RENAMED_INDUSTRY_PREFIX, "lxml")
+    monkeypatch.setattr(fv_quote, "web_scrap", lambda url, params=None: soup)
+    result = finviz_scan.fetch_lookup("AAPL")
+    assert result["fundament"]["Industry"] == "Consumer Electronics"
+    assert result["fundament"]["Sector"] == "Technology"  # unaffected, still works
