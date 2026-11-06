@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -461,6 +462,17 @@ def fetch_lookup(ticker: str) -> dict:
 
     q = FinvizQuote(ticker)
     fundament = q.ticker_fundament()
+
+    # finvizfinance 1.5.0's classification fallback matches an anchor whose
+    # href starts with the screener filter code "f=ind_" for Industry.
+    # finviz.com's quote page renamed that prefix to "f=industry_" (confirmed
+    # live 2026-11-06) -- Sector/Country/Exchange still match their own
+    # unchanged prefixes ("f=sec_"/"f=geo_"/"f=exch_"), so only Industry comes
+    # back None even though the anchor is right there on the page.
+    if fundament.get("Industry") is None:
+        anchor = q.soup.find("a", href=re.compile(r"f=industry_"))
+        if anchor is not None:
+            fundament["Industry"] = anchor.text.strip()
 
     news, news_error = None, None
     try:
