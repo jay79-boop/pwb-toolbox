@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -452,6 +453,34 @@ def fetch_screener(
     return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
 
 
+_CLASSIFICATION_HREF_TOKENS = {
+    "Sector": "f=sec_",
+    "Industry": "f=industry_",
+    "Country": "f=geo_",
+    "Exchange": "f=exch_",
+}
+
+
+def _classification_fallback(soup) -> dict:
+    """Finviz renamed the quote page's category strip from the old
+    ``div.quote-links`` to ``div.quote-header_categories`` and, specifically
+    for Industry, widened its screener filter token from ``f=ind_`` to
+    ``f=industry_`` (confirmed live 2026-11-11: AAPL's classification
+    anchors moved to ``a.quote-header_category`` and now also include a
+    market-cap bucket between Country and Exchange). finvizfinance 1.5.0's
+    own ``_extract_classification`` still falls back on the old ``f=ind_``
+    token, so Industry alone comes back ``None`` for every ticker. Recover
+    it (and the others, defensively, in case a future rename repeats) from
+    the anchors' href filter tokens directly -- that attribute has survived
+    every redesign so far, unlike the enclosing div/class names."""
+    result = {}
+    for key, token in _CLASSIFICATION_HREF_TOKENS.items():
+        anchor = soup.find("a", href=re.compile(re.escape(token)))
+        if anchor is not None:
+            result[key] = anchor.get_text(strip=True)
+    return result
+
+
 def fetch_lookup(ticker: str) -> dict:
     """One ticker's fundamentals, news and insider trades. News/insider
     fetches are kept independent of each other and of the fundamentals call:
@@ -461,6 +490,9 @@ def fetch_lookup(ticker: str) -> dict:
 
     q = FinvizQuote(ticker)
     fundament = q.ticker_fundament()
+    for key, value in _classification_fallback(q.soup).items():
+        if not fundament.get(key):
+            fundament[key] = value
 
     news, news_error = None, None
     try:

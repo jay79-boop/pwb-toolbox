@@ -549,3 +549,67 @@ def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
     assert finviz_scan.fetch_screener({}, limit=20) is None
+
+
+# finviz's quote page renamed its classification strip from div.quote-links
+# to div.quote-header_categories and widened Industry's filter href from
+# f=ind_ to f=industry_ (confirmed live 2026-11-11 against AAPL) -- which
+# finvizfinance 1.5.0's own quote.py fallback (still f=ind_) never finds, so
+# Industry alone comes back None while Sector/Country/Exchange (whose
+# tokens didn't change) still resolve. Pinned offline against a static
+# snapshot of the new markup, including the extra "Mega" cap-bucket anchor
+# finviz now inserts between Country and Exchange, so a future rename shows
+# up here rather than as a silently blank Industry field on every lookup.
+_QUOTE_CATEGORIES_HTML = """
+<div class="quote-header_categories">
+  <a class="quote-header_category" href="/screener/stocks?v=111&amp;f=sec_technology">Technology</a>
+  <a class="quote-header_category" href="/screener/stocks?v=111&amp;f=industry_consumerelectronics" title="Consumer Electronics"><span class="min-w-0 truncate">Consumer Electronics</span></a>
+  <a class="quote-header_category" href="/screener/stocks?v=111&amp;f=geo_usa">USA</a>
+  <a class="quote-header_category" href="/screener/stocks?v=111&amp;f=cap_mega">Mega</a>
+  <a class="quote-header_category" href="/screener/stocks?v=111&amp;f=exch_nasd">NASD</a>
+</div>
+"""
+
+
+def test_classification_fallback_recovers_industry_from_new_href_token():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_QUOTE_CATEGORIES_HTML, "lxml")
+    result = finviz_scan._classification_fallback(soup)
+    assert result == {
+        "Sector": "Technology",
+        "Industry": "Consumer Electronics",
+        "Country": "USA",
+        "Exchange": "NASD",
+    }
+
+
+def test_fetch_lookup_fills_in_industry_the_old_fallback_misses(monkeypatch):
+    from bs4 import BeautifulSoup
+
+    class FakeQuote:
+        def __init__(self, ticker):
+            self.soup = BeautifulSoup(_QUOTE_CATEGORIES_HTML, "lxml")
+
+        def ticker_fundament(self):
+            # Mirrors finvizfinance's own stale-token fallback: Sector
+            # found, Industry missed because it still looks for f=ind_.
+            return {
+                "Company": "Apple Inc",
+                "Sector": "Technology",
+                "Industry": None,
+                "Country": "USA",
+                "Exchange": "NASD",
+            }
+
+        def ticker_news(self):
+            return None
+
+        def ticker_inside_trader(self):
+            return None
+
+    monkeypatch.setattr("finvizfinance.quote.finvizfinance", FakeQuote)
+    monkeypatch.setattr(finviz_scan, "run_addons", lambda *a, **k: [])
+    result = finviz_scan.fetch_lookup("AAPL")
+    assert result["fundament"]["Industry"] == "Consumer Electronics"
+    assert result["fundament"]["Sector"] == "Technology"  # untouched, already present
