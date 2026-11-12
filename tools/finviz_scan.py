@@ -390,7 +390,11 @@ def fetch_screener(
             if soup.select_one(".fv-table_row") is None:
                 return 0
             last = 1
-            for a in soup.select("a.fv-table_pager-page[aria-label^='Page ']"):
+            # Page-link <a> tags no longer carry a stable "fv-table_pager-page"
+            # class (confirmed live 2026-11-12: Finviz now styles the current
+            # page differently from the others), so this matches on the
+            # surviving aria-label="Page N" instead of a class name.
+            for a in soup.select("a[aria-label^='Page ']"):
                 try:
                     last = max(last, int(a.get("aria-label", "").rsplit(" ", 1)[-1]))
                 except ValueError:

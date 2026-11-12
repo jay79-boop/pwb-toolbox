@@ -549,3 +549,53 @@ def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
     assert finviz_scan.fetch_screener({}, limit=20) is None
+
+
+# Finviz restyled the pager (confirmed live 2026-11-12): page-link <a> tags no
+# longer carry the "fv-table_pager-page" class -- the current page gets a
+# different class list than the others -- so a class-scoped selector matches
+# zero links and _get_page silently returns 1, capping every multi-page fetch
+# (e.g. _fetch_map's 500-row S&P 500 request) at a single 20-row page. This
+# pins the fix (matching on the surviving aria-label="Page N" alone, with no
+# class dependency) against a snapshot of the real multi-page pager, including
+# the Previous/Next buttons and the "Skip to page" ellipsis button that must
+# NOT be mistaken for a page link.
+_FV_TABLE_HTML_PAGE_2 = _FV_TABLE_HTML.replace(
+    """<nav class="fv-table_pager">
+  <div class="fv-table_pager-pages">
+    <a aria-label="Page 1" class="fv-table_pager-page">1</a>
+  </div>
+</nav>""",
+    """<nav class="fv-table_pager" aria-label="Pagination">
+  <div class="fv-table_pager-nav">
+    <button aria-label="Previous page" aria-disabled="true" type="button">&lt;</button>
+    <a aria-current="page" aria-label="Page 1" href="?r=1"
+       class="border-highlight bg-accent text-default">1</a>
+    <a aria-label="Page 2" href="?r=21" class="border-transparent text-link">2</a>
+    <a aria-label="Page 3" href="?r=41" class="border-transparent text-link">3</a>
+    <button aria-label="Skip to page 16 of 26 pages" data-gap="true" type="button">&hellip;</button>
+    <a aria-label="Page 26" href="?r=501" class="border-transparent text-link">26</a>
+    <a aria-label="Next page" href="?r=21" class="border-transparent text-link">&gt;</a>
+  </div>
+</nav>""",
+)
+
+
+def test_get_page_counts_pages_on_restyled_pager(monkeypatch):
+    import finvizfinance.screener.base as fv_base
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_FV_TABLE_HTML_PAGE_2, "lxml")
+    monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: soup)
+    monkeypatch.setattr(fv_base, "sleep", lambda *_: None)
+
+    # Exercise the real _get_page/pagination path via fetch_screener. The base
+    # class's loop decrements `limit` by its own page size (20) per page and
+    # stops once it is <=0, so the limit must stay comfortably above
+    # 20 * 26 pages for pagination to run to the end. web_scrap always
+    # returns this same (2-row) page-1 soup, so a correct page count of 26
+    # shows up as 26 fetches worth of rows; the pre-fix selector would see 0
+    # page links, report 1 page, and stop after the first.
+    df = finviz_scan.fetch_screener({}, limit=1000)
+    assert df is not None
+    assert len(df) == 2 * 26
