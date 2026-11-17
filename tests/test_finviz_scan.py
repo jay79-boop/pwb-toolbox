@@ -549,3 +549,53 @@ def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
     assert finviz_scan.fetch_screener({}, limit=20) is None
+
+
+# Finviz dropped the "fv-table_pager-page" class from its page-number links
+# (confirmed live 2026-11-17) -- the <a aria-label="Page N"> survived inside
+# a renamed "fv-table_pager-nav" wrapper, but without that class. The old
+# selector (a.fv-table_pager-page[aria-label^='Page ']) matched nothing, so
+# _get_page always returned 1 and every multi-page screener call silently
+# came back truncated to its first page regardless of `limit`. This pins
+# the real markup shape (two pages, no fv-table_pager-page class on the
+# links) so the fetch follows page 2 instead of stopping after page 1.
+_FV_TABLE_HTML_TWO_PAGES = """
+<div class="fv-table_header-row">
+  <div class="fv-table_header-cell" data-column-id="row">
+    <span class="fv-table_header-label">No.</span>
+  </div>
+  <div class="fv-table_header-cell" data-column-id="ticker">
+    <span class="fv-table_header-label">Ticker</span>
+  </div>
+</div>
+<div class="fv-table_body">
+  <div class="fv-table_row" data-row-key="{ticker}">
+    <div class="fv-table_cell" data-column-id="row">1</div>
+    <div class="fv-table_cell" data-column-id="ticker" data-ticker="{ticker}">
+      <a><span>{ticker}</span><span>{ticker}</span></a>
+    </div>
+  </div>
+</div>
+<div class="fv-table_pager-nav">
+  <a aria-label="Page 1" href="?r=1">1</a>
+  <a aria-label="Page 2" href="?r=2">2</a>
+</div>
+"""
+
+
+def test_fetch_screener_follows_pagination_without_the_old_pager_class(monkeypatch):
+    import finvizfinance.screener.base as fv_base
+    from bs4 import BeautifulSoup
+
+    pages = {
+        1: BeautifulSoup(_FV_TABLE_HTML_TWO_PAGES.format(ticker="AAPL"), "lxml"),
+        2: BeautifulSoup(_FV_TABLE_HTML_TWO_PAGES.format(ticker="MSFT"), "lxml"),
+    }
+
+    def fake_web_scrap(url, params=None):
+        r = (params or {}).get("r", 1)
+        return pages[2] if r and r > 1 else pages[1]
+
+    monkeypatch.setattr(fv_base, "web_scrap", fake_web_scrap)
+    df = finviz_scan.fetch_screener({}, limit=40)
+    assert list(df["Ticker"]) == ["AAPL", "MSFT"]

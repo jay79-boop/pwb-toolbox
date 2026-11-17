@@ -390,7 +390,14 @@ def fetch_screener(
             if soup.select_one(".fv-table_row") is None:
                 return 0
             last = 1
-            for a in soup.select("a.fv-table_pager-page[aria-label^='Page ']"):
+            # Finviz dropped the "fv-table_pager-page" class from the page
+            # links (confirmed live 2026-11-17) -- only the "Page N"
+            # aria-label survived, so the old class-qualified selector
+            # matched nothing and every screener call silently came back
+            # truncated to one page regardless of `limit`. Scope to the
+            # pager nav so this doesn't pick up an unrelated "Page " label
+            # elsewhere on the page.
+            for a in soup.select(".fv-table_pager-nav a[aria-label^='Page ']"):
                 try:
                     last = max(last, int(a.get("aria-label", "").rsplit(" ", 1)[-1]))
                 except ValueError:
