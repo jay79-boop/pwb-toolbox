@@ -165,7 +165,8 @@ def _fetch_map() -> dict:
     frame = finviz_scan.fetch_screener(
         {"Index": "S&P 500"}, limit=500, order="Ticker", ascend=True
     )
-    if frame is None:  # finvizfinance returns None on 0 matches, not an empty frame
+    if frame is None or frame.empty:  # finvizfinance 1.7.0 returns an empty
+        # DataFrame on 0 matches; older releases returned None -- handle both.
         return {"sectors": [], "skipped": 0, "fetched_at": _et_str()}
     sectors: dict[str, dict] = {}
     skipped = 0

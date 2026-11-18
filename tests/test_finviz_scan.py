@@ -542,10 +542,15 @@ def test_fetch_screener_parses_the_new_fv_table_markup(monkeypatch):
     assert df["Change %"].tolist() == ["-0.94%", "-0.06%"]  # left as a raw string
 
 
-def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
+def test_fetch_screener_returns_empty_on_zero_matches(monkeypatch):
+    # finvizfinance 1.7.0's screener_view() returns an empty DataFrame for a
+    # zero-match page, not None as older releases did (confirmed live
+    # 2026-11-18) -- every call site already treats `df is None or df.empty`
+    # the same way, so pin that looser contract instead of the exact type.
     import finvizfinance.screener.base as fv_base
     from bs4 import BeautifulSoup
 
     empty_soup = BeautifulSoup('<div class="fv-table_body"></div>', "lxml")
     monkeypatch.setattr(fv_base, "web_scrap", lambda url, params=None: empty_soup)
-    assert finviz_scan.fetch_screener({}, limit=20) is None
+    df = finviz_scan.fetch_screener({}, limit=20)
+    assert df is None or df.empty
