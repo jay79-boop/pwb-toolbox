@@ -449,7 +449,11 @@ def fetch_screener(
     ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    # The fv-table rewrite's zero-match path (Base._empty_frame) returns a
+    # columnless pd.DataFrame(), not None -- normalize so callers can keep
+    # using the `df is None` check this function has always promised.
+    return None if df is None or df.empty else df
 
 
 def fetch_lookup(ticker: str) -> dict:
