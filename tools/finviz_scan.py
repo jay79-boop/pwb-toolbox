@@ -449,7 +449,11 @@ def fetch_screener(
     ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    # finvizfinance 1.7.1 (PyPI, unpinned here) changed its own zero-match
+    # return from None to an empty DataFrame; normalize back to None so every
+    # caller here keeps checking one shape, not two.
+    return None if df is None or df.empty else df
 
 
 def fetch_lookup(ticker: str) -> dict:
