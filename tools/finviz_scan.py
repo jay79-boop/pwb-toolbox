@@ -369,7 +369,7 @@ def fetch_screener(
     order: str = "Ticker",
     limit: int = 100,
     ascend: bool = True,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
     """finviz.com rebuilt its screener page as a virtualized ``fv-table_*``
     div grid (confirmed live 2026-10-29), dropping the
     ``table.screener_table`` / ``#pageSelect`` markup finvizfinance 1.5.0
@@ -449,7 +449,12 @@ def fetch_screener(
     ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    # Upstream's no-results page (page == 0) returns pd.DataFrame() -- no
+    # columns at all, not even headers -- straight from _empty_frame(); every
+    # caller already branches on `df is None`, so normalize to that instead of
+    # a columnless frame that looks like a parse failure.
+    return None if df.empty else df
 
 
 def _recover_industry(soup) -> str | None:
