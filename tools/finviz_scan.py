@@ -452,6 +452,19 @@ def fetch_screener(
     return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
 
 
+def _recover_industry(soup) -> str | None:
+    """finviz renamed the quote page's Industry classification link from
+    ``f=ind_...`` to ``f=industry_...`` (confirmed live 2026-11-05).
+    finvizfinance 1.5.0's own href-fallback in ``_extract_classification``
+    still only matches ``f=ind_``, so ``ticker_fundament()`` silently drops
+    Industry (Sector/Country/Exchange hrefs are unchanged and still work).
+    Re-derive it from the same anchor finviz now renders."""
+    import re
+
+    anchor = soup.find("a", href=re.compile(r"f=(?:ind_|industry_)"))
+    return anchor.text.strip() if anchor is not None else None
+
+
 def fetch_lookup(ticker: str) -> dict:
     """One ticker's fundamentals, news and insider trades. News/insider
     fetches are kept independent of each other and of the fundamentals call:
@@ -461,6 +474,10 @@ def fetch_lookup(ticker: str) -> dict:
 
     q = FinvizQuote(ticker)
     fundament = q.ticker_fundament()
+    if not fundament.get("Industry"):
+        recovered = _recover_industry(q.soup)
+        if recovered:
+            fundament["Industry"] = recovered
 
     news, news_error = None, None
     try:
