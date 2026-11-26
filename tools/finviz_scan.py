@@ -449,7 +449,14 @@ def fetch_screener(
     ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    # finvizfinance 1.7.1's Base._empty_frame returns an empty DataFrame (not
+    # None) for the fv-table markup, since it only recognizes the old
+    # screener_table/SSR shapes as "has results" -- our override doesn't
+    # touch _empty_frame, so a 0-match page falls through to that generic
+    # empty frame. Every caller here was built on the documented "None on 0
+    # matches" contract, so normalize here rather than at each call site.
+    return None if df is None or df.empty else df
 
 
 def fetch_lookup(ticker: str) -> dict:
