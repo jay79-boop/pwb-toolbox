@@ -542,6 +542,48 @@ def test_fetch_screener_parses_the_new_fv_table_markup(monkeypatch):
     assert df["Change %"].tolist() == ["-0.94%", "-0.06%"]  # left as a raw string
 
 
+_FV_TABLE_PAGE2_HTML = """
+<div class="fv-table_body">
+  <div class="fv-table_row" data-row-key="GOOGL">
+    <div class="fv-table_cell" data-column-id="row">21</div>
+    <div class="fv-table_cell" data-column-id="ticker" data-ticker="GOOGL">
+      <a><span>GOOGL</span><span>GOOGL</span></a>
+    </div>
+    <div class="fv-table_cell" data-column-id="company">Alphabet Inc</div>
+    <div class="fv-table_cell" data-column-id="marketCap">2100.00B</div>
+    <div class="fv-table_cell" data-column-id="volume">15,000,000</div>
+    <div class="fv-table_cell" data-column-id="change">0.50%</div>
+  </div>
+</div>
+"""
+
+
+def test_fetch_screener_paginates_without_fv_table_pager_page_class(monkeypatch):
+    # finviz.com dropped the "fv-table_pager-page" class from pager links
+    # (2026-11-14) but kept the aria-label -- a pager fixture built the same
+    # way, minus that class, must still drive fetch_screener past page 1.
+    import finvizfinance.screener.base as fv_base
+    from bs4 import BeautifulSoup
+
+    page1_html = _FV_TABLE_HTML.replace(
+        '<a aria-label="Page 1" class="fv-table_pager-page">1</a>',
+        '<a aria-label="Page 1">1</a>' '<a aria-label="Page 2" href="?r=21">2</a>',
+    )
+    page1_soup = BeautifulSoup(page1_html, "lxml")
+    page2_soup = BeautifulSoup(_FV_TABLE_PAGE2_HTML, "lxml")
+
+    def fake_web_scrap(url, params=None):
+        if params and params.get("r") == 21:
+            return page2_soup
+        return page1_soup
+
+    monkeypatch.setattr(fv_base, "web_scrap", fake_web_scrap)
+    monkeypatch.setattr(fv_base, "sleep", lambda s: None)
+    df = finviz_scan.fetch_screener({}, limit=100)
+    assert df is not None
+    assert list(df["Ticker"]) == ["AAPL", "MSFT", "GOOGL"]
+
+
 def test_fetch_screener_returns_none_on_zero_matches(monkeypatch):
     import finvizfinance.screener.base as fv_base
     from bs4 import BeautifulSoup

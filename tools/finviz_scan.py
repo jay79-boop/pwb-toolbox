@@ -390,7 +390,12 @@ def fetch_screener(
             if soup.select_one(".fv-table_row") is None:
                 return 0
             last = 1
-            for a in soup.select("a.fv-table_pager-page[aria-label^='Page ']"):
+            # finviz.com dropped the "fv-table_pager-page" class from pager
+            # links (confirmed live 2026-11-14) while keeping the
+            # aria-label -- without a class to key on, every page beyond the
+            # first silently vanished (fetch_screener capped at one page's
+            # 20 rows no matter what `limit` asked for).
+            for a in soup.select(".fv-table_pager a[aria-label^='Page ']"):
                 try:
                     last = max(last, int(a.get("aria-label", "").rsplit(" ", 1)[-1]))
                 except ValueError:
