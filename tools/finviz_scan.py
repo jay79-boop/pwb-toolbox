@@ -449,7 +449,12 @@ def fetch_screener(
     ov = _FvTableOverview()
     if filters:
         ov.set_filter(filters_dict=filters)
-    return ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    df = ov.screener_view(order=order, limit=limit, ascend=ascend, verbose=0)
+    # finvizfinance's own _empty_frame() now returns an empty-but-real
+    # DataFrame for a zero-match page instead of None; normalize here so the
+    # None-on-0-matches contract callers rely on (_fetch_map, _screener_payload
+    # in finviz_dash.py) still holds regardless of the upstream shape.
+    return None if df is None or df.empty else df
 
 
 def _recover_industry(soup) -> str | None:
